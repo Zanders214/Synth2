@@ -2,6 +2,12 @@
 #include "PluginEditor.h"
 #include "ParamIDs.h"
 
+namespace
+{
+    // The MIDI channel the on-screen keyboard plays on.
+    constexpr int keyboardChannel = 1;
+}
+
 Synth2AudioProcessor::Synth2AudioProcessor()
     : AudioProcessor (BusesProperties()
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
@@ -143,11 +149,9 @@ void Synth2AudioProcessor::handleNoteOff (juce::MidiKeyboardState*, int, int mid
         keyEvents[(size_t) scope.startIndex1] = { midiNoteNumber, 0.0f };
 }
 
-// Audio thread: plays the keys pressed since the last block, at its start,
-// on MIDI channel 1.
+// Audio thread: plays the keys pressed since the last block, at its start.
 void Synth2AudioProcessor::playOnScreenKeys() noexcept
 {
-    constexpr int keyboardChannel = 1;
     const auto scope = keyFifo.read (keyFifo.getNumReady());
     const auto play  = [this] (int start, int size)
     {
