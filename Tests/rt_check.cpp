@@ -1,7 +1,8 @@
 // RealtimeSanitizer driver for Synth2.
 //
-// Exercises the real audio callback under clang's -fsanitize=realtime so any
-// allocation / lock / syscall on the audio thread becomes a hard failure. It
+// Exercises the real audio callback (all of processBlock) under clang's
+// -fsanitize=realtime so any allocation / lock / syscall on the audio thread
+// becomes a hard failure. It
 // plays the worst case: sixteen-note chords of sixteen detuned voices, with
 // notes stolen, the sustain pedal, the on-screen keyboard's notes, and the
 // settings moving underneath (VOICES, WAVE, the envelope) while they sound.
@@ -10,6 +11,14 @@
 #include "PluginProcessor.h"
 #include "ParamIDs.h"
 #include <cstdio>
+
+// The whole audio callback, not just the engine, runs as a real-time context:
+// the parameter reads, the on-screen keys' hand-over and publishing the held
+// notes are checked along with the DSP.
+static void audioCallback (Synth2AudioProcessor& proc, juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) SYNTH2_RT_NONBLOCKING
+{
+    proc.processBlock (buffer, midi);
+}
 
 int main()
 {
@@ -60,7 +69,7 @@ int main()
             set (ParamID::release, 0.05f + 0.1f * (float) ((b / 12) % 5));
         }
 
-        proc.processBlock (buffer, midi);           // exercises the annotated DSP
+        audioCallback (proc, buffer, midi);         // the full callback, under RTSan
     }
 
     std::printf ("PASS: %d blocks of 16-voice unison chords (stolen notes, sustain pedal,\n"
