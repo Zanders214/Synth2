@@ -1,0 +1,70 @@
+name: Performance Gates
+
+on:
+  push:
+    branches: [dev, main]
+    paths-ignore: ['**.md']   # docs-only changes can't affect the build
+  pull_request:
+    branches: [dev, main]
+    paths-ignore: ['**.md']   # docs-only changes can't affect the build
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rtsan:
+    name: RealtimeSanitizer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: JUCE Linux deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libasound2-dev libjack-jackd2-dev libcurl4-openssl-dev \
+            libfreetype-dev libfontconfig1-dev libx11-dev libxcomposite-dev libxcursor-dev \
+            libxext-dev libxinerama-dev libxrandr-dev libxrender-dev libglu1-mesa-dev mesa-common-dev
+
+      - name: clang 20 (RealtimeSanitizer)
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 20
+
+      - uses: lukka/get-cmake@latest
+
+      # Compiler cache: JUCE's modules are most of every compile and almost never
+      # change. Only push builds save, so PRs read the warm dev/main cache
+      # without crowding it out of the 10 GB repo cache quota.
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: rtsan
+          max-size: 500M
+          save: ${{ github.event_name != 'pull_request' }}
+
+      - name: Cache JUCE (FetchContent)
+        uses: actions/cache@v4
+        with:
+          path: build-rt/_deps
+          key: juce-rt-${{ runner.os }}-8.0.4
+
+      - name: Configure
+        run: >
+          cmake -B build-rt -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DCMAKE_C_COMPILER=clang-20 -DCMAKE_CXX_COMPILER=clang++-20
+          -DSYNTH2_RT_SANITIZE=ON
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build rt_check
+        run: cmake --build build-rt --target rt_check --parallel
+
+      - name: Run under RTSan
+        env:
+          RTSAN_OPTIONS: "halt_on_error=1:suppressions=${{ github.workspace }}/Tests/rtsan_suppressions.txt"
+        run: |
+          BIN=$(find build-rt -type f -name rt_check -path '*_artefacts*' | head -1)
+          echo "Running $BIN"
+          xvfb-run -a "$BIN"

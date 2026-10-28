@@ -1,0 +1,354 @@
+/*
+    Synth2 plugin tests.
+
+    Drives the real Synth2AudioProcessor and its editor headlessly: parameter
+    layout, bus support, MIDI in and audio out, state save/restore, and
+    offscreen renders of the whole editor (two sizes) so every paint / layout
+    path runs exactly as it does in a host. The DSP maths has its own tests in
+    Synth2EngineTests.cpp; this file covers the host-facing wrapper and the UI.
+
+    Same plain check() + int main() shape as the other tests, so it plugs into
+    CTest without a framework. On Linux CTest runs it under xvfb-run.
+*/
+
+#include <juce_audio_utils/juce_audio_utils.h>
+
+#include "PluginProcessor.h"
+#include "PluginEditor.h"
+#include "ParamIDs.h"
+
+#include <cmath>
+#include <cstdio>
+#include <memory>
+#include <string>
+
+namespace
+{
+int failures = 0;
+
+void check (bool condition, const std::string& message)
+{
+    std::printf ("  [%s] %s\n", condition ? "PASS" : "FAIL", message.c_str());
+    if (! condition)
+        ++failures;
+}
+
+bool approx (float a, float b, float tolerance) { return std::abs (a - b) <= tolerance; }
+
+float param (const Synth2AudioProcessor& p, const char* id)
+{
+    return p.getState().getRawParameterValue (id)->load();
+}
+
+void setParam (Synth2AudioProcessor& p, const char* id, float value)
+{
+    auto* prm = p.getState().getParameter (id);
+    prm->setValueNotifyingHost (prm->convertTo0to1 (value));
+}
+
+// Paints a component (and its visible children) into an offscreen software
+// image, so the render is identical on every platform and needs no window.
+juce::Image render (juce::Component& c)
+{
+    juce::Image image (juce::Image::ARGB, c.getWidth(), c.getHeight(), true, juce::SoftwareImageType());
+    juce::Graphics g (image);
+    c.paintEntireComponent (g, true);
+    return image;
+}
+
+// True when a render drew real content rather than a flat fill.
+bool hasDetail (const juce::Image& image)
+{
+    const auto reference = image.getPixelAt (0, 0);
+    int differing = 0;
+    for (int y = 0; y < image.getHeight(); y += 4)
+        for (int x = 0; x < image.getWidth(); x += 4)
+            if (image.getPixelAt (x, y) != reference)
+                ++differing;
+    return differing > 100;
+}
+
+// How many sampled pixels differ between two same-sized renders.
+int pixelsChanged (const juce::Image& a, const juce::Image& b)
+{
+    int changed = 0;
+    for (int y = 0; y < a.getHeight(); y += 2)
+        for (int x = 0; x < a.getWidth(); x += 2)
+            if (a.getPixelAt (x, y) != b.getPixelAt (x, y))
+                ++changed;
+    return changed;
+}
+
+// Plays `blocks` blocks through the processor's real audio callback, with
+// `midi` in the first, and returns the RMS of the last block's left channel.
+float playAndMeasure (Synth2AudioProcessor& p, juce::MidiBuffer midi, int blocks, int block = 512)
+{
+    juce::AudioBuffer<float> buffer (2, block);
+    for (int b = 0; b < blocks; ++b)
+    {
+        juce::MidiBuffer events;
+        if (b == 0)
+            events.swapWith (midi);
+        p.processBlock (buffer, events);
+    }
+    return buffer.getRMSLevel (0, 0, block);
+}
+
+void pump (int milliseconds)
+{
+    juce::MessageManager::getInstance()->runDispatchLoopUntil (milliseconds);
+}
+
+// ---- The processor as a host sees it ------------------------------------------
+void testProcessorBasics()
+{
+    std::printf ("Processor basics:\n");
+
+    Synth2AudioProcessor p;
+    check (p.getName() == "ZandersSynth2", "reports its name");
+    check (p.acceptsMidi() && ! p.producesMidi() && ! p.isMidiEffect(), "takes MIDI in, makes none");
+    check (p.hasEditor(), "has an editor");
+
+    for (const auto* id : { ParamID::wave, ParamID::voices, ParamID::detune, ParamID::width,
+                            ParamID::attack, ParamID::release, ParamID::output })
+        check (p.getState().getParameter (id) != nullptr, std::string ("has the '") + id + "' parameter");
+
+    check (approx (param (p, ParamID::wave), (float) Waveform::saw, 1e-6f), "starts on the saw");
+    check (approx (param (p, ParamID::voices), 1.0f, 1e-6f), "starts with one voice");
+    check (approx (param (p, ParamID::detune), 15.0f, 1e-4f) && approx (param (p, ParamID::width), 0.5f, 1e-6f),
+           "DETUNE and WIDTH start at 15 ct and 50%, ready for when VOICES goes up");
+
+    setParam (p, ParamID::release, 2.0f);
+    check (approx ((float) p.getTailLengthSeconds(), 2.0f, 0.01f), "the tail is the release time");
+
+    const auto settings = p.currentSettings();
+    check (approx (settings.releaseSeconds, 2.0f, 0.01f) && settings.wave == Waveform::saw,
+           "the engine's settings come from the parameters");
+
+    auto* detune = p.getState().getParameter (ParamID::detune);
+    check (detune->getText (detune->convertTo0to1 (12.5f), 32) == "12.5 ct", "DETUNE reads in cents");
+    auto* attack = p.getState().getParameter (ParamID::attack);
+    check (attack->getText (attack->convertTo0to1 (0.25f), 32) == "250 ms"
+               && attack->getText (attack->convertTo0to1 (1.5f), 32) == "1.50 s",
+           "times read in ms below a second, s above");
+}
+
+void testBusLayouts()
+{
+    std::printf ("Bus layouts:\n");
+
+    Synth2AudioProcessor p;
+    check (p.getTotalNumInputChannels() == 0 && p.getTotalNumOutputChannels() == 2, "an instrument: no input, stereo out");
+
+    juce::AudioProcessor::BusesLayout layout;
+    layout.outputBuses.add (juce::AudioChannelSet::stereo());
+    check (p.checkBusesLayoutSupported (layout), "stereo out is supported");
+
+    layout.outputBuses.getReference (0) = juce::AudioChannelSet::mono();
+    check (p.checkBusesLayoutSupported (layout), "mono out is supported");
+
+    layout.outputBuses.getReference (0) = juce::AudioChannelSet::create5point1();
+    check (! p.checkBusesLayoutSupported (layout), "surround is not");
+}
+
+// ---- MIDI in, sound out --------------------------------------------------------
+void testPlaying()
+{
+    std::printf ("Playing:\n");
+
+    Synth2AudioProcessor p;
+    p.prepareToPlay (48000.0, 512);
+
+    check (playAndMeasure (p, {}, 4) == 0.0f, "silent with no notes");
+
+    juce::MidiBuffer chord;
+    for (const int note : { 60, 64, 67 })
+        chord.addEvent (juce::MidiMessage::noteOn (1, note, 0.9f), 0);
+    check (playAndMeasure (p, chord, 8) > 0.05f, "a chord sounds");
+    check (p.getNumActiveNotes() == 3, "three notes are playing");
+
+    juce::MidiBuffer release;
+    for (const int note : { 60, 64, 67 })
+        release.addEvent (juce::MidiMessage::noteOff (1, note), 0);
+    playAndMeasure (p, release, 100);   // ~1 s, past the 300 ms release
+    check (p.getNumActiveNotes() == 0, "and stops after the release");
+
+    // The on-screen keyboard plays through the processor too.
+    p.getKeyboardState().noteOn (1, 69, 0.8f);
+    check (playAndMeasure (p, {}, 8) > 0.05f, "a key held on the on-screen keyboard sounds");
+    p.getKeyboardState().noteOff (1, 69, 0.0f);
+    playAndMeasure (p, {}, 100);
+    check (p.getNumActiveNotes() == 0, "and stops when it is let go");
+
+    // More voices: the stack stays at about the same level.
+    juce::MidiBuffer note;
+    note.addEvent (juce::MidiMessage::noteOn (1, 57, 1.0f), 0);
+    const float oneVoice = playAndMeasure (p, note, 20);
+    setParam (p, ParamID::voices, 9.0f);
+    const float nineVoices = playAndMeasure (p, {}, 20);
+    check (nineVoices > 0.5f * oneVoice && nineVoices < 2.0f * oneVoice,
+           "turning VOICES up mid-note keeps the level steady");
+
+    // The host's MIDI doesn't leak out of an instrument.
+    juce::AudioBuffer<float> buffer (2, 512);
+    juce::MidiBuffer midi;
+    midi.addEvent (juce::MidiMessage::noteOn (1, 40, 1.0f), 10);
+    p.processBlock (buffer, midi);
+    check (midi.isEmpty(), "no MIDI comes back out");
+
+    // A mono bus gets sound too.
+    Synth2AudioProcessor mono;
+    juce::AudioProcessor::BusesLayout layout;
+    layout.outputBuses.add (juce::AudioChannelSet::mono());
+    mono.setBusesLayout (layout);
+    mono.prepareToPlay (48000.0, 512);
+    juce::AudioBuffer<float> monoBuffer (1, 512);
+    juce::MidiBuffer monoMidi;
+    monoMidi.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+    for (int b = 0; b < 8; ++b)
+    {
+        mono.processBlock (monoBuffer, monoMidi);
+        monoMidi.clear();
+    }
+    check (monoBuffer.getRMSLevel (0, 0, 512) > 0.05f, "a mono bus plays");
+}
+
+// ---- State ----------------------------------------------------------------------
+void testStateRoundTrip()
+{
+    std::printf ("State round trip:\n");
+
+    Synth2AudioProcessor a;
+    setParam (a, ParamID::wave, (float) Waveform::square);
+    setParam (a, ParamID::voices, 7.0f);
+    setParam (a, ParamID::detune, 33.0f);
+    setParam (a, ParamID::width, 0.8f);
+    setParam (a, ParamID::attack, 0.5f);
+    setParam (a, ParamID::release, 3.0f);
+    setParam (a, ParamID::output, -4.0f);
+
+    juce::MemoryBlock saved;
+    a.getStateInformation (saved);
+
+    Synth2AudioProcessor b;
+    b.setStateInformation (saved.getData(), (int) saved.getSize());
+    check (approx (param (b, ParamID::wave), (float) Waveform::square, 1e-6f), "WAVE comes back");
+    check (approx (param (b, ParamID::voices), 7.0f, 1e-6f), "VOICES comes back");
+    check (approx (param (b, ParamID::detune), 33.0f, 0.01f), "DETUNE comes back");
+    check (approx (param (b, ParamID::width), 0.8f, 0.001f), "WIDTH comes back");
+    check (approx (param (b, ParamID::attack), 0.5f, 0.001f), "ATTACK comes back");
+    check (approx (param (b, ParamID::release), 3.0f, 0.001f), "RELEASE comes back");
+    check (approx (param (b, ParamID::output), -4.0f, 0.01f), "OUTPUT comes back");
+
+    // Junk is ignored rather than resetting the sound.
+    const char junk[] = "not a synth state";
+    b.setStateInformation (junk, (int) sizeof (junk));
+    check (approx (param (b, ParamID::voices), 7.0f, 1e-6f), "a bad state is ignored");
+}
+
+// ---- The editor ------------------------------------------------------------------
+void testEditor()
+{
+    std::printf ("Editor:\n");
+
+    Synth2AudioProcessor p;
+    p.prepareToPlay (48000.0, 512);
+    std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
+    auto* editor = dynamic_cast<Synth2AudioProcessorEditor*> (base.get());
+    check (editor != nullptr, "creates the Synth2 editor");
+    if (editor == nullptr)
+        return;
+
+    check (editor->getWidth() == 480 && editor->getHeight() == 488, "opens at its 480 x 488 design size");
+    check (editor->isResizable(), "is resizable");
+
+    const auto first = render (*editor);
+    check (hasDetail (first), "renders its face");
+
+    // Big enough to grab: every dial, the chips and the keyboard.
+    bool dialsFit = true;
+    for (int i = 0; i < Synth2AudioProcessorEditor::numDials; ++i)
+        dialsFit = dialsFit && editor->getDial (i).getWidth() >= 40 && editor->getLocalBounds().contains (editor->getDial (i).getBounds());
+    check (dialsFit, "all six dials are laid out inside the panel");
+    check (editor->getLocalBounds().contains (editor->getKeyboard().getBounds()) && editor->getKeyboard().getHeight() > 80,
+           "the keyboard fits along the bottom");
+
+    // Dials drive their parameters.
+    editor->getDial (0).setValue (5.0, juce::sendNotificationSync);
+    check (approx (param (p, ParamID::voices), 5.0f, 1e-6f), "the VOICES dial sets VOICES");
+    editor->getDial (1).setValue (40.0, juce::sendNotificationSync);
+    check (approx (param (p, ParamID::detune), 40.0f, 0.01f), "the DETUNE dial sets DETUNE");
+
+    // The displays follow the parameters on the editor's timer.
+    pump (100);
+    check (editor->getUnisonDisplay().getState().voices == 5
+               && approx (editor->getUnisonDisplay().getState().detune, 40.0f, 0.01f),
+           "the UNISON well shows the stack");
+    const auto spread = render (*editor);
+    check (pixelsChanged (first, spread) > 200, "and redraws when the stack changes");
+
+    // Wave chips: clicking one picks it, and the WAVE well follows.
+    auto& chips = editor->getWaveSelector();
+    const auto sine = chips.chipBounds (0).getCentre();
+    juce::MouseEvent click (juce::Desktop::getInstance().getMainMouseSource(), sine, {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                            &chips, &chips, juce::Time::getCurrentTime(), sine, juce::Time::getCurrentTime(), 1, false);
+    chips.mouseDown (click);
+    check (approx (param (p, ParamID::wave), (float) Waveform::sine, 1e-6f) && chips.getSelected() == 0,
+           "clicking the SINE chip picks the sine");
+    pump (100);
+    check (editor->getWaveDisplay().getState().wave == Waveform::sine, "the WAVE well shows it");
+
+    // Host automation reaches the chips too.
+    setParam (p, ParamID::wave, (float) Waveform::square);
+    pump (100);
+    check (chips.getSelected() == 3, "a host change of WAVE lights the SQUARE chip");
+
+    // Keyboard: middle C is on it, and the keys the host plays light up on it
+    // without being played a second time.
+    auto& keyboard = editor->getKeyboard();
+    const auto keyArea = keyboard.getRectangleForKey (60);
+    check (! keyArea.isEmpty() && keyboard.getLocalBounds().toFloat().contains (keyArea.getCentre()), "middle C is on the keyboard");
+
+    juce::MidiBuffer hostNote;
+    hostNote.addEvent (juce::MidiMessage::noteOn (1, 64, 0.8f), 0);
+    playAndMeasure (p, hostNote, 2);
+    pump (100);
+    check (p.getKeyboardState().isNoteOn (1, 64), "a note the host plays lights its key");
+    playAndMeasure (p, {}, 2);
+    check (p.getNumActiveNotes() == 1, "and isn't played again from the keyboard");
+
+    juce::MidiBuffer hostOff;
+    hostOff.addEvent (juce::MidiMessage::noteOff (1, 64), 0);
+    playAndMeasure (p, hostOff, 2);
+    pump (100);
+    check (! p.getKeyboardState().isNoteOn (1, 64), "and goes dark when the host lets go");
+
+    // Scaled up: the same face at 2x.
+    editor->setSize (960, 976);
+    check (approx ((float) editor->getDial (0).getWidth() / 2.0f, 52.0f, 1.0f), "at 2x every control doubles");
+    const auto doubled = render (*editor);
+    check (hasDetail (doubled), "renders at 2x");
+
+    // The aspect ratio is held when a host (or the corner) resizes it.
+    if (auto* constrainer = editor->getConstrainer())
+        constrainer->setBoundsForComponent (editor, { 0, 0, 720, 600 }, false, false, true, true);
+    const float aspect = (float) editor->getWidth() / (float) editor->getHeight();
+    check (approx (aspect, 480.0f / 488.0f, 0.02f), "resizing keeps the design's proportions");
+}
+} // namespace
+
+int main()
+{
+    juce::ScopedJuceInitialiser_GUI juce;
+
+    std::printf ("Synth2 plugin tests\n===================\n");
+
+    testProcessorBasics();
+    testBusLayouts();
+    testPlaying();
+    testStateRoundTrip();
+    testEditor();
+
+    std::printf ("\n%s\n", failures == 0 ? "ALL TESTS PASSED" : "SOME TESTS FAILED");
+    return failures == 0 ? 0 : 1;
+}
