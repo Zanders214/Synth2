@@ -23,6 +23,20 @@ note -> VOICES x oscillator -> DETUNE + WIDTH -> ATTACK / RELEASE -> OUTPUT
 
 Every control is a parameter, so it's saved with your set and can be automated.
 
+### Seeing what they do
+
+Each group of dials has a display right above it, drawn in the dials' colours:
+
+- **WAVE** (above the wave chips): two cycles of the shape, with a faint copy for every
+  unison voice, shifted by its detune.
+- **UNISON** (above VOICES / DETUNE / WIDTH): a glowing dot per voice, placed left to
+  right by its detune (on a fixed -50..+50 cent scale) and top to bottom by its place in
+  the stereo field. DETUNE fans the dots out sideways, WIDTH up and down.
+- **AMP** (above ATTACK / RELEASE / OUTPUT): the envelope every note follows: the rise
+  (ATTACK), the top while the key is down (its height is OUTPUT, against a dashed 0 dB
+  line) and the fall (RELEASE). Every note you play is a dot riding it: up the attack,
+  resting on the top while held, down the release once you let go.
+
 ### How the voices spread
 
 With more than one voice, the copies sit evenly across the DETUNE range. WIDTH pans
@@ -87,10 +101,10 @@ Source/
   PluginEditor.{h,cpp}       the Neon Plugins editor: wells, wave chips, dials, keyboard
   Synth2LookAndFeel.{h,cpp}  the dials (design-system Dial: arc + glowing core)
   WaveSelector.h             the SINE / TRI / SAW / SQUARE chips
-  VoiceDisplays.h            the WAVE and UNISON wells
+  VoiceDisplays.h            the WAVE, UNISON and AMP wells
   NeonKeyboard.h             the on-screen keyboard
   Synth2Theme.h              shared palette, fonts, colour + value formatting
-  Synth2VisualModel.h        pure wave / unison -> display math (uses the engine's own)
+  Synth2VisualModel.h        pure wave / unison / envelope -> display math (uses the engine's own)
   RtSafety.h                 the RealtimeSanitizer annotation
 Tests/
   Synth2EngineTests.cpp         framework-free DSP tests: pitch, envelope, unison, polyphony, pedal
@@ -104,13 +118,15 @@ Tests/
 
 The editor follows the **Neon Plugins** design system natively in JUCE (no WebView):
 the dark radial panel, the `Zanders` + product wordmark (Synth2 in violet) with its
-mode badge, two inset display wells (the WAVE shape in the spectrum gradient with a
-faint copy per unison voice; the UNISON stack as a glowing dot per voice, by detune and
-pan), the wave chips with the accent-gradient selection, a row of six Dials coloured
-along the cyan → violet → pink → amber spectrum, and an ivory keyboard whose pressed
-keys glow violet. The displays draw on the engine's own wave and unison maths
-(`Synth2VisualModel`), so what they show never drifts from what you hear. The face is
-authored at 480 px and scales proportionally (resizable, fixed aspect ratio).
+mode badge, the WAVE well (the shape in the spectrum gradient with a faint copy per
+unison voice) over the wave chips with their accent-gradient selection, then two groups
+of three Dials coloured along the cyan → violet → pink → amber spectrum, each under the
+display it drives (UNISON: a glowing dot per voice, by detune and pan; AMP: the envelope
+in its dials' colours, with a live dot per sounding note), and an ivory keyboard whose
+pressed keys glow violet. The displays draw on the engine's own wave, unison and
+envelope maths (`Synth2VisualModel`), so what they show never drifts from what you
+hear. The face is authored at 480 px and scales proportionally (resizable, fixed aspect
+ratio).
 
 Typography targets Space Grotesk (UI) + JetBrains Mono (numbers), used when the host
 has them and falling back to the platform sans / monospaced face otherwise; bundling

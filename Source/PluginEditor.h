@@ -13,10 +13,12 @@
     Synth2AudioProcessorEditor — the Neon Plugins face for Synth2.
 
     A dark panel, top to bottom: the wordmark and POLY badge; the WAVE well
-    (the shape, and a faint copy per unison voice) beside the UNISON well (a dot
-    per voice, by detune and pan); the four wave chips; a row of six dials,
-    VOICES / DETUNE / WIDTH under UNISON and ATTACK / RELEASE / OUTPUT under
-    AMP, coloured along the spectrum; and a three-octave keyboard to play it.
+    (the shape, and a faint copy per unison voice) over the four wave chips;
+    then two groups, each a display over the three dials it shows: the UNISON
+    well (a dot per voice, by detune and pan) over VOICES / DETUNE / WIDTH,
+    and the AMP well (the envelope, with a dot riding it for each note that
+    sounds) over ATTACK / RELEASE / OUTPUT. The dials run the spectrum, and
+    each display draws in its dials' colours. A three-octave keyboard plays it.
     Everything is drawn natively (no WebView) and scales proportionally from
     the 480 px design.
 */
@@ -38,18 +40,21 @@ public:
     NeonKeyboard&  getKeyboard() noexcept       { return keyboard; }
     WaveDisplay&   getWaveDisplay() noexcept    { return waveDisplay; }
     UnisonDisplay& getUnisonDisplay() noexcept  { return unisonDisplay; }
+    AmpDisplay&    getAmpDisplay() noexcept     { return ampDisplay; }
 
 private:
     void timerCallback() override;
     void paintHeader (juce::Graphics&, float scale) const;
     void paintDialLabels (juce::Graphics&, float scale) const;
     VoiceDisplayState displayState() const;
+    AmpDisplayState   ampState() const;
 
     Synth2AudioProcessor& processorRef;
     Synth2LookAndFeel looks;
 
     WaveDisplay   waveDisplay;
     UnisonDisplay unisonDisplay;
+    AmpDisplay    ampDisplay;
     WaveSelector  waveSelector;
     NeonKeyboard  keyboard;
 
@@ -62,8 +67,6 @@ private:
     {
         juce::Rectangle<int> header;
         juce::Rectangle<int> badge;
-        juce::Rectangle<int> unisonCaption;
-        juce::Rectangle<int> ampCaption;
         std::array<juce::Rectangle<int>, numDials> dialColumns;
         int dialsSeparatorY   = 0;
         int keyboardSeparatorY = 0;

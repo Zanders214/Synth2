@@ -7,6 +7,16 @@
 #include "Oscillator.h"
 #include "Unison.h"
 
+/** Where a note is in its envelope, for the editor's AMP display. */
+struct NoteActivity
+{
+    enum class Stage { idle, attack, hold, release };
+
+    Stage stage       = Stage::idle;
+    float level       = 0.0f;   // the envelope, 0..1
+    float releaseFrom = 1.0f;   // the envelope when the release began
+};
+
 /** How every note sounds right now: the engine hands these to each voice once
     per sub-block, already smoothed. */
 struct VoiceSettings
@@ -78,8 +88,9 @@ public:
     /** The key went up (and the sustain pedal, if any, is up too). */
     void release()
     {
-        held      = false;
-        sustained = false;
+        held        = false;
+        sustained   = false;
+        releaseFrom = envelopeLevel;
         envelope.noteOff();
     }
 
@@ -94,6 +105,7 @@ public:
     void kill()
     {
         envelope.reset();
+        envelopeLevel = 0.0f;
         note      = -1;
         held      = false;
         sustained = false;
@@ -112,6 +124,27 @@ public:
         return isActive() && channel == midiChannel && note == midiNote;
     }
     std::uint64_t getAge() const noexcept { return age; }
+
+    /** Where this note is in its envelope: rising, holding (key or pedal
+        down) or releasing, and how loud the envelope is. */
+    NoteActivity getActivity() const noexcept
+    {
+        NoteActivity activity;
+        if (! isActive())
+            return activity;
+
+        activity.level = envelopeLevel;
+        if (isReleasing())
+        {
+            activity.stage       = NoteActivity::Stage::release;
+            activity.releaseFrom = juce::jmax (envelopeLevel, releaseFrom);
+        }
+        else
+        {
+            activity.stage = envelopeLevel < 0.999f ? NoteActivity::Stage::attack : NoteActivity::Stage::hold;
+        }
+        return activity;
+    }
 
     /** Adds `numSamples` (at most maxChunk) of this note into left / right. */
     void render (float* left, float* right, int numSamples, const VoiceSettings& settings) noexcept
@@ -168,7 +201,8 @@ public:
         for (int n = 0; n < numSamples; ++n)
         {
             const float stack = stackFrom + (stackLevel - stackFrom) * (float) (n + 1) * ramp;
-            const float gain  = envelope.getNextSample() * level * stack;
+            envelopeLevel = envelope.getNextSample();
+            const float gain = envelopeLevel * level * stack;
             left[n]  += stackL[(size_t) n] * gain;
             right[n] += stackR[(size_t) n] * gain;
         }
@@ -189,6 +223,8 @@ private:
     float  fadeStep   = 0.0f;
     float  level      = 0.0f;
     float  stackLevel = 1.0f;
+    float  envelopeLevel = 0.0f;
+    float  releaseFrom   = 1.0f;
     int    note       = -1;
     int    channel    = 1;
     bool   held       = false;

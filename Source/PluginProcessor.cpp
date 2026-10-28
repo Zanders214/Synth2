@@ -76,6 +76,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
     return layout;
 }
 
+std::array<NoteActivity, Synth2Engine::maxNotes> Synth2AudioProcessor::getNoteActivity() const noexcept
+{
+    std::array<NoteActivity, Synth2Engine::maxNotes> activity {};
+    for (size_t i = 0; i < activity.size(); ++i)
+    {
+        activity[i].stage       = (NoteActivity::Stage) noteActivity[i].stage.load (std::memory_order_relaxed);
+        activity[i].level       = noteActivity[i].level.load (std::memory_order_relaxed);
+        activity[i].releaseFrom = noteActivity[i].releaseFrom.load (std::memory_order_relaxed);
+    }
+    return activity;
+}
+
 Synth2Engine::Settings Synth2AudioProcessor::currentSettings() const noexcept
 {
     const auto param = [this] (const char* id) { return apvts.getRawParameterValue (id)->load(); };
@@ -118,6 +130,14 @@ void Synth2AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     playOnScreenKeys();
     engine.process (buffer, midi);
     activeNotes.store (engine.getNumActiveNotes());
+
+    const auto activity = engine.getActivity();
+    for (size_t i = 0; i < activity.size(); ++i)
+    {
+        noteActivity[i].stage      .store ((int) activity[i].stage, std::memory_order_relaxed);
+        noteActivity[i].level      .store (activity[i].level,       std::memory_order_relaxed);
+        noteActivity[i].releaseFrom.store (activity[i].releaseFrom, std::memory_order_relaxed);
+    }
 
     const auto held = engine.getHeldNotes();
     hostHeldNotes[0].store (held[0], std::memory_order_relaxed);
