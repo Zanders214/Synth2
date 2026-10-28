@@ -370,7 +370,42 @@ void testPedalAndPanic()
     check (engine->getNumActiveNotes() == 0 && peak (out, 0, out.getNumSamples()) == 0.0f, "All Sound Off silences at once");
 }
 
-// ---- Test 8: output gain and a mono bus. ----------------------------------------
+// ---- Test 8: every MIDI channel keeps its own notes and pedal. -----------------
+void testChannels()
+{
+    std::printf ("MIDI channels:\n");
+
+    auto settings = defaults();
+    settings.releaseSeconds = 0.05f;
+    auto engine = makeEngine (settings);
+    const auto onCh  = [] (int ch, int note) { return juce::MidiMessage::noteOn (ch, note, 1.0f); };
+    const auto offCh = [] (int ch, int note) { return juce::MidiMessage::noteOff (ch, note); };
+
+    run (*engine, blockSize, { { 0, onCh (1, 60) }, { 10, onCh (2, 60) } });
+    check (engine->getNumActiveNotes() == 2, "the same key on two channels plays two voices");
+
+    run (*engine, blockSize, { { 0, offCh (1, 60) } });
+    run (*engine, (int) sampleRate / 2);
+    check (! engine->isNoteSounding (1, 60) && engine->isNoteSounding (2, 60),
+           "letting go on channel 1 leaves channel 2's note held");
+
+    run (*engine, blockSize, { { 0, juce::MidiMessage::controllerEvent (1, 64, 127) }, { 10, offCh (2, 60) } });
+    run (*engine, (int) sampleRate / 2);
+    check (engine->isSustainPedalDown (1) && ! engine->isSustainPedalDown (2) && ! engine->isNoteSounding (2, 60),
+           "channel 1's sustain pedal doesn't hold channel 2's notes");
+
+    run (*engine, blockSize, { { 0, onCh (1, 64) }, { 0, onCh (3, 67) }, { 100, offCh (1, 64) } });
+    run (*engine, blockSize, { { 0, juce::MidiMessage::allSoundOff (3) } });
+    check (engine->isNoteSounding (1, 64) && ! engine->isNoteSounding (3, 67),
+           "All Sound Off on channel 3 leaves channel 1's (sustained) note alone");
+
+    run (*engine, blockSize, { { 0, juce::MidiMessage::allNotesOff (1) } });
+    run (*engine, (int) sampleRate / 2);
+    check (engine->getNumActiveNotes() == 0 && ! engine->isSustainPedalDown (1),
+           "All Notes Off on channel 1 lifts its pedal and releases its notes");
+}
+
+// ---- Test 9: output gain and a mono bus. ----------------------------------------
 void testOutputAndMono()
 {
     std::printf ("Output and mono:\n");
@@ -401,6 +436,7 @@ int main()
     testVoicesChangeMidNote();
     testPolyphony();
     testPedalAndPanic();
+    testChannels();
     testOutputAndMono();
 
     std::printf ("\n%s\n", failures == 0 ? "ALL TESTS PASSED" : "SOME TESTS FAILED");

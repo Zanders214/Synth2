@@ -23,9 +23,10 @@
 
     MIDI is read sample-accurately: the block is rendered up to each event,
     then the event applied. A seventeenth note takes over the voice that has
-    been releasing longest (or, failing that, the oldest held one). The sustain
-    pedal (CC 64) holds released notes; All Sound Off (CC 120) silences at
-    once and All Notes Off (CC 123) releases everything.
+    been releasing longest (or, failing that, the oldest held one). Each MIDI
+    channel keeps its own notes: the same key on two channels plays two
+    voices, and each channel has its own sustain pedal (CC 64), All Sound Off
+    (CC 120, silences at once) and All Notes Off (CC 123, releases).
 
     DETUNE, WIDTH and OUTPUT glide to new values over 20 ms, so turning them
     while a chord plays doesn't zipper.
@@ -61,7 +62,7 @@ public:
 
         appliedEnvelope.attack = -1.0f;   // hand every voice the envelope afresh
         applyEnvelope();
-        sustainDown = false;
+        sustainDown = {};
     }
 
     void setSettings (const Settings& newSettings) noexcept
@@ -104,19 +105,19 @@ public:
 
     // ---- Notes (also driven by process()'s MIDI) --------------------------------
 
-    void noteOn (int midiNote, float velocity) noexcept
+    void noteOn (int midiChannel, int midiNote, float velocity) noexcept
     {
         if (velocity <= 0.0f)
         {
-            noteOff (midiNote);
+            noteOff (midiChannel, midiNote);
             return;
         }
 
         SynthVoice* chosen = nullptr;
 
-        // The same key again plays on the voice it already had.
+        // The same key again on the same channel plays on the voice it already had.
         for (auto& voice : voices)
-            if (voice.isActive() && voice.getNote() == midiNote)
+            if (voice.plays (midiChannel, midiNote))
                 chosen = &voice;
 
         if (chosen == nullptr)
@@ -130,49 +131,50 @@ public:
         if (chosen == nullptr)
             chosen = &voiceToSteal();
 
-        chosen->start (midiNote, velocity, ++noteCounter, currentVoiceSettings(), random);
+        chosen->start (midiChannel, midiNote, velocity, ++noteCounter, currentVoiceSettings(), random);
     }
 
-    void noteOff (int midiNote) noexcept
+    void noteOff (int midiChannel, int midiNote) noexcept
     {
         for (auto& voice : voices)
         {
-            if (! voice.isActive() || ! voice.isHeld() || voice.getNote() != midiNote)
+            if (! voice.plays (midiChannel, midiNote) || ! voice.isHeld())
                 continue;
 
-            if (sustainDown)
+            if (isSustainPedalDown (midiChannel))
                 voice.sustain();
             else
                 voice.release();
         }
     }
 
-    void setSustainPedal (bool isDown) noexcept
+    void setSustainPedal (int midiChannel, bool isDown) noexcept
     {
-        sustainDown = isDown;
+        sustainDown[channelIndex (midiChannel)] = isDown;
         if (isDown)
             return;
 
         for (auto& voice : voices)
-            if (voice.isActive() && voice.isSustained())
+            if (voice.isActive() && voice.getChannel() == midiChannel && voice.isSustained())
                 voice.release();
     }
 
-    /** Releases every note, as All Notes Off does. */
-    void allNotesOff() noexcept
+    /** Releases every note on `midiChannel`, as All Notes Off does. */
+    void allNotesOff (int midiChannel) noexcept
     {
-        sustainDown = false;
+        sustainDown[channelIndex (midiChannel)] = false;
         for (auto& voice : voices)
-            if (voice.isActive() && ! voice.isReleasing())
+            if (voice.isActive() && voice.getChannel() == midiChannel && ! voice.isReleasing())
                 voice.release();
     }
 
-    /** Silences every note at once, as All Sound Off does. */
-    void allSoundOff() noexcept
+    /** Silences every note on `midiChannel` at once, as All Sound Off does. */
+    void allSoundOff (int midiChannel) noexcept
     {
-        sustainDown = false;
+        sustainDown[channelIndex (midiChannel)] = false;
         for (auto& voice : voices)
-            voice.kill();
+            if (voice.getChannel() == midiChannel)
+                voice.kill();
     }
 
     /** How many notes are sounding (held, sustained or releasing). */
@@ -184,7 +186,7 @@ public:
         return count;
     }
 
-    /** Whether `midiNote` is sounding (held, sustained or releasing). */
+    /** Whether `midiNote` is sounding on any channel (held, sustained or releasing). */
     bool isNoteSounding (int midiNote) const noexcept
     {
         for (const auto& voice : voices)
@@ -207,7 +209,16 @@ public:
         return held;
     }
 
-    bool isSustainPedalDown() const noexcept { return sustainDown; }
+    /** Whether `midiNote` is sounding from MIDI `midiChannel`. */
+    bool isNoteSounding (int midiChannel, int midiNote) const noexcept
+    {
+        for (const auto& voice : voices)
+            if (voice.plays (midiChannel, midiNote))
+                return true;
+        return false;
+    }
+
+    bool isSustainPedalDown (int midiChannel) const noexcept { return sustainDown[channelIndex (midiChannel)]; }
 
 private:
     void handleMidi (const juce::uint8* data, int numBytes) noexcept
@@ -215,18 +226,19 @@ private:
         if (numBytes < 1)
             return;
 
-        const int status = data[0] & 0xf0;
-        const int first  = numBytes > 1 ? data[1] & 0x7f : 0;
-        const int second = numBytes > 2 ? data[2] & 0x7f : 0;
+        const int status  = data[0] & 0xf0;
+        const int channel = (data[0] & 0x0f) + 1;
+        const int first   = numBytes > 1 ? data[1] & 0x7f : 0;
+        const int second  = numBytes > 2 ? data[2] & 0x7f : 0;
 
         switch (status)
         {
-            case 0x90: noteOn (first, (float) second / 127.0f); break;
-            case 0x80: noteOff (first); break;
+            case 0x90: noteOn (channel, first, (float) second / 127.0f); break;
+            case 0x80: noteOff (channel, first); break;
             case 0xb0:
-                if (first == 64)        setSustainPedal (second >= 64);
-                else if (first == 120)  allSoundOff();
-                else if (first == 123)  allNotesOff();
+                if (first == 64)        setSustainPedal (channel, second >= 64);
+                else if (first == 120)  allSoundOff (channel);
+                else if (first == 123)  allNotesOff (channel);
                 break;
             default: break;
         }
@@ -268,6 +280,8 @@ private:
             start += length;
         }
     }
+
+    static size_t channelIndex (int midiChannel) noexcept { return (size_t) juce::jlimit (1, 16, midiChannel) - 1; }
 
     VoiceSettings currentVoiceSettings() const noexcept
     {
@@ -321,5 +335,5 @@ private:
     juce::ADSR::Parameters appliedEnvelope {};
     juce::Random  random { 0x5eed };
     std::uint64_t noteCounter = 0;
-    bool          sustainDown = false;
+    std::array<bool, 16> sustainDown {};   // per MIDI channel
 };

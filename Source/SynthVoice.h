@@ -45,9 +45,10 @@ public:
 
     void setEnvelope (const juce::ADSR::Parameters& parameters) { envelope.setParameters (parameters); }
 
-    /** Plays `midiNote`. A voice taken over while still sounding glides its
-        envelope on from where it was instead of jumping back to silence. */
-    void start (int midiNote, float velocity, std::uint64_t order, const VoiceSettings& settings, juce::Random& random)
+    /** Plays `midiNote` on MIDI `midiChannel` (1..16). A voice taken over while
+        still sounding glides its envelope on from where it was instead of
+        jumping back to silence. */
+    void start (int midiChannel, int midiNote, float velocity, std::uint64_t order, const VoiceSettings& settings, juce::Random& random)
     {
         if (! isActive())
         {
@@ -64,6 +65,7 @@ public:
             stackLevel = Unison::stackGain ((float) count);
         }
 
+        channel    = midiChannel;
         note       = midiNote;
         level      = noteLevel * juce::jlimit (0.0f, 1.0f, velocity);
         age        = order;
@@ -102,6 +104,13 @@ public:
     bool isSustained() const noexcept   { return sustained; }
     bool isReleasing() const noexcept   { return isActive() && ! held && ! sustained; }
     int  getNote() const noexcept       { return note; }
+    int  getChannel() const noexcept    { return channel; }
+
+    /** Whether this voice is sounding `midiNote` from MIDI `midiChannel`. */
+    bool plays (int midiChannel, int midiNote) const noexcept
+    {
+        return isActive() && channel == midiChannel && note == midiNote;
+    }
     std::uint64_t getAge() const noexcept { return age; }
 
     /** Adds `numSamples` (at most maxChunk) of this note into left / right. */
@@ -181,6 +190,7 @@ private:
     float  level      = 0.0f;
     float  stackLevel = 1.0f;
     int    note       = -1;
+    int    channel    = 1;
     bool   held       = false;
     bool   sustained  = false;
     std::uint64_t age = 0;

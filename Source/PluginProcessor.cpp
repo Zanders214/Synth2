@@ -143,9 +143,11 @@ void Synth2AudioProcessor::handleNoteOff (juce::MidiKeyboardState*, int, int mid
         keyEvents[(size_t) scope.startIndex1] = { midiNoteNumber, 0.0f };
 }
 
-// Audio thread: plays the keys pressed since the last block, at its start.
+// Audio thread: plays the keys pressed since the last block, at its start,
+// on MIDI channel 1.
 void Synth2AudioProcessor::playOnScreenKeys() noexcept
 {
+    constexpr int keyboardChannel = 1;
     const auto scope = keyFifo.read (keyFifo.getNumReady());
     const auto play  = [this] (int start, int size)
     {
@@ -153,9 +155,9 @@ void Synth2AudioProcessor::playOnScreenKeys() noexcept
         {
             const auto& key = keyEvents[(size_t) i];
             if (key.velocity > 0.0f)
-                engine.noteOn (key.note, key.velocity);
+                engine.noteOn (keyboardChannel, key.note, key.velocity);
             else
-                engine.noteOff (key.note);
+                engine.noteOff (keyboardChannel, key.note);
         }
     };
     play (scope.startIndex1, scope.blockSize1);
