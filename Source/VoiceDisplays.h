@@ -1,9 +1,11 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <array>
 
 #include "Synth2Theme.h"
 #include "Synth2VisualModel.h"
+#include "SynthVoice.h"
 
 /** What the two displays show: the sound's wave and its unison stack. */
 struct VoiceDisplayState
@@ -202,4 +204,154 @@ public:
             g.fillPath (body);
         }
     }
+};
+
+/** What the AMP well shows: the envelope's settings and where each note is in it. */
+struct AmpDisplayState
+{
+    float attackPosition  = 0.0f;   // the ATTACK dial's position, 0..1
+    float releasePosition = 0.0f;   // the RELEASE dial's position, 0..1
+    float attackSeconds   = 0.0f;
+    float releaseSeconds  = 0.0f;
+    float outputDb        = 0.0f;
+    std::array<NoteActivity, 16> notes {};
+
+    bool operator== (const AmpDisplayState& other) const noexcept
+    {
+        const auto same = [] (float a, float b) { return juce::exactlyEqual (a, b); };
+        if (! (same (attackPosition, other.attackPosition) && same (releasePosition, other.releasePosition)
+               && same (attackSeconds, other.attackSeconds) && same (releaseSeconds, other.releaseSeconds)
+               && same (outputDb, other.outputDb)))
+            return false;
+
+        for (size_t i = 0; i < notes.size(); ++i)
+            if (notes[i].stage != other.notes[i].stage || ! same (notes[i].level, other.notes[i].level)
+                || ! same (notes[i].releaseFrom, other.notes[i].releaseFrom))
+                return false;
+        return true;
+    }
+    bool operator!= (const AmpDisplayState& other) const noexcept { return ! (*this == other); }
+
+    int numSounding() const noexcept
+    {
+        int count = 0;
+        for (const auto& note : notes)
+            count += note.stage != NoteActivity::Stage::idle ? 1 : 0;
+        return count;
+    }
+};
+
+/**
+    AmpDisplay — the AMP well: the envelope every note follows, drawn in the
+    colours of the dials that shape it (the rise in ATTACK's, the top in
+    OUTPUT's, whose level sets its height, the fall in RELEASE's), over a
+    faint 0 dB line. Each note that sounds is a glowing dot riding it: up the
+    attack, resting on the top while its key (or the pedal) is down, then down
+    the release once it lets go.
+*/
+class AmpDisplay final : public DisplayWell
+{
+public:
+    AmpDisplay() { setInterceptsMouseClicks (false, false); }
+
+    /** The dials' colours, so each part of the envelope matches its dial. */
+    void setColours (juce::Colour attack, juce::Colour release, juce::Colour output)
+    {
+        attackColour  = attack;
+        releaseColour = release;
+        outputColour  = output;
+        repaint();
+    }
+
+    void setAmpState (const AmpDisplayState& newState)
+    {
+        if (newState == amp)
+            return;
+        amp = newState;
+        repaint();
+    }
+
+    const AmpDisplayState& getAmpState() const noexcept { return amp; }
+
+    void paint (juce::Graphics& g) override
+    {
+        const float s = uiScale;
+        auto plot = paintWell (g, "AMP", Synth2::Format::decibels (amp.outputDb));
+
+        // The times along the bottom: attack on the left, release on the right.
+        auto times = plot.removeFromBottom (10.0f * s);
+        g.setFont (Synth2::Fonts::mono (8.5f * s));
+        g.setColour (attackColour.withAlpha (0.85f));
+        g.drawText ("A " + Synth2::Format::seconds (amp.attackSeconds), times, juce::Justification::centredLeft, false);
+        g.setColour (releaseColour.withAlpha (0.85f));
+        g.drawText ("R " + Synth2::Format::seconds (amp.releaseSeconds), times, juce::Justification::centredRight, false);
+
+        plot = plot.reduced (2.0f * s, 4.0f * s);
+        const auto e  = Synth2VisualModel::envelope (amp.attackPosition, amp.releasePosition, amp.outputDb);
+        const auto at = [&plot] (float x, float y)
+        {
+            return juce::Point (plot.getX() + x * plot.getWidth(), plot.getBottom() - y * plot.getHeight());
+        };
+
+        // Baseline and the 0 dB line.
+        const float line = juce::jmax (1.0f, s);
+        g.setColour (Synth2::Palette::gridLine);
+        g.fillRect (juce::Rectangle (plot.getX(), plot.getBottom() - line, plot.getWidth(), line));
+        const float zeroDb = at (0.0f, Synth2VisualModel::heightForDb (0.0f)).y;
+        for (float x = plot.getX(); x < plot.getRight(); x += 6.0f * s)
+            g.fillRect (juce::Rectangle (x, zeroDb - line * 0.5f, 3.0f * s, line));
+
+        // The shape, softly filled underneath.
+        juce::Path shape;
+        shape.startNewSubPath (at (0.0f, 0.0f));
+        shape.lineTo (at (e.attackEnd, e.peak));
+        shape.lineTo (at (e.holdEnd, e.peak));
+        shape.lineTo (at (e.releaseEnd, 0.0f));
+        juce::Path fill (shape);
+        fill.lineTo (at (0.0f, 0.0f));
+        fill.closeSubPath();
+        juce::ColourGradient wash (outputColour.withAlpha (0.18f), 0.0f, at (0.0f, e.peak).y,
+                                   outputColour.withAlpha (0.0f), 0.0f, plot.getBottom(), false);
+        g.setGradientFill (wash);
+        g.fillPath (fill);
+
+        // Each part in its dial's colour, with a glow under it.
+        const auto stroke = [&] (juce::Point<float> from, juce::Point<float> to, juce::Colour colour)
+        {
+            juce::Path part;
+            part.startNewSubPath (from);
+            part.lineTo (to);
+            g.setColour (colour.withAlpha (0.25f));
+            g.strokePath (part, juce::PathStrokeType (6.0f * s, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            g.setColour (colour);
+            g.strokePath (part, juce::PathStrokeType (2.0f * s, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        };
+        stroke (at (0.0f, 0.0f),           at (e.attackEnd, e.peak),   attackColour);
+        stroke (at (e.attackEnd, e.peak),  at (e.holdEnd, e.peak),     outputColour);
+        stroke (at (e.holdEnd, e.peak),    at (e.releaseEnd, 0.0f),    releaseColour);
+
+        // A dot per sounding note, in the colour of the part it is on.
+        const float dot = 3.5f * s;
+        for (const auto& note : amp.notes)
+        {
+            if (note.stage == NoteActivity::Stage::idle)
+                continue;
+
+            const auto d = Synth2VisualModel::noteDot (e, (int) note.stage, note.level, note.releaseFrom);
+            const auto colour = note.stage == NoteActivity::Stage::attack  ? attackColour
+                              : note.stage == NoteActivity::Stage::release ? releaseColour
+                                                                           : outputColour;
+            juce::Path body;
+            body.addEllipse (juce::Rectangle<float> (dot * 2.0f, dot * 2.0f).withCentre (at (d.x, d.y)));
+            juce::DropShadow (colour.withAlpha (0.9f), (int) (8.0f * s), {}).drawForPath (g, body);
+            g.setColour (juce::Colours::white);
+            g.fillPath (body);
+        }
+    }
+
+private:
+    AmpDisplayState amp;
+    juce::Colour attackColour  { Synth2::Palette::pink };
+    juce::Colour releaseColour { Synth2::Palette::pink };
+    juce::Colour outputColour  { Synth2::Palette::amber };
 };

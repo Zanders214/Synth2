@@ -175,6 +175,38 @@ void testVisualModel()
     const auto halfway = M::marker (3, 4, 25.0f, 1.0f);
     check (approx (halfway.x, 0.75f, 1e-6f), "the detune scale is fixed, so half the DETUNE reaches halfway out");
 }
+void testEnvelope()
+{
+    std::printf ("AMP envelope:\n");
+    using M = Synth2VisualModel;
+
+    const auto shortest = M::envelope (0.0f, 0.0f, 0.0f);
+    const auto longest  = M::envelope (1.0f, 1.0f, 0.0f);
+    check (shortest.attackEnd > 0.0f && shortest.attackEnd < shortest.holdEnd && shortest.holdEnd < shortest.releaseEnd,
+           "the rise, the top and the fall come in order");
+    check (longest.releaseEnd <= 1.0f + 1e-6f, "at their longest the ramps still fit the well");
+    check (longest.attackEnd > shortest.attackEnd && approx (longest.holdEnd - longest.attackEnd, shortest.holdEnd - shortest.attackEnd, 1e-6f),
+           "turning ATTACK up stretches the rise; the top keeps its length");
+    check (longest.releaseEnd - longest.holdEnd > shortest.releaseEnd - shortest.holdEnd, "turning RELEASE up stretches the fall");
+
+    check (approx (M::heightForDb (-24.0f), 0.0f, 1e-6f) && approx (M::heightForDb (6.0f), 1.0f, 1e-6f)
+               && approx (M::heightForDb (0.0f), 0.8f, 1e-6f),
+           "OUTPUT sets the top's height on a -24..+6 dB scale");
+    check (M::envelope (0.5f, 0.5f, -12.0f).peak < M::envelope (0.5f, 0.5f, 0.0f).peak, "turning OUTPUT down lowers the top");
+
+    const auto e = M::envelope (0.5f, 0.5f, 0.0f);
+    const auto rising  = M::noteDot (e, 1, 0.5f, 1.0f);
+    const auto holding = M::noteDot (e, 2, 1.0f, 1.0f);
+    const auto falling = M::noteDot (e, 3, 0.25f, 1.0f);
+    check (approx (rising.x, 0.5f * e.attackEnd, 1e-6f) && approx (rising.y, 0.5f * e.peak, 1e-6f),
+           "halfway up the attack, a note's dot is halfway up the rise");
+    check (holding.x > e.attackEnd && holding.x < e.holdEnd && approx (holding.y, e.peak, 1e-6f),
+           "a held note rests on the top");
+    check (falling.x > e.holdEnd && falling.x < e.releaseEnd && approx (falling.y, 0.25f * e.peak, 1e-6f),
+           "a releasing note walks down the fall");
+    const auto letGoEarly = M::noteDot (e, 3, 0.4f, 0.4f);
+    check (approx (letGoEarly.x, e.holdEnd, 1e-6f), "a note let go mid-attack starts its fall at the release's top");
+}
 } // namespace
 
 int main()
@@ -185,6 +217,7 @@ int main()
     testPolyBlep();
     testUnisonSpread();
     testVisualModel();
+    testEnvelope();
 
     std::printf ("\n%s\n", failures == 0 ? "ALL TESTS PASSED" : "SOME TESTS FAILED");
     return failures == 0 ? 0 : 1;

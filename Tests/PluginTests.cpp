@@ -259,7 +259,7 @@ void testEditor()
     if (editor == nullptr)
         return;
 
-    check (editor->getWidth() == 480 && editor->getHeight() == 488, "opens at its 480 x 488 design size");
+    check (editor->getWidth() == 480 && editor->getHeight() == 548, "opens at its 480 x 548 design size");
     check (editor->isResizable(), "is resizable");
 
     const auto first = render (*editor);
@@ -323,8 +323,65 @@ void testEditor()
     pump (100);
     check (! p.getKeyboardState().isNoteOn (1, 64), "and goes dark when the host lets go");
 
+    // Each group's display sits right above its three dials.
+    const auto above = [] (juce::Component& display, juce::Slider& firstDial, juce::Slider& lastDial)
+    {
+        return display.getBottom() <= firstDial.getY() && display.getX() <= firstDial.getX()
+            && display.getRight() >= lastDial.getRight();
+    };
+    check (above (editor->getUnisonDisplay(), editor->getDial (0), editor->getDial (2)), "the UNISON well sits over VOICES, DETUNE and WIDTH");
+    check (above (editor->getAmpDisplay(), editor->getDial (3), editor->getDial (5)), "the AMP well sits over ATTACK, RELEASE and OUTPUT");
+
+    // The AMP well follows its dials, and a dot rides the envelope for each note.
+    playAndMeasure (p, {}, 100);      // let the earlier tests' notes fade out
+    setParam (p, ParamID::attack, 0.5f);
+    setParam (p, ParamID::output, -6.0f);
+    pump (100);
+    check (approx (editor->getAmpDisplay().getAmpState().attackSeconds, 0.5f, 0.001f)
+               && approx (editor->getAmpDisplay().getAmpState().outputDb, -6.0f, 0.01f),
+           "the AMP well shows ATTACK and OUTPUT");
+    const auto beforeNotes = render (*editor);
+
+    juce::MidiBuffer chordOn;
+    for (const int note : { 60, 64 })
+        chordOn.addEvent (juce::MidiMessage::noteOn (2, note, 0.8f), 0);
+    playAndMeasure (p, chordOn, 4);   // ~40 ms into a 500 ms attack
+    pump (100);
+    const auto& rising = editor->getAmpDisplay().getAmpState();
+    check (rising.numSounding() == 2, "two notes, two dots");
+    bool climbing = true;
+    for (const auto& note : rising.notes)
+        if (note.stage != NoteActivity::Stage::idle)
+            climbing = climbing && note.stage == NoteActivity::Stage::attack && note.level > 0.0f && note.level < 0.5f;
+    check (climbing, "early in the attack, they are partway up the rise");
+    check (pixelsChanged (beforeNotes, render (*editor)) > 20, "and they show in the AMP well");
+
+    playAndMeasure (p, {}, 60);       // past the attack
+    pump (100);
+    bool holding = editor->getAmpDisplay().getAmpState().numSounding() == 2;
+    for (const auto& note : editor->getAmpDisplay().getAmpState().notes)
+        if (note.stage != NoteActivity::Stage::idle)
+            holding = holding && note.stage == NoteActivity::Stage::hold;
+    check (holding, "with the keys down, they rest on the top");
+
+    juce::MidiBuffer chordOff;
+    for (const int note : { 60, 64 })
+        chordOff.addEvent (juce::MidiMessage::noteOff (2, note), 0);
+    playAndMeasure (p, chordOff, 4);
+    pump (100);
+    bool falling = editor->getAmpDisplay().getAmpState().numSounding() == 2;
+    for (const auto& note : editor->getAmpDisplay().getAmpState().notes)
+        if (note.stage != NoteActivity::Stage::idle)
+            falling = falling && note.stage == NoteActivity::Stage::release && note.level < note.releaseFrom;
+    check (falling, "let go, they walk down the release");
+    playAndMeasure (p, {}, 100);
+    pump (100);
+    check (editor->getAmpDisplay().getAmpState().numSounding() == 0, "and leave once the notes have faded");
+    setParam (p, ParamID::attack, 0.005f);
+    setParam (p, ParamID::output, 0.0f);
+
     // Scaled up: the same face at 2x.
-    editor->setSize (960, 976);
+    editor->setSize (960, 1096);
     check (approx ((float) editor->getDial (0).getWidth() / 2.0f, 52.0f, 1.0f), "at 2x every control doubles");
     const auto doubled = render (*editor);
     check (hasDetail (doubled), "renders at 2x");
@@ -333,7 +390,7 @@ void testEditor()
     if (auto* constrainer = editor->getConstrainer())
         constrainer->setBoundsForComponent (editor, { 0, 0, 720, 600 }, false, false, true, true);
     const float aspect = (float) editor->getWidth() / (float) editor->getHeight();
-    check (approx (aspect, 480.0f / 488.0f, 0.02f), "resizing keeps the design's proportions");
+    check (approx (aspect, 480.0f / 548.0f, 0.02f), "resizing keeps the design's proportions");
 }
 } // namespace
 

@@ -64,6 +64,10 @@ public:
     /** How many notes are sounding, for the tests and the editor. */
     int getNumActiveNotes() const noexcept { return activeNotes.load(); }
 
+    /** Where each voice was in its envelope at the end of the last block, for
+        the AMP display. Any thread. */
+    std::array<NoteActivity, Synth2Engine::maxNotes> getNoteActivity() const noexcept;
+
     /** The engine's settings, from the parameters. */
     Synth2Engine::Settings currentSettings() const noexcept;
 
@@ -78,6 +82,15 @@ private:
     juce::AudioProcessorValueTreeState apvts;
     Synth2Engine engine;
     std::atomic<int> activeNotes { 0 };
+
+    // Each voice's envelope, published by the audio thread every block.
+    struct PublishedActivity
+    {
+        std::atomic<int>   stage       { 0 };
+        std::atomic<float> level       { 0.0f };
+        std::atomic<float> releaseFrom { 1.0f };
+    };
+    std::array<PublishedActivity, Synth2Engine::maxNotes> noteActivity;
 
     // The on-screen keyboard. Key presses go to the audio thread through
     // keyFifo (velocity 0 = key up); the keys the host holds come back as

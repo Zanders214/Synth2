@@ -195,6 +195,15 @@ public:
         return false;
     }
 
+    /** Where every voice is in its envelope (idle ones included). */
+    std::array<NoteActivity, maxNotes> getActivity() const noexcept
+    {
+        std::array<NoteActivity, maxNotes> activity {};
+        for (size_t i = 0; i < voices.size(); ++i)
+            activity[i] = voices[i].getActivity();
+        return activity;
+    }
+
     /** The keys held down right now, one bit per MIDI note (notes 0..63 in the
         first word, 64..127 in the second). */
     std::array<std::uint64_t, 2> getHeldNotes() const noexcept

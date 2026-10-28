@@ -10,7 +10,7 @@ using namespace Synth2;
 namespace
 {
     constexpr float kDesignWidth  = 480.0f;
-    constexpr float kDesignHeight = 488.0f;
+    constexpr float kDesignHeight = 548.0f;
     constexpr float kPanelPad     = 24.0f;
 
     // The dials, in display order: three for the unison stack, three for the amp.
@@ -51,6 +51,8 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
 {
     addAndMakeVisible (waveDisplay);
     addAndMakeVisible (unisonDisplay);
+    addAndMakeVisible (ampDisplay);
+    ampDisplay.setColours (dialColour (3), dialColour (4), dialColour (5));   // ATTACK, RELEASE, OUTPUT
     addAndMakeVisible (waveSelector);
     addAndMakeVisible (keyboard);
 
@@ -110,13 +112,32 @@ VoiceDisplayState Synth2AudioProcessorEditor::displayState() const
     return state;
 }
 
+AmpDisplayState Synth2AudioProcessorEditor::ampState() const
+{
+    const auto& parameters = processorRef.getState();
+    const auto  settings   = processorRef.currentSettings();
+
+    AmpDisplayState state;
+    state.attackPosition  = parameters.getParameter (ParamID::attack)->getValue();
+    state.releasePosition = parameters.getParameter (ParamID::release)->getValue();
+    state.attackSeconds   = settings.attackSeconds;
+    state.releaseSeconds  = settings.releaseSeconds;
+    state.outputDb        = settings.outputDb;
+
+    static_assert (std::tuple_size_v<decltype (state.notes)> == Synth2Engine::maxNotes);
+    state.notes = processorRef.getNoteActivity();
+    return state;
+}
+
 void Synth2AudioProcessorEditor::timerCallback()
 {
     // The displays follow the parameters, however they change (dials, host
-    // automation, a restored set); each repaints only when its state moved.
+    // automation, a restored set), and the AMP well the notes as they play;
+    // each repaints only when its state moved.
     const auto state = displayState();
     waveDisplay.setState (state);
     unisonDisplay.setState (state);
+    ampDisplay.setAmpState (ampState());
 
     // Light the keys the host is playing.
     processorRef.showHostNotesOnKeyboard();
@@ -191,12 +212,6 @@ void Synth2AudioProcessorEditor::paintHeader (juce::Graphics& g, float s) const
 
 void Synth2AudioProcessorEditor::paintDialLabels (juce::Graphics& g, float s) const
 {
-    // Section captions over the two groups of dials.
-    g.setFont (Fonts::sans (9.0f * s, true, 0.22f));   // --tracking-wide
-    g.setColour (Palette::textFaint);
-    g.drawText ("UNISON", layout.unisonCaption.toFloat(), juce::Justification::centred, false);
-    g.drawText ("AMP",    layout.ampCaption.toFloat(),    juce::Justification::centred, false);
-
     // Dial convention: name + mono value stacked *beneath* the arc — the name in
     // grey (--text-2), the value in the dial's own colour.
     const auto nameFont  = Fonts::sans (10.0f * s, true, 0.10f);   // --tracking-data
@@ -232,6 +247,8 @@ void Synth2AudioProcessorEditor::resized()
     waveSelector.setUiScale (s);
     keyboard.setUiScale (s);
 
+    ampDisplay.setUiScale (s);
+
     auto area = getLocalBounds().reduced (px (kPanelPad));
 
     // Header: wordmark on the left, the badge on the right.
@@ -239,36 +256,40 @@ void Synth2AudioProcessorEditor::resized()
     layout.badge  = layout.header.withTrimmedLeft (layout.header.getWidth() - px (54.0f))
                                  .withSizeKeepingCentre (px (54.0f), px (20.0f));
 
-    // The two wells side by side.
+    // The WAVE well across the panel, the wave chips under it.
     area.removeFromTop (px (16.0f));
-    auto wells = area.removeFromTop (px (104.0f));
-    const int wellGap = px (8.0f);
-    const int wellWidth = (wells.getWidth() - wellGap) / 2;
-    waveDisplay.setBounds (wells.removeFromLeft (wellWidth));
-    unisonDisplay.setBounds (wells.withTrimmedLeft (wellGap));
-
-    // The wave chips.
+    waveDisplay.setBounds (area.removeFromTop (px (84.0f)));
     area.removeFromTop (px (10.0f));
     waveSelector.setBounds (area.removeFromTop (px (28.0f)));
 
-    // Hairline, then the dials under their two captions.
+    // Hairline, then two groups side by side, each a display over its three
+    // dials: UNISON on the left, AMP on the right.
     area.removeFromTop (px (16.0f));
     layout.dialsSeparatorY = area.getY();
-    area.removeFromTop (px (12.0f));
+    area.removeFromTop (px (14.0f));
 
-    auto captions = area.removeFromTop (px (12.0f));
-    layout.unisonCaption = captions.removeFromLeft (captions.getWidth() / 2);
-    layout.ampCaption    = captions;
+    auto groups = area.removeFromTop (px (190.0f));
+    const int groupGap   = px (12.0f);
+    auto unisonGroup = groups.removeFromLeft ((groups.getWidth() - groupGap) / 2);
+    auto ampGroup    = groups.withTrimmedLeft (groupGap);
 
-    area.removeFromTop (px (8.0f));
-    auto row = area.removeFromTop (px (82.0f));
-    const int columnWidth = row.getWidth() / numDials;
-    for (size_t i = 0; i < dials.size(); ++i)
+    unisonDisplay.setBounds (unisonGroup.removeFromTop (px (96.0f)));
+    ampDisplay.setBounds (ampGroup.removeFromTop (px (96.0f)));
+    unisonGroup.removeFromTop (px (12.0f));
+    ampGroup.removeFromTop (px (12.0f));
+
+    const auto layDials = [&] (juce::Rectangle<int> row, size_t first)
     {
-        auto column = i + 1 == dials.size() ? row : row.removeFromLeft (columnWidth);
-        layout.dialColumns[i] = column;
-        dials[i].setBounds (column.withHeight (px (52.0f)).withSizeKeepingCentre (px (52.0f), px (52.0f)));
-    }
+        const int columnWidth = row.getWidth() / 3;
+        for (size_t i = first; i < first + 3; ++i)
+        {
+            auto column = i + 1 == first + 3 ? row : row.removeFromLeft (columnWidth);
+            layout.dialColumns[i] = column;
+            dials[i].setBounds (column.withHeight (px (52.0f)).withSizeKeepingCentre (px (52.0f), px (52.0f)));
+        }
+    };
+    layDials (unisonGroup, 0);
+    layDials (ampGroup, 3);
 
     // Hairline, then the keyboard fills the rest.
     area.removeFromTop (px (12.0f));
