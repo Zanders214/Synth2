@@ -1,0 +1,126 @@
+name: Build
+
+on:
+  push:
+    branches: [dev, main]
+    paths-ignore: ['**.md']   # docs-only changes can't affect the build
+  pull_request:
+    paths-ignore: ['**.md']   # docs-only changes can't affect the build
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ninja-build \
+            xvfb \
+            libasound2-dev \
+            libjack-jackd2-dev \
+            libfreetype6-dev \
+            libfontconfig1-dev \
+            libx11-dev \
+            libxcomposite-dev \
+            libxcursor-dev \
+            libxext-dev \
+            libxinerama-dev \
+            libxrandr-dev \
+            libxrender-dev \
+            libglu1-mesa-dev \
+            libcurl4-openssl-dev
+
+      # Compiler cache: JUCE's modules are most of every compile and almost never
+      # change. Only push builds save, so PRs read the warm dev/main cache
+      # without crowding it out of the 10 GB repo cache quota. Skipped on Windows,
+      # where the Visual Studio generator (kept to match release.yml) ignores
+      # compiler launchers.
+      - name: ccache
+        if: runner.os != 'Windows'
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: build-${{ matrix.os }}
+          max-size: 500M
+          save: ${{ github.event_name != 'pull_request' }}
+
+      - name: Cache JUCE (FetchContent)
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: juce-${{ runner.os }}-8.0.4
+
+      - name: Configure
+        run: >
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          ${{ runner.os == 'macOS' && '-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"' || '' }}
+          ${{ runner.os != 'Windows' && '-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache' || '' }}
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build --build-config Release --output-on-failure
+
+      # Every OS validates the VST3 it just built, so no job rebuilds the plugin
+      # only to validate it. Linux runs in-process under xvfb with a pinned
+      # pluginval and a long timeout (the shared runners are slow).
+      - name: Validate VST3 (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          curl -L -o pluginval.zip https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Linux.zip
+          unzip -o pluginval.zip && chmod +x pluginval
+          VST3=$(find build -name '*.vst3' -path '*_artefacts*' | head -1)
+          echo "Validating $VST3"
+          xvfb-run -a ./pluginval --strictness-level 5 --validate-in-process --timeout-ms 300000 "$VST3"
+
+      - name: Download pluginval (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          curl -L "https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip" -o pluginval.zip
+          unzip -o pluginval.zip
+
+      - name: Download pluginval (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          curl -L "https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip" -o pluginval.zip
+          7z x pluginval.zip -y
+
+      - name: Validate VST3 (macOS)
+        if: runner.os == 'macOS'
+        run: >
+          ./pluginval.app/Contents/MacOS/pluginval --strictness-level 5 --validate
+          "$(find build -name '*.vst3' -type d | head -n 1)"
+
+      - name: Validate VST3 (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: >
+          ./pluginval.exe --strictness-level 5 --validate
+          "$(find build -name '*.vst3' -type d | head -n 1)"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Synth2-${{ runner.os }}
+          path: |
+            build/Synth2_artefacts/**/*.vst3
+            build/Synth2_artefacts/**/*.component
+            build/Synth2_artefacts/**/*.app
+            build/Synth2_artefacts/**/Standalone/*.exe
+          if-no-files-found: ignore
