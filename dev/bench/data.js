@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793192440420,
+  "lastUpdate": 1793196069172,
   "repoUrl": "https://github.com/Zanders214/Synth2",
   "entries": {
     "ZandersSynth2 DSP": [
@@ -43,6 +43,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "DSP load 16x16 @48k/512",
             "value": 7.651,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "152227414+Zanders214@users.noreply.github.com",
+            "name": "Dennis Zanders",
+            "username": "Zanders214"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "602ec2e01bdf2f68b4e9f55576eec14be57af534",
+          "message": "Merge pull request #2 from Zanders214/claude/control-displays\n\nShow what the dials do: a UNISON well over its dials and an AMP envelope with live notes",
+          "timestamp": "2026-10-28T14:59:51+01:00",
+          "tree_id": "5cb24e1cbd7b7bde49840d852d4f0d4b9a2bb137",
+          "url": "https://github.com/Zanders214/Synth2/commit/602ec2e01bdf2f68b4e9f55576eec14be57af534"
+        },
+        "date": 1793196068463,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "processBlock 8x7",
+            "value": 194452.224,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 8x7 @48k/512",
+            "value": 1.823,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16",
+            "value": 869038.459,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 @48k/512",
+            "value": 8.147,
             "unit": "%"
           }
         ]
