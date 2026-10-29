@@ -26,6 +26,7 @@
 #include <optional>
 #include <tuple>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -1042,6 +1043,29 @@ void testPresets()
     Synth2AudioProcessor restored;
     restored.setStateInformation (saved.getData(), (int) saved.getSize());
     check (restored.getCurrentProgram() == sub, "the loaded preset comes back with the session");
+    // From off the message thread a program change waits for it; the latest
+    // request wins, and a restored session cancels one still waiting.
+    const auto fromAnotherThread = [&p] (std::initializer_list<int> programs)
+    {
+        std::thread host ([&p, programs] { for (const int program : programs) p.setCurrentProgram (program); });
+        host.join();
+    };
+    fromAnotherThread ({ 1, sub });
+    pump (50);
+    check (p.getCurrentProgram() == sub && approx (param (p, ParamID::osc1Level), 1.0f, 1e-4f),
+           "switching back to the loaded program off the message thread cancels the one queued before it");
+    fromAnotherThread ({ 1 });
+    pump (50);
+    check (p.getCurrentProgram() == 1, "a program asked for off the message thread loads on it");
+    p.loadPreset (sub);
+    setParam (p, ParamID::osc1Level, 0.3f);
+    p.getStateInformation (saved);
+    fromAnotherThread ({ 2 });
+    p.setStateInformation (saved.getData(), (int) saved.getSize());
+    pump (50);
+    check (p.getCurrentProgram() == sub && approx (param (p, ParamID::osc1Level), 0.3f, 1e-4f),
+           "a restored session isn't overwritten by a program asked for before it");
+
     p.setCurrentProgram (-1);
     p.setCurrentProgram (Presets::numPresets);
     check (p.getCurrentProgram() == sub, "a program out of range is ignored");

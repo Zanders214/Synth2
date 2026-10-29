@@ -334,13 +334,22 @@ void Synth2AudioProcessor::setRoutedToOutput (int oscillator, bool routed) noexc
 int Synth2AudioProcessor::getNumPrograms()              { return Presets::numPresets; }
 int Synth2AudioProcessor::getCurrentProgram()           { return currentPreset.load(); }
 
+// The latest request wins: one for the preset already loaded cancels any
+// still waiting for the message thread rather than being ignored.
 void Synth2AudioProcessor::setCurrentProgram (int index)
 {
-    if (index < 0 || index >= Presets::numPresets || index == currentPreset.load())
+    if (index < 0 || index >= Presets::numPresets)
         return;
     if (juce::MessageManager::existsAndIsCurrentThread())
     {
-        loadPreset (index);
+        pendingPreset.store (-1);
+        if (index != currentPreset.load())
+            loadPreset (index);
+        return;
+    }
+    if (index == currentPreset.load())
+    {
+        pendingPreset.store (-1);
         return;
     }
     pendingPreset.store (index);
@@ -377,6 +386,10 @@ void Synth2AudioProcessor::setStateInformation (const void* data, int sizeInByte
     auto xml = getXmlFromBinary (data, sizeInBytes);
     if (xml == nullptr || ! xml->hasTagName (apvts.state.getType()))
         return;
+
+    // A program a host asked for before this session arrived must not load
+    // over it once the message thread gets to it.
+    pendingPreset.store (-1);
 
     // An older session is brought up to date (see Bench::Model::migrate).
     // (replaceState shares the tree and fills in the parameters it lacks,
