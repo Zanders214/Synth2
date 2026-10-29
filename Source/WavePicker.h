@@ -106,9 +106,8 @@ public:
         // A trackpad sends many small deltas, a wheel a few big ones: gather
         // them, and step once each time enough has built up. Down (or right)
         // is the next shape.
-        wheelTravel += std::abs (wheel.deltaY) >= std::abs (wheel.deltaX) ? wheel.deltaY : -wheel.deltaX;
-        if (wheel.isReversed)
-            wheelTravel = -wheelTravel;
+        const float delta = std::abs (wheel.deltaY) >= std::abs (wheel.deltaX) ? wheel.deltaY : -wheel.deltaX;
+        wheelTravel += wheel.isReversed ? -delta : delta;
 
         constexpr float perStep = 0.12f;
         if (std::abs (wheelTravel) >= perStep)

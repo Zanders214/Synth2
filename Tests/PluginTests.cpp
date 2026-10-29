@@ -338,6 +338,15 @@ void testEditor()
     picker.mouseWheelMove (clickAt (picker, { 40.0f, 60.0f }), wheel);
     check (picker.getSelected() == 3, "scrolling up flips back");
 
+    // A trackpad with natural scrolling: many small, reversed deltas add up.
+    wheel.deltaY     = 0.05f;
+    wheel.isReversed = true;
+    for (int i = 0; i < 3; ++i)
+        picker.mouseWheelMove (clickAt (picker, { 40.0f, 60.0f }), wheel);
+    check (picker.getSelected() == 0, "small reversed trackpad deltas gather into a step");
+    picker.step (-1);
+    wheel.isReversed = false;
+
     // A morph, not a jump, then the new shape.
     check (pumpUntil ([&well] { return well.getState().wave == Waveform::square; }), "the WAVE well follows the pick");
     check (well.getShownWave() == Waveform::square, "and shows the new shape");
