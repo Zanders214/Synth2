@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793266715736,
+  "lastUpdate": 1793267845480,
   "repoUrl": "https://github.com/Zanders214/Synth2",
   "entries": {
     "ZandersSynth2 DSP": [
@@ -131,6 +131,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "DSP load 16x16 @48k/512",
             "value": 8.221,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "152227414+Zanders214@users.noreply.github.com",
+            "name": "Dennis Zanders",
+            "username": "Zanders214"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3fec4825a25da0768a535b3d2844bd621513eb00",
+          "message": "Merge pull request #4 from Zanders214/claude/wave-picker\n\nPick the wave in the WAVE well: a stepper pill, the scroll wheel and a drop-open tray of shapes",
+          "timestamp": "2026-10-29T10:55:36+01:00",
+          "tree_id": "648d81bca86594366f4466efa3bdffbbdb16bfd9",
+          "url": "https://github.com/Zanders214/Synth2/commit/3fec4825a25da0768a535b3d2844bd621513eb00"
+        },
+        "date": 1793267844865,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "processBlock 8x7",
+            "value": 149190.107,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 8x7 @48k/512",
+            "value": 1.399,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16",
+            "value": 664407,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 @48k/512",
+            "value": 6.229,
             "unit": "%"
           }
         ]
