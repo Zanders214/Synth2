@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793267845480,
+  "lastUpdate": 1793269058308,
   "repoUrl": "https://github.com/Zanders214/Synth2",
   "entries": {
     "ZandersSynth2 DSP": [
@@ -175,6 +175,60 @@ window.BENCHMARK_DATA = {
           {
             "name": "DSP load 16x16 @48k/512",
             "value": 6.229,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "152227414+Zanders214@users.noreply.github.com",
+            "name": "Dennis Zanders",
+            "username": "Zanders214"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "77f69f27e4b921b3bd134659d9de2bb33d813683",
+          "message": "Merge pull request #5 from Zanders214/claude/second-oscillator\n\nAdd a second oscillator: OSC 2 with its own shape, pitch, fine tune and level",
+          "timestamp": "2026-10-29T11:15:36+01:00",
+          "tree_id": "87057bb248edc08fd13c32c1a3be7626a69c0b84",
+          "url": "https://github.com/Zanders214/Synth2/commit/77f69f27e4b921b3bd134659d9de2bb33d813683"
+        },
+        "date": 1793269057931,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "processBlock 8x7",
+            "value": 177593.289,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 8x7 @48k/512",
+            "value": 1.665,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16",
+            "value": 793992.514,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 @48k/512",
+            "value": 7.444,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 2-osc",
+            "value": 1235367.767,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 2-osc @48k/512",
+            "value": 11.582,
             "unit": "%"
           }
         ]
