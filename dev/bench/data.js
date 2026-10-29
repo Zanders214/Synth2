@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793196069172,
+  "lastUpdate": 1793266715736,
   "repoUrl": "https://github.com/Zanders214/Synth2",
   "entries": {
     "ZandersSynth2 DSP": [
@@ -87,6 +87,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "DSP load 16x16 @48k/512",
             "value": 8.147,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "152227414+Zanders214@users.noreply.github.com",
+            "name": "Dennis Zanders",
+            "username": "Zanders214"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a3146773dbf7226afb999d1b36c8d953346bfdda",
+          "message": "Merge pull request #3 from Zanders214/claude/sonar-cleanup\n\nClear the SonarCloud findings",
+          "timestamp": "2026-10-29T10:36:22+01:00",
+          "tree_id": "c72a4cf529d04487688b459919aef6a8f87d606a",
+          "url": "https://github.com/Zanders214/Synth2/commit/a3146773dbf7226afb999d1b36c8d953346bfdda"
+        },
+        "date": 1793266715415,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "processBlock 8x7",
+            "value": 196502.865,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 8x7 @48k/512",
+            "value": 1.842,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16",
+            "value": 876925.067,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 @48k/512",
+            "value": 8.221,
             "unit": "%"
           }
         ]
