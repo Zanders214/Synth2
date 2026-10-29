@@ -296,9 +296,8 @@ void testEditor()
     check (approx (param (p, ParamID::detune), 40.0f, 0.01f), "the DETUNE dial sets DETUNE");
 
     // The displays follow the parameters on the editor's timer.
-    pump (100);
-    check (editor->getUnisonDisplay().getState().voices == 5
-               && approx (editor->getUnisonDisplay().getState().detune, 40.0f, 0.01f),
+    const auto& unison = editor->getUnisonDisplay();
+    check (pumpUntil ([&unison] { return unison.getState().voices == 5 && approx (unison.getState().detune, 40.0f, 0.01f); }),
            "the UNISON well shows the stack");
     const auto spread = render (*editor);
     check (pixelsChanged (first, spread) > 200, "and redraws when the stack changes");
@@ -311,13 +310,11 @@ void testEditor()
     chips.mouseDown (click);
     check (approx (param (p, ParamID::wave), (float) Waveform::sine, 1e-6f) && chips.getSelected() == 0,
            "clicking the SINE chip picks the sine");
-    pump (100);
-    check (editor->getWaveDisplay().getState().wave == Waveform::sine, "the WAVE well shows it");
+    check (pumpUntil ([editor] { return editor->getWaveDisplay().getState().wave == Waveform::sine; }), "the WAVE well shows it");
 
     // Host automation reaches the chips too.
     setParam (p, ParamID::wave, (float) Waveform::square);
-    pump (100);
-    check (chips.getSelected() == 3, "a host change of WAVE lights the SQUARE chip");
+    check (pumpUntil ([&chips] { return chips.getSelected() == 3; }), "a host change of WAVE lights the SQUARE chip");
 
     // Keyboard: middle C is on it, and the keys the host plays light up on it
     // without being played a second time.
@@ -328,16 +325,14 @@ void testEditor()
     juce::MidiBuffer hostNote;
     hostNote.addEvent (juce::MidiMessage::noteOn (1, 64, 0.8f), 0);
     playAndMeasure (p, hostNote, 2);
-    pump (100);
-    check (p.getKeyboardState().isNoteOn (1, 64), "a note the host plays lights its key");
+    check (pumpUntil ([&p] { return p.getKeyboardState().isNoteOn (1, 64); }), "a note the host plays lights its key");
     playAndMeasure (p, {}, 2);
     check (p.getNumActiveNotes() == 1, "and isn't played again from the keyboard");
 
     juce::MidiBuffer hostOff;
     hostOff.addEvent (juce::MidiMessage::noteOff (1, 64), 0);
     playAndMeasure (p, hostOff, 2);
-    pump (100);
-    check (! p.getKeyboardState().isNoteOn (1, 64), "and goes dark when the host lets go");
+    check (pumpUntil ([&p] { return ! p.getKeyboardState().isNoteOn (1, 64); }), "and goes dark when the host lets go");
 
     // Each group's display sits right above its three dials.
     const auto above = [] (juce::Component& display, juce::Slider& firstDial, juce::Slider& lastDial)
