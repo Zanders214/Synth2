@@ -139,6 +139,18 @@ namespace Synth2
             return juce::String (juce::CharPointer_UTF8 ("\xc2\xb1")) + juce::String (c, 1) + " ct";
         }
 
+        /** An oscillator's PITCH with its sign: "+7 st" / "0 st" / "-12 st". */
+        inline juce::String semitones (int st)
+        {
+            return (st > 0 ? "+" : "") + juce::String (st) + " st";
+        }
+
+        /** An oscillator's FINE tune with its sign: "+3.5 ct" / "0.0 ct" / "-12.0 ct". */
+        inline juce::String fineCents (float c)
+        {
+            return (c > 0.05f ? "+" : "") + juce::String (c, 1) + " ct";
+        }
+
         /** A level in dB with its sign, e.g. "-6.0 dB" / "0.0 dB" / "+3.0 dB". */
         inline juce::String decibels (float db)
         {

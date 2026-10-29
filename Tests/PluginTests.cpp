@@ -126,7 +126,9 @@ void testProcessorBasics()
     check (p.hasEditor(), "has an editor");
 
     for (const auto* id : { ParamID::wave, ParamID::voices, ParamID::detune, ParamID::width,
-                            ParamID::attack, ParamID::release, ParamID::output })
+                            ParamID::attack, ParamID::release, ParamID::output,
+                            ParamID::osc1Pitch, ParamID::osc1Fine, ParamID::osc1Level,
+                            ParamID::osc2On, ParamID::osc2Wave, ParamID::osc2Pitch, ParamID::osc2Fine, ParamID::osc2Level })
         check (p.getState().getParameter (id) != nullptr, std::string ("has the '") + id + "' parameter");
 
     check (approx (param (p, ParamID::wave), (float) Waveform::saw, 1e-6f), "starts on the saw");
@@ -147,6 +149,28 @@ void testProcessorBasics()
     check (attack->getText (attack->convertTo0to1 (0.25f), 32) == "250 ms"
                && attack->getText (attack->convertTo0to1 (1.5f), 32) == "1.50 s",
            "times read in ms below a second, s above");
+
+    // The oscillators: OSC 1 plays as before, OSC 2 waits switched off,
+    // set up as a square an octave down.
+    check (approx (param (p, ParamID::osc1Pitch), 0.0f, 1e-6f) && approx (param (p, ParamID::osc1Fine), 0.0f, 1e-6f)
+               && approx (param (p, ParamID::osc1Level), 1.0f, 1e-6f),
+           "OSC 1 starts at the note, full level");
+    check (param (p, ParamID::osc2On) < 0.5f, "OSC 2 starts switched off");
+    check (approx (param (p, ParamID::osc2Wave), (float) Waveform::square, 1e-6f) && approx (param (p, ParamID::osc2Pitch), -12.0f, 1e-6f),
+           "set up as a square an octave down");
+
+    auto* pitch = p.getState().getParameter (ParamID::osc2Pitch);
+    auto* fine  = p.getState().getParameter (ParamID::osc1Fine);
+    check (pitch->getText (pitch->convertTo0to1 (7.0f), 32) == "+7 st" && pitch->getText (pitch->convertTo0to1 (-12.0f), 32) == "-12 st",
+           "PITCH reads in signed semitones");
+    check (fine->getText (fine->convertTo0to1 (3.5f), 32) == "+3.5 ct", "FINE reads in signed cents");
+
+    setParam (p, ParamID::osc2On, 1.0f);
+    setParam (p, ParamID::osc2Pitch, 7.0f);
+    setParam (p, ParamID::osc1Level, 0.5f);
+    const auto oscillators = p.currentSettings();
+    check (oscillators.osc2On && oscillators.osc2Semitones == 7 && approx (oscillators.osc1Level, 0.5f, 1e-6f),
+           "the oscillators' settings reach the engine");
 }
 
 void testBusLayouts()
@@ -275,7 +299,7 @@ void testEditor()
     if (editor == nullptr)
         return;
 
-    check (editor->getWidth() == 480 && editor->getHeight() == 522, "opens at its 480 x 522 design size");
+    check (editor->getWidth() == 480 && editor->getHeight() == 612, "opens at its 480 x 612 design size");
     check (editor->isResizable(), "is resizable");
 
     const auto first = render (*editor);
@@ -285,14 +309,14 @@ void testEditor()
     bool dialsFit = true;
     for (int i = 0; i < Synth2AudioProcessorEditor::numDials; ++i)
         dialsFit = dialsFit && editor->getDial (i).getWidth() >= 40 && editor->getLocalBounds().contains (editor->getDial (i).getBounds());
-    check (dialsFit, "all six dials are laid out inside the panel");
+    check (dialsFit, "all twelve dials are laid out inside the panel");
     check (editor->getLocalBounds().contains (editor->getKeyboard().getBounds()) && editor->getKeyboard().getHeight() > 80,
            "the keyboard fits along the bottom");
 
     // Dials drive their parameters.
-    editor->getDial (0).setValue (5.0, juce::sendNotificationSync);
+    editor->getDial (6).setValue (5.0, juce::sendNotificationSync);
     check (approx (param (p, ParamID::voices), 5.0f, 1e-6f), "the VOICES dial sets VOICES");
-    editor->getDial (1).setValue (40.0, juce::sendNotificationSync);
+    editor->getDial (7).setValue (40.0, juce::sendNotificationSync);
     check (approx (param (p, ParamID::detune), 40.0f, 0.01f), "the DETUNE dial sets DETUNE");
 
     // The displays follow the parameters on the editor's timer.
@@ -308,7 +332,7 @@ void testEditor()
     auto& menu   = editor->getWaveMenu();
     auto& well   = editor->getWaveDisplay();
     check (picker.getBounds() == well.getBounds() && editor->getLocalBounds().contains (picker.getBounds()),
-           "the wave picker sits over the WAVE well");
+           "OSC 1's picker sits over its well");
     check (picker.getSelected() == 2 && picker.pillBounds().getWidth() > 80.0f
                && picker.getLocalBounds().toFloat().contains (picker.pillBounds()),
            "its pill shows SAW, the default, in the well's corner");
@@ -418,8 +442,59 @@ void testEditor()
         return display.getBottom() <= firstDial.getY() && display.getX() <= firstDial.getX()
             && display.getRight() >= lastDial.getRight();
     };
-    check (above (editor->getUnisonDisplay(), editor->getDial (0), editor->getDial (2)), "the UNISON well sits over VOICES, DETUNE and WIDTH");
-    check (above (editor->getAmpDisplay(), editor->getDial (3), editor->getDial (5)), "the AMP well sits over ATTACK, RELEASE and OUTPUT");
+    check (above (editor->getWaveDisplay (0), editor->getDial (0), editor->getDial (2)), "the OSC 1 well sits over its PITCH, FINE and LEVEL");
+    check (above (editor->getWaveDisplay (1), editor->getDial (3), editor->getDial (5)), "the OSC 2 well sits over its own");
+    check (above (editor->getUnisonDisplay(), editor->getDial (6), editor->getDial (8)), "the UNISON well sits over VOICES, DETUNE and WIDTH");
+    check (above (editor->getAmpDisplay(), editor->getDial (9), editor->getDial (11)), "the AMP well sits over ATTACK, RELEASE and OUTPUT");
+    check (editor->getWaveDisplay (0).getBottom() < editor->getUnisonDisplay().getY(), "the oscillators come first, the voice below");
+
+    // OSC 2: off, its well faint and its dials dimmed; its chip switches it on.
+    auto& osc2       = editor->getWavePicker (1);
+    auto& osc2Well   = editor->getWaveDisplay (1);
+    check (osc2.hasPowerSwitch() && ! editor->getWavePicker (0).hasPowerSwitch(), "OSC 2 has a power switch, OSC 1 doesn't");
+    check (! osc2.isOn() && ! osc2Well.getOsc().on && editor->getDial (3).getAlpha() < 1.0f && editor->getDial (0).getAlpha() >= 1.0f,
+           "switched off, OSC 2's well is faint and its dials dimmed");
+    const auto osc2Off = render (*editor);
+
+    const auto clickOn = [] (juce::Component& target, juce::Point<float> at)
+    {
+        return juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), at, {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                 &target, &target, juce::Time::getCurrentTime(), at, juce::Time::getCurrentTime(), 1, false);
+    };
+    osc2.mouseDown (clickOn (osc2, osc2.powerBounds().getCentre()));
+    check (param (p, ParamID::osc2On) >= 0.5f && osc2.isOn(), "its chip switches OSC 2 on");
+    check (pumpUntil ([&] { return osc2Well.getOsc().on && editor->getDial (3).getAlpha() >= 1.0f; }), "and its well and dials light up");
+    check (pixelsChanged (osc2Off, render (*editor)) > 200, "visibly");
+    check (! editor->getWaveMenu (1).isOpen(), "without opening its tray");
+
+    const float osc1Wave = param (p, ParamID::wave);
+    osc2.mouseDown (clickOn (osc2, osc2.nextArrow().getCentre()));
+    check (approx (param (p, ParamID::osc2Wave), (float) Waveform::sine, 1e-6f) && approx (param (p, ParamID::wave), osc1Wave, 1e-6f),
+           "OSC 2's arrows step its own shape (SQUARE round to SINE), not OSC 1's");
+    check (pumpUntil ([&osc2Well] { return osc2Well.getShownWave() == Waveform::sine; }), "and its well follows");
+
+    osc2.mouseDown (clickOn (osc2, { 60.0f, 60.0f }));
+    auto& osc2Menu = editor->getWaveMenu (1);
+    check (osc2Menu.isOpen() && osc2Menu.trayBounds().getX() <= (float) editor->getWaveDisplay (0).getX()
+               && osc2Menu.trayBounds().getRight() >= (float) osc2Well.getRight(),
+           "OSC 2's tray opens across both wells");
+    osc2Menu.mouseDown (clickOn (osc2Menu, osc2Menu.tileBounds (2).getCentre()));
+    check (approx (param (p, ParamID::osc2Wave), (float) Waveform::saw, 1e-6f) && ! osc2Menu.isOpen(), "and picks OSC 2's shape");
+
+    // PITCH and LEVEL show in the well: an octave up, twice the cycles.
+    editor->getDial (3).setValue (12.0, juce::sendNotificationSync);
+    editor->getDial (5).setValue (0.5, juce::sendNotificationSync);
+    check (approx (param (p, ParamID::osc2Pitch), 12.0f, 1e-6f) && approx (param (p, ParamID::osc2Level), 0.5f, 1e-6f),
+           "OSC 2's dials set its PITCH and LEVEL");
+    check (pumpUntil ([&osc2Well] { return approx (osc2Well.getOsc().cycles, 4.0f, 1e-3f) && approx (osc2Well.getOsc().level, 0.5f, 1e-6f); }),
+           "its well shows twice the cycles, half as tall");
+
+    osc2.mouseDown (clickOn (osc2, osc2.powerBounds().getCentre()));
+    check (param (p, ParamID::osc2On) < 0.5f && pumpUntil ([&] { return editor->getDial (3).getAlpha() < 1.0f; }),
+           "and its chip switches it off again");
+    osc2.mouseDown (clickOn (osc2, { 100.0f, 60.0f }));
+    check (param (p, ParamID::osc2On) >= 0.5f && ! osc2Menu.isOpen(), "while off, a click anywhere on its well switches it on");
+    osc2.setOn (false);
 
     // The AMP well follows its dials, and a dot rides the envelope for each note.
     playAndMeasure (p, {}, 100);      // let the earlier tests' notes fade out
@@ -474,7 +549,7 @@ void testEditor()
     setParam (p, ParamID::output, 0.0f);
 
     // Scaled up: the same face at 2x.
-    editor->setSize (960, 1044);
+    editor->setSize (960, 1224);
     check (approx ((float) editor->getDial (0).getWidth() / 2.0f, 52.0f, 1.0f), "at 2x every control doubles");
     const auto doubled = render (*editor);
     check (hasDetail (doubled), "renders at 2x");
@@ -483,7 +558,7 @@ void testEditor()
     if (auto* constrainer = editor->getConstrainer())
         constrainer->setBoundsForComponent (editor, { 0, 0, 720, 600 }, false, false, true, true);
     const float aspect = (float) editor->getWidth() / (float) editor->getHeight();
-    check (approx (aspect, 480.0f / 522.0f, 0.02f), "resizing keeps the design's proportions");
+    check (approx (aspect, 480.0f / 612.0f, 0.02f), "resizing keeps the design's proportions");
 }
 } // namespace
 
