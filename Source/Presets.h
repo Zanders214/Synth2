@@ -14,7 +14,7 @@
 
     Synth2's factory sounds. Each one says which oscillators are on the bench
     and how they are set: each with its own unison stack, and most with their
-    own envelope. Everything a preset doesn't mention goes back to its
+    own DAHDSR envelope. Everything a preset doesn't mention goes back to its
     default, so it sounds the same whatever was playing before it. Loading one
     sets the bench out afresh: its oscillators along the top row, each
     envelope under its oscillator (ENV n shapes OSC n), in a fixed order with
@@ -33,12 +33,23 @@ namespace Presets
         float width       = 0.5f;
     };
 
-    /** An envelope, in seconds. */
+    /** A DAHDSR envelope (see Envelope.h): its times in seconds, and its
+        sustain level, 0..1. */
     struct Envelope
     {
+        float delaySeconds   = 0.0f;
         float attackSeconds  = 0.005f;
+        float holdSeconds    = 0.0f;
+        float decaySeconds   = 0.3f;
+        float sustainLevel   = 1.0f;
         float releaseSeconds = 0.3f;
     };
+
+    /** An envelope that fades in and stays up while the key is held. */
+    inline Envelope ar (float attack, float release) { return { 0.0f, attack, 0.0f, 0.3f, 1.0f, release }; }
+
+    /** One that falls to `sustain` after its attack. */
+    inline Envelope adsr (float attack, float decay, float sustain, float release) { return { 0.0f, attack, 0.0f, decay, sustain, release }; }
 
     /** One oscillator on the bench: its shape (Waveform's order), its
         transposition in semitones, its fine tune in cents, its level, its
@@ -64,71 +75,85 @@ namespace Presets
 
     enum Wave { sine, triangle, saw, square };
 
-    inline const std::array<Preset, 13> factory {{
+    inline const std::array<Preset, 16> factory {{
         { "Empty Bench", "Nothing on it yet: build your own", {}, 0.0f },
 
         // Pads
-        { "Supersaw Pad", "Nine wide saws with an octave on top",
-          { Oscillator { saw, 0,  0.0f, 1.0f,  { 9, 28.0f, 0.9f }, Envelope { 0.6f, 2.5f } },
-            Oscillator { saw, 12, 7.0f, 0.45f, { 5, 20.0f, 1.0f }, Envelope { 0.9f, 2.5f } } },
+        { "Supersaw Pad", "Nine wide saws, an octave blooming on top",
+          { Oscillator { saw, 0,  0.0f, 1.0f,  { 9, 28.0f, 0.9f }, ar (0.6f, 2.5f) },
+            Oscillator { saw, 12, 7.0f, 0.45f, { 5, 20.0f, 1.0f }, Envelope { 0.4f, 1.2f, 0.0f, 0.3f, 1.0f, 2.5f } } },
           -7.0f },
         { "Warm Strings", "Soft saw section with a low triangle",
-          { Oscillator { saw, 0, 0.0f, 0.8f,        { 6, 14.0f, 0.75f }, Envelope { 0.45f, 1.2f } },
-            Oscillator { saw, 12, -6.0f, 0.3f,      { 4, 12.0f, 0.9f },  Envelope { 0.6f, 1.2f } },
-            Oscillator { triangle, -12, 0.0f, 0.4f, { 1, 15.0f, 0.5f },  Envelope { 0.3f, 1.0f } } },
+          { Oscillator { saw, 0, 0.0f, 0.8f,        { 6, 14.0f, 0.75f }, adsr (0.45f, 1.5f, 0.85f, 1.2f) },
+            Oscillator { saw, 12, -6.0f, 0.3f,      { 4, 12.0f, 0.9f },  adsr (0.6f, 1.5f, 0.85f, 1.2f) },
+            Oscillator { triangle, -12, 0.0f, 0.4f, { 1, 15.0f, 0.5f },  ar (0.3f, 1.0f) } },
           -6.0f },
         { "Slow Swell", "A shimmering stack, its layers arriving in turn",
-          { Oscillator { triangle, 0, 0.0f, 1.0f,  { 8, 18.0f, 0.8f },  Envelope { 2.0f, 6.0f } },
-            Oscillator { sine, 12, 4.0f, 0.5f,     { 6, 22.0f, 1.0f },  Envelope { 3.0f, 6.0f } },
-            Oscillator { sine, 19, 0.0f, 0.25f,    { 4, 25.0f, 1.0f },  Envelope { 4.0f, 7.0f } },
-            Oscillator { saw, -12, 0.0f, 0.2f,     { 3, 10.0f, 0.4f },  Envelope { 1.5f, 5.0f } } },
+          { Oscillator { triangle, 0, 0.0f, 1.0f, { 8, 18.0f, 0.8f }, ar (1.5f, 6.0f) },
+            Oscillator { sine, 12, 4.0f, 0.5f,    { 6, 22.0f, 1.0f }, Envelope { 1.0f, 2.0f, 0.0f, 0.3f, 1.0f, 6.0f } },
+            Oscillator { sine, 19, 0.0f, 0.25f,   { 4, 25.0f, 1.0f }, Envelope { 2.0f, 2.5f, 0.0f, 0.3f, 1.0f, 7.0f } },
+            Oscillator { saw, -12, 0.0f, 0.2f,    { 3, 10.0f, 0.4f }, ar (1.5f, 5.0f) } },
           -6.0f },
 
         // Leads
         { "Trance Lead", "Bright detuned saw and square",
-          { Oscillator { saw, 0, 0.0f, 1.0f,     { 7, 18.0f, 0.7f }, Envelope { 0.003f, 0.25f } },
-            Oscillator { square, 0, -8.0f, 0.5f, { 3, 10.0f, 0.5f }, Envelope { 0.003f, 0.25f } } },
-          -7.0f },
+          { Oscillator { saw, 0, 0.0f, 1.0f,     { 7, 18.0f, 0.7f }, adsr (0.003f, 0.4f, 0.7f, 0.25f) },
+            Oscillator { square, 0, -8.0f, 0.5f, { 3, 10.0f, 0.5f }, adsr (0.003f, 0.4f, 0.7f, 0.25f) } },
+          -6.0f },
         { "8-Bit Lead", "Bare squares, straight from the console",
-          { Oscillator { square, 0, 0.0f, 1.0f,  {}, Envelope { 0.001f, 0.04f } },
-            Oscillator { square, 12, 0.0f, 0.3f, {}, Envelope { 0.001f, 0.04f } } },
+          { Oscillator { square, 0, 0.0f, 1.0f,  {}, adsr (0.001f, 0.15f, 0.6f, 0.04f) },
+            Oscillator { square, 12, 0.0f, 0.3f, {}, adsr (0.001f, 0.08f, 0.0f, 0.04f) } },
           -9.0f },
-        { "Hollow Flute", "Breathy triangle with a soft octave",
-          { Oscillator { triangle, 0, 0.0f, 1.0f, { 2, 5.0f, 0.3f }, Envelope { 0.08f, 0.35f } },
-            Oscillator { sine, 12, 0.0f, 0.25f,   {},                Envelope { 0.15f, 0.3f } } },
+        { "Hollow Flute", "Breathy triangle, its octave breathing in late",
+          { Oscillator { triangle, 0, 0.0f, 1.0f, { 2, 5.0f, 0.3f }, adsr (0.08f, 0.2f, 0.85f, 0.35f) },
+            Oscillator { sine, 12, 0.0f, 0.25f,   {},                Envelope { 0.12f, 0.25f, 0.0f, 0.3f, 1.0f, 0.3f } } },
           -3.0f },
 
+        // Plucks
+        { "Saw Pluck", "A short, bright pluck for arpeggios",
+          { Oscillator { saw, 0, 0.0f, 1.0f,   { 3, 8.0f, 0.6f }, adsr (0.001f, 0.35f, 0.0f, 0.3f) },
+            Oscillator { sine, 12, 0.0f, 0.4f, {},                adsr (0.001f, 0.12f, 0.0f, 0.1f) } },
+          -5.0f },
+        { "Wood Mallet", "A soft mallet that dies away",
+          { Oscillator { sine, 0, 0.0f, 1.0f,     {}, adsr (0.001f, 0.6f, 0.0f, 0.5f) },
+            Oscillator { triangle, 24, 0.0f, 0.3f, {}, adsr (0.001f, 0.06f, 0.0f, 0.06f) } },
+          -3.0f },
+        { "Chord Stab", "Held for a beat, then gone: house chords",
+          { Oscillator { saw, 0, 0.0f, 1.0f,     { 5, 14.0f, 0.8f }, Envelope { 0.0f, 0.002f, 0.12f, 0.1f, 0.0f, 0.1f } },
+            Oscillator { square, -12, 0.0f, 0.4f, {},                 Envelope { 0.0f, 0.002f, 0.12f, 0.1f, 0.0f, 0.1f } } },
+          -7.0f },
+
         // Keys
-        { "Drawbar Organ", "Sines at 16', 8', 4' and 2 2/3'",
-          { Oscillator { sine, 0, 0.0f, 1.0f,   { 2, 4.0f, 0.4f }, Envelope { 0.004f, 0.06f } },
-            Oscillator { sine, 12, 0.0f, 0.6f,  { 2, 4.0f, 0.4f }, Envelope { 0.004f, 0.06f } },
-            Oscillator { sine, 19, 0.0f, 0.4f,  { 2, 4.0f, 0.4f }, Envelope { 0.004f, 0.06f } },
-            Oscillator { sine, -12, 0.0f, 0.7f, {},                Envelope { 0.004f, 0.06f } } },
+        { "Drawbar Organ", "Sines at 16', 8' and 4', with a percussive click",
+          { Oscillator { sine, 0, 0.0f, 1.0f,   { 2, 4.0f, 0.4f }, ar (0.004f, 0.06f) },
+            Oscillator { sine, 12, 0.0f, 0.6f,  { 2, 4.0f, 0.4f }, ar (0.004f, 0.06f) },
+            Oscillator { sine, 19, 0.0f, 0.5f,  {},                adsr (0.002f, 0.25f, 0.0f, 0.06f) },
+            Oscillator { sine, -12, 0.0f, 0.7f, {},                ar (0.004f, 0.06f) } },
           -8.0f },
-        { "Glass Keys", "Clear sines, the overtones ringing longest",
-          { Oscillator { sine, 0, 0.0f, 1.0f,       { 3, 6.0f, 0.6f }, Envelope { 0.001f, 2.5f } },
-            Oscillator { sine, 19, 0.0f, 0.35f,     { 2, 4.0f, 0.8f }, Envelope { 0.001f, 3.5f } },
-            Oscillator { triangle, 24, 3.0f, 0.15f, {},                Envelope { 0.001f, 4.5f } } },
-          -6.0f },
-        { "Brass Section", "Two saws, and a square below that swells in",
-          { Oscillator { saw, 0, 0.0f, 1.0f,       { 4, 9.0f, 0.5f }, Envelope { 0.06f, 0.25f } },
-            Oscillator { saw, 0, 10.0f, 0.8f,      { 4, 9.0f, 0.5f }, Envelope { 0.06f, 0.25f } },
-            Oscillator { square, -12, 0.0f, 0.3f,  {},                Envelope { 0.15f, 0.3f } } },
-          -8.0f },
+        { "Glass Keys", "Struck sines, the overtones dying first",
+          { Oscillator { sine, 0, 0.0f, 1.0f,       { 3, 6.0f, 0.6f }, adsr (0.001f, 2.0f, 0.25f, 1.5f) },
+            Oscillator { sine, 19, 0.0f, 0.35f,     { 2, 4.0f, 0.8f }, adsr (0.001f, 0.8f, 0.0f, 1.0f) },
+            Oscillator { triangle, 24, 3.0f, 0.15f, {},                adsr (0.001f, 0.3f, 0.0f, 0.4f) } },
+          -5.0f },
+        { "Brass Section", "Biting saws that settle, a square swelling in",
+          { Oscillator { saw, 0, 0.0f, 1.0f,      { 4, 9.0f, 0.5f }, adsr (0.06f, 0.3f, 0.75f, 0.25f) },
+            Oscillator { saw, 0, 10.0f, 0.8f,     { 4, 9.0f, 0.5f }, adsr (0.06f, 0.3f, 0.75f, 0.25f) },
+            Oscillator { square, -12, 0.0f, 0.3f, {},                Envelope { 0.05f, 0.15f, 0.0f, 0.3f, 1.0f, 0.3f } } },
+          -7.0f },
         { "Fifth Stack", "Root, fifth and sub for big chords",
-          { Oscillator { saw, 0, 0.0f, 1.0f,      { 5, 16.0f, 0.6f }, Envelope { 0.01f, 0.4f } },
-            Oscillator { saw, 7, 0.0f, 0.7f,      { 5, 16.0f, 0.6f }, Envelope { 0.01f, 0.4f } },
-            Oscillator { square, -12, 0.0f, 0.6f, {},                 Envelope { 0.01f, 0.4f } } },
+          { Oscillator { saw, 0, 0.0f, 1.0f,      { 5, 16.0f, 0.6f }, adsr (0.01f, 0.6f, 0.75f, 0.4f) },
+            Oscillator { saw, 7, 0.0f, 0.7f,      { 5, 16.0f, 0.6f }, adsr (0.01f, 0.6f, 0.75f, 0.4f) },
+            Oscillator { square, -12, 0.0f, 0.6f, {},                 ar (0.01f, 0.4f) } },
           -9.0f },
 
         // Bass
         { "Reese Bass", "Two beating saws an octave down",
-          { Oscillator { saw, -12, 0.0f, 1.0f,  { 3, 12.0f, 0.3f }, Envelope { 0.005f, 0.2f } },
-            Oscillator { saw, -12, 18.0f, 0.9f, { 3, 12.0f, 0.3f }, Envelope { 0.005f, 0.2f } } },
+          { Oscillator { saw, -12, 0.0f, 1.0f,  { 3, 12.0f, 0.3f }, adsr (0.005f, 0.5f, 0.8f, 0.2f) },
+            Oscillator { saw, -12, 18.0f, 0.9f, { 3, 12.0f, 0.3f }, adsr (0.005f, 0.5f, 0.8f, 0.2f) } },
           -7.5f },
-        { "Sub Bass", "A clean sine sub with a little edge",
-          { Oscillator { sine, -12, 0.0f, 1.0f,    {}, Envelope { 0.002f, 0.12f } },
-            Oscillator { triangle, 0, 0.0f, 0.35f, {}, Envelope { 0.002f, 0.08f } } },
+        { "Sub Bass", "A clean sine sub with a plucked edge",
+          { Oscillator { sine, -12, 0.0f, 1.0f,    {}, ar (0.002f, 0.12f) },
+            Oscillator { triangle, 0, 0.0f, 0.35f, {}, adsr (0.002f, 0.2f, 0.3f, 0.08f) } },
           -4.0f },
     }};
 
@@ -159,7 +184,11 @@ namespace Presets
             }
             if (shaped)
             {
+                values.emplace_back (env.delay,   osc->envelope->delaySeconds);
                 values.emplace_back (env.attack,  osc->envelope->attackSeconds);
+                values.emplace_back (env.hold,    osc->envelope->holdSeconds);
+                values.emplace_back (env.decay,   osc->envelope->decaySeconds);
+                values.emplace_back (env.sustain, osc->envelope->sustainLevel);
                 values.emplace_back (env.release, osc->envelope->releaseSeconds);
             }
         }

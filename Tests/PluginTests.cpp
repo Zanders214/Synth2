@@ -1029,7 +1029,7 @@ void testPresets()
                                         && bench.isPresent ({ Bench::Kind::envelope, slot }) == shaped;
             shapedByOwn  = shapedByOwn && settings.oscillators[(size_t) slot].envelope == (shaped ? slot : -1);
             if (shaped)
-                attack = juce::jmax (attack, osc->envelope->attackSeconds);
+                attack = juce::jmax (attack, osc->envelope->delaySeconds + osc->envelope->attackSeconds);
         }
 
         bool apart = true;
@@ -1043,6 +1043,19 @@ void testPresets()
         check (q.getCurrentProgram() == i && modulesMatch && apart, name + ": its modules are on the bench, apart");
         check (shapedByOwn, name + ": each envelope shapes its own oscillator");
         check (peak > 0.2f && peak < 1.0f, name + ": a chord sounds without clipping (peak " + std::to_string (peak) + ")");
+    }
+
+    // The plucks fall away while the key is still held.
+    for (const auto* pluck : { "Saw Pluck", "Wood Mallet", "Chord Stab" })
+    {
+        Synth2AudioProcessor q;
+        q.prepareToPlay (48000.0, 512);
+        q.setCurrentProgram (names.indexOf (pluck));
+        juce::MidiBuffer on;
+        on.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+        const float struck = playAndMeasure (q, on, 2);
+        const float held   = playAndMeasure (q, {}, 200);   // ~2 s more, the key still down
+        check (struck > 0.02f && held < struck * 0.01f, std::string (pluck) + ": a held note dies away");
     }
 
     // Loading one resets what it doesn't set, and lays the bench out afresh.

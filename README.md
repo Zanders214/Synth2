@@ -37,25 +37,29 @@ The keyboard and the OUTPUT dial stay in a strip along the bottom.
 The pill in the middle of the header holds the factory presets: its arrows step to the
 previous and next one, and a click on its name opens a tray of them all. Your DAW lists
 the same presets as the plugin's programs. Loading one puts its modules on the bench
-(oscillators along the top, each with its own unison stack, and each envelope under the
-oscillator it shapes, in a fixed order with no cables) and sets everything it doesn't
-use back to its default; picking it again undoes your edits. Which preset you loaded is saved with your set.
+(oscillators along the top, each with its own unison stack, and each DAHDSR envelope
+under the oscillator it shapes, in a fixed order with no cables) and sets everything
+it doesn't use back to its default; picking it again undoes your edits. Which preset
+you loaded is saved with your set.
 
-| Preset            | What it is                                     |
-|-------------------|------------------------------------------------|
-| **Empty Bench**   | Nothing on it: where a new instance starts     |
-| **Supersaw Pad**  | Nine wide saws with an octave on top           |
-| **Warm Strings**  | A soft saw section with a low triangle         |
-| **Slow Swell**    | A shimmering stack, its layers arriving in turn |
-| **Trance Lead**   | A bright detuned saw and square                |
-| **8-Bit Lead**    | Bare squares, no unison                        |
-| **Hollow Flute**  | A breathy triangle with a soft octave          |
-| **Drawbar Organ** | Sines at 16', 8', 4' and 2 2/3'                |
-| **Glass Keys**    | Clear sines, the overtones ringing longest     |
-| **Brass Section** | Two saws, and a square below that swells in    |
-| **Fifth Stack**   | Root, fifth and sub, for big chords            |
-| **Reese Bass**    | Two beating saws an octave down                |
-| **Sub Bass**      | A clean sine sub with a little edge            |
+| Preset            | What it is                                              |
+|-------------------|---------------------------------------------------------|
+| **Empty Bench**   | Nothing on it: where a new instance starts              |
+| **Supersaw Pad**  | Nine wide saws, an octave blooming in on top            |
+| **Warm Strings**  | A soft saw section with a low triangle                  |
+| **Slow Swell**    | A shimmering stack, its layers delayed to arrive in turn |
+| **Trance Lead**   | A bright detuned saw and square                         |
+| **8-Bit Lead**    | Bare squares, the octave a short blip                   |
+| **Hollow Flute**  | A breathy triangle, its octave breathing in late        |
+| **Saw Pluck**     | A short, bright pluck for arpeggios                     |
+| **Wood Mallet**   | A soft mallet that dies away                            |
+| **Chord Stab**    | Held for a beat, then gone: house chords                |
+| **Drawbar Organ** | Sines at 16', 8' and 4', with a percussive click        |
+| **Glass Keys**    | Struck sines, the overtones dying first                 |
+| **Brass Section** | Biting saws that settle, a square swelling in below     |
+| **Fifth Stack**   | Root, fifth and sub, for big chords                     |
+| **Reese Bass**    | Two beating saws an octave down                         |
+| **Sub Bass**      | A clean sine sub with a plucked edge                    |
 
 ### Signal flow
 
