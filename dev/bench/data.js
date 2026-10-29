@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793269058308,
+  "lastUpdate": 1793271067701,
   "repoUrl": "https://github.com/Zanders214/Synth2",
   "entries": {
     "ZandersSynth2 DSP": [
@@ -229,6 +229,60 @@ window.BENCHMARK_DATA = {
           {
             "name": "DSP load 16x16 2-osc @48k/512",
             "value": 11.582,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "152227414+Zanders214@users.noreply.github.com",
+            "name": "Dennis Zanders",
+            "username": "Zanders214"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2f87c420c0f0bee3e9fdf59e2afa1203b1024e36",
+          "message": "Merge pull request #6 from Zanders214/claude/hide-osc2\n\nKeep OSC 2 out of sight until it is added",
+          "timestamp": "2026-10-29T11:49:25+01:00",
+          "tree_id": "f2c43e1311d3788141049599d8c45a2100acc595",
+          "url": "https://github.com/Zanders214/Synth2/commit/2f87c420c0f0bee3e9fdf59e2afa1203b1024e36"
+        },
+        "date": 1793271067089,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "processBlock 8x7",
+            "value": 133609.776,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 8x7 @48k/512",
+            "value": 1.253,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16",
+            "value": 577149.098,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 @48k/512",
+            "value": 5.411,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 2-osc",
+            "value": 891409.166,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 2-osc @48k/512",
+            "value": 8.357,
             "unit": "%"
           }
         ]
