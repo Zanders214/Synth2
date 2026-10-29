@@ -1,19 +1,23 @@
 # ZandersSynth2
 
 A simple polyphonic synth plugin for DAWs (VST3 / AU / Standalone), built with
-[JUCE](https://juce.com). Pick one of the four basic wave shapes, stack up to 16
-copies of it on every note, detune and spread them, and play chords: the classic
-wide, detuned "supersaw" pad in a few turns.
+[JUCE](https://juce.com). Pick one of the four basic wave shapes, add a second
+oscillator if you like, stack up to 16 copies on every note, detune and spread
+them, and play chords: the classic wide, detuned "supersaw" pad in a few turns.
 
 ```
-note -> VOICES x oscillator -> DETUNE + WIDTH -> ATTACK / RELEASE -> OUTPUT
+note -> VOICES x (OSC 1 + OSC 2) -> DETUNE + WIDTH -> ATTACK / RELEASE -> OUTPUT
 ```
 
 ## Controls
 
 | Control     | What it does                                                        |
 |-------------|---------------------------------------------------------------------|
-| **Wave**    | **SINE**, **TRIANGLE**, **SAW** (the default) or **SQUARE**, picked in the WAVE display (see below). |
+| **Wave**    | Each oscillator's shape: **SINE**, **TRIANGLE**, **SAW** (OSC 1's default) or **SQUARE** (OSC 2's), picked in its display (see below). |
+| **OSC 2**   | Switches the second oscillator on and off (off by default). |
+| **Pitch**   | Transposes the oscillator, -24 to +24 semitones: +12 is an octave up, +7 a fifth. |
+| **Fine**    | Tunes the oscillator by up to ±50 cents, for a slow beat against the other one. |
+| **Level**   | The oscillator's level, 0 to 100%. |
 | **Voices**  | How many copies of the oscillator play each note, 1 to 16. One voice is a plain, centred oscillator. |
 | **Detune**  | How far apart the voices are tuned: the outer two sit this many cents flat and sharp (up to ±50 ct) and the rest fall evenly between. Detuned voices beat against each other, which is what makes the sound thick. |
 | **Width**   | How far the voices spread across the stereo field. 0% keeps them in the centre (mono); 100% puts the outer ones hard left and right. |
@@ -23,9 +27,19 @@ note -> VOICES x oscillator -> DETUNE + WIDTH -> ATTACK / RELEASE -> OUTPUT
 
 Every control is a parameter, so it's saved with your set and can be automated.
 
+### Two oscillators
+
+OSC 1 plays on its own until you switch OSC 2 on: click the **OSC 2** chip in its
+display's corner (or anywhere on the display while it's off). It comes set up as a
+square an octave below, at 70%, a classic way to add weight. Each oscillator has
+its own shape, PITCH, FINE and LEVEL; both share the unison stack (every copy plays
+both, so DETUNE and WIDTH spread both) and the envelope. Switching OSC 2 on or off,
+and moving either LEVEL, fades rather than clicks, and while OSC 2 is off it costs
+nothing.
+
 ### Picking the wave
 
-The WAVE display is also where the shape is picked. The pill in its top right
+Each oscillator's display is also where its shape is picked. The pill in its top right
 corner shows the current shape: its arrows step to the previous and next one
 (wrapping round), and the scroll wheel anywhere over the display flips through
 them. Click the display anywhere else and a tray of the four shapes drops open
@@ -39,8 +53,10 @@ shape to the new one rather than jumping.
 
 Each group of dials has a display right above it, drawn in the dials' colours:
 
-- **WAVE**: two cycles of the shape, with a faint copy for every unison voice, shifted
-  by its detune.
+- **OSC 1** and **OSC 2** (above their PITCH / FINE / LEVEL): the oscillator's shape,
+  with a faint copy for every unison voice, shifted by its detune. PITCH squeezes or
+  stretches it (two cycles at 0, four an octave up, one an octave down), LEVEL sets its
+  height, and a switched-off OSC 2 is drawn faint.
 - **UNISON** (above VOICES / DETUNE / WIDTH): a glowing dot per voice, placed left to
   right by its detune (on a fixed -50..+50 cent scale) and top to bottom by its place in
   the stereo field. DETUNE fans the dots out sideways, WIDTH up and down.
@@ -106,20 +122,20 @@ ctest --test-dir build --output-on-failure
 Source/
   PluginProcessor.{h,cpp}    thin host wrapper + parameters (APVTS); the on-screen keyboard's lock-free hand-over
   ParamIDs.h                 the parameter IDs
-  Synth2Engine.h             host-agnostic DSP core: 16 voices, MIDI, smoothing, output
-  SynthVoice.h               one note: up to 16 unison oscillators under the envelope
+  Synth2Engine.h             host-agnostic DSP core: 16 voices, two oscillators, MIDI, smoothing, output
+  SynthVoice.h               one note: up to 16 unison copies of both oscillators under the envelope
   Oscillator.h               the four wave shapes, and the PolyBLEP oscillator that plays them
   Unison.h                   where each unison voice sits: its detune, its pan, the stack's level
   PluginEditor.{h,cpp}       the Neon Plugins editor: wells, wave picker, dials, keyboard
   Synth2LookAndFeel.{h,cpp}  the dials (design-system Dial: arc + glowing core)
-  WavePicker.h               the WAVE well's picker (pill, arrows, wheel) and its tray of shapes
-  VoiceDisplays.h            the WAVE, UNISON and AMP wells
+  WavePicker.h               an oscillator well's picker (pill, arrows, wheel, OSC 2's switch) and its tray of shapes
+  VoiceDisplays.h            the OSC, UNISON and AMP wells
   NeonKeyboard.h             the on-screen keyboard
   Synth2Theme.h              shared palette, fonts, colour + value formatting
   Synth2VisualModel.h        pure wave / unison / envelope -> display math (uses the engine's own), the morph and its ease
   RtSafety.h                 the RealtimeSanitizer annotation
 Tests/
-  Synth2EngineTests.cpp         framework-free DSP tests: pitch, envelope, unison, polyphony, pedal
+  Synth2EngineTests.cpp         framework-free DSP tests: pitch, envelope, unison, the oscillators, polyphony, pedal
   Synth2VisualModelTests.cpp    framework-free tests for the shapes, the spread and the displays' model
   PluginTests.cpp               processor + editor: params, buses, MIDI, state, offscreen renders
   rt_check.cpp                  RealtimeSanitizer driver
@@ -130,12 +146,13 @@ Tests/
 
 The editor follows the **Neon Plugins** design system natively in JUCE (no WebView):
 the dark radial panel, the `Zanders` + product wordmark (Synth2 in violet) with its
-mode badge, the WAVE well (the shape in the spectrum gradient with a faint copy per
-unison voice, with its picker pill and a drop-open tray of glowing shape tiles, the
-chosen one ringed in the accent), then two groups
-of three Dials coloured along the cyan → violet → pink → amber spectrum, each under the
-display it drives (UNISON: a glowing dot per voice, by detune and pan; AMP: the envelope
-in its dials' colours, with a live dot per sounding note), and an ivory keyboard whose
+mode badge, then four groups of three Dials in two rows, each row coloured along the
+cyan → violet → pink → amber spectrum and each group under the display it drives:
+OSC 1 and OSC 2 (the shape in the spectrum gradient with a faint copy per unison
+voice, each with its picker pill and a drop-open tray of glowing shape tiles, the
+chosen one ringed in the accent; OSC 2 with its glowing power chip), UNISON (a
+glowing dot per voice, by detune and pan) and AMP (the envelope in its dials'
+colours, with a live dot per sounding note); and an ivory keyboard whose
 pressed keys glow violet. The displays draw on the engine's own wave, unison and
 envelope maths (`Synth2VisualModel`), so what they show never drifts from what you
 hear. The face is authored at 480 px and scales proportionally (resizable, fixed aspect

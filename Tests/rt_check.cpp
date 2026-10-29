@@ -3,9 +3,10 @@
 // Exercises the real audio callback (all of processBlock) under clang's
 // -fsanitize=realtime so any allocation / lock / syscall on the audio thread
 // becomes a hard failure. It
-// plays the worst case: sixteen-note chords of sixteen detuned voices, with
-// notes stolen, the sustain pedal, the on-screen keyboard's notes, and the
-// settings moving underneath (VOICES, WAVE, the envelope) while they sound.
+// plays the worst case: sixteen-note chords of sixteen detuned voices, both
+// oscillators on, with notes stolen, the sustain pedal, the on-screen
+// keyboard's notes, and the settings moving underneath (VOICES, both WAVEs,
+// OSC 2 switching on and off, the tuning, the envelope) while they sound.
 
 #include <juce_audio_utils/juce_audio_utils.h>
 #include "PluginProcessor.h"
@@ -37,6 +38,7 @@ int main()
     set (ParamID::voices, 16.0f);
     set (ParamID::detune, 30.0f);
     set (ParamID::width, 1.0f);
+    set (ParamID::osc2On, 1.0f);
 
     juce::AudioBuffer<float> buffer (2, bs);
     const int blocks = (int) (sr / bs) * 2;          // ~2 s of callbacks
@@ -67,12 +69,19 @@ int main()
             set (ParamID::voices,  (float) (1 + (b / 12) % 16));
             set (ParamID::attack,  0.001f + 0.01f * (float) ((b / 12) % 5));
             set (ParamID::release, 0.05f + 0.1f * (float) ((b / 12) % 5));
+            set (ParamID::osc2Wave,  (float) ((b / 12 + 1) % 4));
+            set (ParamID::osc2Pitch, (float) ((b / 12) % 25 - 12));
+            set (ParamID::osc1Fine,  (float) ((b / 12) % 11) * 5.0f - 25.0f);
         }
+        if (b % 40 == 20)
+            set (ParamID::osc2On, 0.0f);
+        if (b % 40 == 30)
+            set (ParamID::osc2On, 1.0f);
 
         audioCallback (proc, buffer, midi);         // the full callback, under RTSan
     }
 
-    std::printf ("PASS: %d blocks of 16-voice unison chords (stolen notes, sustain pedal,\n"
-                 "      on-screen keys, settings changing mid-note), no RT-safety violations\n", blocks);
+    std::printf ("PASS: %d blocks of 16-voice, two-oscillator unison chords (stolen notes, sustain\n"
+                 "      pedal, on-screen keys, settings changing mid-note), no RT-safety violations\n", blocks);
     return 0;
 }

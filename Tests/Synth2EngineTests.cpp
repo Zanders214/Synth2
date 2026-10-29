@@ -287,6 +287,98 @@ void testVoicesChangeMidNote()
                                     + std::to_string (largestStep) + ")");
 }
 
+// ---- The two oscillators: pitch, fine, level, and OSC 2 on and off. ---------
+void testOscillators()
+{
+    std::printf ("Oscillators:\n");
+
+    const float c4 = 261.626f;
+    const auto steadyPitch = [] (const Synth2Engine::Settings& settings)
+    {
+        auto engine = makeEngine (settings);
+        const auto out = run (*engine, blockSize * 16, { { 0, on (60) } });
+        return frequencyOf (out, blockSize * 4, out.getNumSamples());
+    };
+    const auto steadyLevel = [] (const Synth2Engine::Settings& settings)
+    {
+        auto engine = makeEngine (settings);
+        const auto out = run (*engine, blockSize * 16, { { 0, on (60) } });
+        return rms (out, 0, blockSize * 4, out.getNumSamples());
+    };
+
+    auto settings = defaults (Waveform::sine);
+    check (! settings.osc2On, "OSC 2 starts switched off");
+    check (approx (steadyPitch (settings), c4, 1.0f), "OSC 1 alone plays the note");
+
+    auto up = settings;
+    up.osc1Semitones = 12;
+    check (approx (steadyPitch (up), 2.0f * c4, 2.0f), "OSC 1's PITCH +12 plays an octave up");
+    up.osc1Semitones = -7;
+    check (approx (steadyPitch (up), c4 * std::exp2 (-7.0f / 12.0f), 1.0f), "and -7 a fifth down");
+    up.osc1Semitones = 0;
+    up.osc1FineCents = 50.0f;
+    check (approx (steadyPitch (up), c4 * std::exp2 (0.5f / 12.0f), 1.0f), "FINE +50 tunes it a quarter tone sharp");
+
+    auto half = settings;
+    half.osc1Level = 0.5f;
+    check (approx (steadyLevel (half) / steadyLevel (settings), 0.5f, 0.02f), "OSC 1 at 50% LEVEL is half as loud");
+
+    // OSC 2 on its own: OSC 1 turned all the way down.
+    auto second = settings;
+    second.osc1Level     = 0.0f;
+    second.osc2Wave      = Waveform::sine;
+    second.osc2Semitones = 12;
+    second.osc2Level     = 1.0f;
+    check (steadyLevel (second) < 1e-6f, "switched off, OSC 2 makes no sound");
+    second.osc2On = true;
+    check (approx (steadyPitch (second), 2.0f * c4, 2.0f), "switched on, it plays at its own PITCH");
+    check (approx (steadyLevel (second), steadyLevel (settings), steadyLevel (settings) * 0.02f),
+           "at the same LEVEL, as loud as OSC 1");
+
+    // Both, an octave apart: the octave shows up alongside the note.
+    auto both = second;
+    both.osc1Level = 1.0f;
+    check (steadyLevel (both) > 1.2f * steadyLevel (settings), "together they're louder than OSC 1 alone");
+
+    // OSC 2 shares the unison stack: with OSC 1 silent, sixteen copies still spread.
+    auto stacked = second;
+    stacked.voices      = 16;
+    stacked.detuneCents = 30.0f;
+    stacked.width       = 1.0f;
+    {
+        auto engine = makeEngine (stacked);
+        const auto out = run (*engine, blockSize * 16, { { 0, on (60) } });
+        double difference = 0.0;
+        for (int i = blockSize * 4; i < out.getNumSamples(); ++i)
+            difference += std::abs (out.getSample (0, i) - out.getSample (1, i));
+        check (difference > 1.0, "OSC 2 is spread by the unison stack too");
+    }
+
+    // Switching OSC 2 on and off, and moving the levels, while a note plays.
+    auto live = both;
+    live.osc2On = false;
+    auto engine = makeEngine (live);
+    auto out = run (*engine, blockSize * 8, { { 0, on (60) } });
+    float largestStep = 0.0f;
+    float previous = out.getSample (0, out.getNumSamples() - 1);
+    for (int change = 0; change < 6; ++change)
+    {
+        live.osc2On    = change % 2 == 0;
+        live.osc1Level = change == 4 ? 0.0f : 1.0f;
+        engine->setSettings (live);
+        const auto more = run (*engine, blockSize * 4);
+        for (int i = 0; i < more.getNumSamples(); ++i)
+        {
+            largestStep = juce::jmax (largestStep, std::abs (more.getSample (0, i) - previous));
+            previous = more.getSample (0, i);
+        }
+    }
+    // An octave-up sine at this level moves at most ~0.02 per sample; switching
+    // an oscillator in or out unfaded would jump by up to its full level, ~0.25.
+    check (largestStep < 0.05f, "OSC 2 fades in and out, and the levels glide, without a click (largest step "
+                                    + std::to_string (largestStep) + ")");
+}
+
 // ---- Test 6: polyphony, stealing, retriggering. --------------------------------
 void testPolyphony()
 {
@@ -434,6 +526,7 @@ int main()
     testEnvelope();
     testUnison();
     testVoicesChangeMidNote();
+    testOscillators();
     testPolyphony();
     testPedalAndPanic();
     testChannels();

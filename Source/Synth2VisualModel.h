@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 
 #include "Oscillator.h"
 #include "Unison.h"
@@ -8,8 +9,9 @@
 /**
     Synth2VisualModel
 
-    Pure, framework-free numbers behind the editor's three displays: the WAVE
-    well (the shape, and a faint copy per unison voice), the UNISON well (a
+    Pure, framework-free numbers behind the editor's displays: the OSC 1 and
+    OSC 2 wells (the shape at its pitch and level, and a faint copy per unison
+    voice), the UNISON well (a
     marker per voice at its detune and pan) and the AMP well (the envelope's
     shape at OUTPUT's level, and a dot per sounding note riding it).
 
@@ -26,12 +28,22 @@ struct Synth2VisualModel
 {
     static float clamp01 (float x) noexcept { return std::min (1.0f, std::max (0.0f, x)); }
 
-    /** The WAVE well's shape at x (0..1 across the well), which shows two cycles. */
+    /** An oscillator well's shape at x (0..1 across the well). At PITCH 0 it
+        shows two cycles. */
     static constexpr float cyclesShown = 2.0f;
 
-    static float waveAt (Waveform wave, float x, float phaseOffset = 0.0f) noexcept
+    static float waveAt (Waveform wave, float x, float phaseOffset = 0.0f, float cycles = cyclesShown) noexcept
     {
-        return Oscillator::naive (wave, (double) (x * cyclesShown + phaseOffset));
+        return Oscillator::naive (wave, (double) (x * cycles + phaseOffset));
+    }
+
+    /** How many cycles an oscillator's well shows: two at PITCH 0, twice as
+        many an octave up, half as many an octave down (so its PITCH and FINE
+        show as a squeeze or a stretch), kept between half a cycle and eight. */
+    static float cyclesFor (int semitones, float fineCents) noexcept
+    {
+        const float cycles = cyclesShown * std::exp2 (((float) semitones + fineCents / 100.0f) / 12.0f);
+        return std::min (8.0f, std::max (0.5f, cycles));
     }
 
     /** The wave `delta` steps on from `index` (0..3), wrapping round: one
@@ -69,10 +81,11 @@ struct Synth2VisualModel
     }
 
     /** The WAVE well's shape `amount` (0..1) of the way from `from` to `to`. */
-    static float morphAt (Waveform from, Waveform to, float amount, float x, float phaseOffset = 0.0f) noexcept
+    static float morphAt (Waveform from, Waveform to, float amount, float x, float phaseOffset = 0.0f,
+                          float cycles = cyclesShown) noexcept
     {
-        const float a = waveAt (from, x, phaseOffset);
-        const float b = waveAt (to, x, phaseOffset);
+        const float a = waveAt (from, x, phaseOffset, cycles);
+        const float b = waveAt (to, x, phaseOffset, cycles);
         return a + (b - a) * clamp01 (amount);
     }
 

@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <array>
 #include <functional>
+#include <memory>
 
 #include "Synth2Theme.h"
 #include "Synth2VisualModel.h"
@@ -40,7 +41,7 @@ namespace WaveGlyph
 }
 
 /**
-    WavePicker — picks the WAVE, laid over the WAVE well.
+    WavePicker — picks an oscillator's shape, laid over its well.
 
     The well's top right holds a pill with the chosen shape: its arrows step
     to the previous and next shape (wrapping round), and the scroll wheel
@@ -48,8 +49,13 @@ namespace WaveGlyph
     well opens the wave menu (onOpenMenu). Hovering lights the well's border
     in the accent, the design system's mark of a well you can act on.
 
-    It is tied to the WAVE choice parameter directly (ParameterAttachment), so
-    host automation and undo see each pick as one gesture.
+    Given a power parameter (OSC 2's), it also switches the oscillator: a
+    chip at the well's top left, a glowing dot and the oscillator's name, turns
+    it on and off. While it is off the pill steps aside for an "+ ADD" hint, and
+    a click anywhere on the well switches it on.
+
+    It is tied to the parameters directly (ParameterAttachment), so host
+    automation and undo see each pick, and each switch, as one gesture.
 */
 class WavePicker final : public juce::Component
 {
@@ -59,12 +65,42 @@ public:
     /** A click on the well (not on an arrow): open, or close, the menu. */
     std::function<void()> onOpenMenu;
 
-    explicit WavePicker (juce::RangedAudioParameter& waveParameter)
-        : attachment (waveParameter, [this] (float value) { setSelected (juce::roundToInt (value)); })
+    explicit WavePicker (juce::RangedAudioParameter& waveParameter,
+                         juce::RangedAudioParameter* powerParameter = nullptr,
+                         const juce::String& name = {})
+        : attachment (waveParameter, [this] (float value) { setSelected (juce::roundToInt (value)); }),
+          powerName (name)
     {
         setRepaintsOnMouseActivity (true);
         setMouseCursor (juce::MouseCursor::PointingHandCursor);
         attachment.sendInitialUpdate();
+
+        if (powerParameter != nullptr)
+        {
+            power = std::make_unique<juce::ParameterAttachment> (*powerParameter, [this] (float value)
+            {
+                on = value >= 0.5f;
+                repaint();
+            });
+            power->sendInitialUpdate();
+        }
+    }
+
+    bool hasPowerSwitch() const noexcept { return power != nullptr; }
+    bool isOn() const noexcept           { return on; }
+
+    /** Switches the oscillator on or off, as one gesture. */
+    void setOn (bool shouldBeOn)
+    {
+        if (power != nullptr)
+            power->setValueAsCompleteGesture (shouldBeOn ? 1.0f : 0.0f);
+    }
+
+    /** The power chip at the well's top left (empty without a switch). */
+    juce::Rectangle<float> powerBounds() const noexcept
+    {
+        const float s = uiScale;
+        return power != nullptr ? juce::Rectangle<float> (6.0f * s, 6.0f * s, 70.0f * s, 20.0f * s) : juce::Rectangle<float>();
     }
 
     void setUiScale (float newScale) { uiScale = newScale; repaint(); }
@@ -93,7 +129,11 @@ public:
 
     void mouseDown (const juce::MouseEvent& e) override
     {
-        if (previousArrow().contains (e.position))
+        if (power != nullptr && powerBounds().contains (e.position))
+            setOn (! on);
+        else if (! on)
+            setOn (true);
+        else if (previousArrow().contains (e.position))
             step (-1);
         else if (nextArrow().contains (e.position))
             step (1);
@@ -103,6 +143,9 @@ public:
 
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& wheel) override
     {
+        if (! on)
+            return;
+
         // A trackpad sends many small deltas, a wheel a few big ones: gather
         // them, and step once each time enough has built up. Down (or right)
         // is the next shape.
@@ -130,6 +173,19 @@ public:
         {
             g.setColour (Palette::accent.withAlpha (menuOpen ? 0.60f : 0.30f));
             g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), 12.0f * s, juce::jmax (1.0f, s));
+        }
+
+        if (power != nullptr)
+            paintPowerChip (g, over && powerBounds().contains (mouse));
+
+        // Switched off, the pill steps aside for a hint.
+        if (! on)
+        {
+            g.setFont (Fonts::sans (10.0f * s, true, 0.14f));
+            g.setColour (Palette::accent.withAlpha (over ? 1.0f : 0.75f));
+            g.drawText ("+  ADD " + powerName, getLocalBounds().toFloat().withTrimmedTop (16.0f * s),
+                        juce::Justification::centred, false);
+            return;
         }
 
         // The pill: arrows either side of the chosen shape and its name.
@@ -168,6 +224,38 @@ public:
     }
 
 private:
+    // A glowing dot (lit while on, a hollow ring while off) and the name.
+    void paintPowerChip (juce::Graphics& g, bool hot) const
+    {
+        using namespace Synth2;
+        const float s    = uiScale;
+        const auto  chip = powerBounds();
+
+        g.setColour (on ? Palette::accentSoft : Palette::idleFill.withMultipliedAlpha (hot ? 1.6f : 1.0f));
+        g.fillRoundedRectangle (chip, chip.getHeight() * 0.5f);
+        g.setColour (on ? Palette::accent.withAlpha (0.45f) : Palette::strongLine);
+        g.drawRoundedRectangle (chip.reduced (0.5f), chip.getHeight() * 0.5f, juce::jmax (1.0f, s));
+
+        const auto dot = juce::Rectangle<float> (7.0f * s, 7.0f * s).withCentre ({ chip.getX() + 12.0f * s, chip.getCentreY() });
+        if (on)
+        {
+            juce::Path body;
+            body.addEllipse (dot);
+            juce::DropShadow (Palette::accent.withAlpha (0.9f), (int) (8.0f * s), {}).drawForPath (g, body);
+            g.setColour (Palette::accent);
+            g.fillPath (body);
+        }
+        else
+        {
+            g.setColour (hot ? Palette::textMid : Palette::textFaint);
+            g.drawEllipse (dot.reduced (0.5f * s), juce::jmax (1.0f, 1.2f * s));
+        }
+
+        g.setFont (Fonts::sans (9.0f * s, true, 0.22f));
+        g.setColour (on ? Palette::textStrong : (hot ? Palette::textMid : Palette::textDim));
+        g.drawText (powerName, chip.withTrimmedLeft (22.0f * s), juce::Justification::centredLeft, false);
+    }
+
     void setSelected (int index)
     {
         selected = juce::jlimit (0, numWaves - 1, index);
@@ -175,6 +263,9 @@ private:
     }
 
     juce::ParameterAttachment attachment;
+    std::unique_ptr<juce::ParameterAttachment> power;
+    juce::String powerName;
+    bool  on          = true;
     int   selected    = 0;
     float uiScale     = 1.0f;
     float wheelTravel = 0.0f;
@@ -187,8 +278,8 @@ private:
     WaveMenu — the tray the WAVE well drops open: the four shapes as big tiles,
     each drawn glowing in the spectrum, the chosen one ringed in the accent.
 
-    It covers the whole editor while open, dimming everything but the WAVE well
-    (which previews the hovered shape, via onHover). Click a tile to pick it;
+    It covers the whole editor while open, dimming everything but the
+    oscillator's well (which previews the hovered shape, via onHover). Click a tile to pick it;
     click anywhere else, or press Escape, to close. The arrow keys move along
     the tiles and Return picks.
 */
@@ -209,8 +300,14 @@ public:
 
     void setUiScale (float newScale) { uiScale = newScale; repaint(); }
 
-    /** Where the WAVE well sits: the tray drops from under it. */
-    void setAnchor (juce::Rectangle<int> wellBounds) { anchor = wellBounds; repaint(); }
+    /** Where the oscillator's well sits (it stays lit while the tray is
+        open), and the row the tray spans as it drops from under it. */
+    void setAnchor (juce::Rectangle<int> wellBounds, juce::Rectangle<int> rowBounds)
+    {
+        anchor = wellBounds;
+        row    = rowBounds;
+        repaint();
+    }
 
     bool isOpen() const noexcept { return isVisible(); }
     int  getHighlighted() const noexcept { return highlighted; }
@@ -235,8 +332,7 @@ public:
 
     juce::Rectangle<float> trayBounds() const noexcept
     {
-        const auto well = anchor.toFloat();
-        return { well.getX(), well.getBottom() + 8.0f * uiScale, well.getWidth(), 92.0f * uiScale };
+        return { (float) row.getX(), (float) anchor.getBottom() + 8.0f * uiScale, (float) row.getWidth(), 92.0f * uiScale };
     }
 
     juce::Rectangle<float> tileBounds (int index) const noexcept
@@ -377,6 +473,7 @@ private:
     }
 
     juce::Rectangle<int> anchor;
+    juce::Rectangle<int> row;
     int   selected    = 0;
     int   highlighted = -1;
     float uiScale     = 1.0f;

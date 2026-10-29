@@ -239,6 +239,15 @@ void testWavePicking()
         between = between && mid >= std::min (a, b) - 1e-6f && mid <= std::max (a, b) + 1e-6f;
     }
     check (ends, "a morph starts on the old shape and ends on the new");
+
+    check (approx (M::cyclesFor (0, 0.0f), 2.0f, 1e-5f), "at PITCH 0 an oscillator's well shows two cycles");
+    check (approx (M::cyclesFor (12, 0.0f), 4.0f, 1e-4f) && approx (M::cyclesFor (-12, 0.0f), 1.0f, 1e-4f),
+           "an octave up twice as many, an octave down half as many");
+    check (M::cyclesFor (0, 50.0f) > 2.0f && M::cyclesFor (0, -50.0f) < 2.0f, "FINE squeezes or stretches it a little");
+    check (approx (M::cyclesFor (24, 50.0f), 8.0f, 1e-5f) && approx (M::cyclesFor (-24, -50.0f), 0.5f, 1e-5f),
+           "and it stays between half a cycle and eight");
+    check (approx (M::waveAt (Waveform::saw, 0.25f, 0.0f, 4.0f), M::waveAt (Waveform::saw, 0.5f), 1e-5f),
+           "a well showing four cycles is the two-cycle shape squeezed");
     check (between, "and passes between them on the way");
 }
 

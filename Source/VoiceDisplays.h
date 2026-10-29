@@ -34,9 +34,10 @@ public:
 
     void setState (const VoiceDisplayState& newState)
     {
-        if (newState == displayState)
+        if (newState == displayState && hasState)
             return;
         displayState = newState;
+        hasState     = true;
         stateChanged();
         repaint();
     }
@@ -85,12 +86,16 @@ protected:
 private:
     float uiScale = 1.0f;
     VoiceDisplayState displayState;
+    bool  hasState = false;
 };
 
 /**
-    WaveDisplay — the WAVE well: two cycles of the chosen shape in the spectrum
-    gradient, glowing, over a faint copy per unison voice, each drawn shifted by
-    its detune (a picture of the stack spreading out, see Synth2VisualModel).
+    WaveDisplay — an oscillator's well (OSC 1 or OSC 2): two cycles of its
+    shape in the spectrum gradient, glowing, over a faint copy per unison
+    voice, each drawn shifted by its detune (a picture of the stack spreading
+    out, see Synth2VisualModel). Its PITCH squeezes or stretches the cycles
+    (twice as many an octave up), its LEVEL sets their height, and a switched-
+    off oscillator is drawn faint.
 
     A new shape doesn't jump in: the old one morphs into it over 150 ms. While
     the wave menu is open, hovering a shape previews it here the same way.
@@ -100,6 +105,34 @@ class WaveDisplay final : public DisplayWell,
 {
 public:
     WaveDisplay() { setInterceptsMouseClicks (false, false); }
+
+    /** The oscillator as the well draws it. */
+    struct Osc
+    {
+        float cycles = Synth2VisualModel::cyclesShown;   // from its PITCH and FINE
+        float level  = 1.0f;                              // its LEVEL, 0..1
+        bool  on     = true;
+
+        friend bool operator== (const Osc& a, const Osc& b) noexcept
+        {
+            return juce::exactlyEqual (a.cycles, b.cycles) && juce::exactlyEqual (a.level, b.level) && a.on == b.on;
+        }
+        friend bool operator!= (const Osc& a, const Osc& b) noexcept { return ! (a == b); }
+    };
+
+    void setOsc (const Osc& newOsc)
+    {
+        if (newOsc == osc)
+            return;
+        osc = newOsc;
+        repaint();
+    }
+
+    const Osc& getOsc() const noexcept { return osc; }
+
+    /** The caption at the well's top left ("OSC 1"); empty when something
+        laid over the well (OSC 2's power switch) draws its own. */
+    void setCaption (const juce::String& newCaption) { caption = newCaption; repaint(); }
 
     /** Shows `wave` (0..3) in place of the chosen one, or the chosen one
         again for -1. */
@@ -117,8 +150,13 @@ public:
     {
         const auto& state = getState();
         const float s    = getUiScale();
-        const auto  plot = paintWell (g, preview >= 0 ? juce::String (juce::CharPointer_UTF8 ("WAVE  \xc2\xb7  PREVIEW")) : juce::String ("WAVE"), {});
+        const auto  plot = paintWell (g, preview >= 0 && caption.isNotEmpty() ? caption + juce::String (juce::CharPointer_UTF8 ("  \xc2\xb7  PREVIEW")) : caption, {});
         const float amount = Synth2VisualModel::ease (morphProgress());
+
+        // A switched-off oscillator is drawn faint, as a hint of what it would add.
+        juce::Graphics::ScopedSaveState keep (g);
+        if (! osc.on)
+            g.beginTransparencyLayer (0.28f);
 
         // Centre line.
         g.setColour (Synth2::Palette::gridLine);
@@ -131,9 +169,9 @@ public:
             for (int p = 0; p <= points; ++p)
             {
                 const float x01 = (float) p / (float) points;
-                const float v   = Synth2VisualModel::morphAt (morphFrom, morphTo, amount, x01, phaseOffset);
+                const float v   = Synth2VisualModel::morphAt (morphFrom, morphTo, amount, x01, phaseOffset, osc.cycles);
                 const juce::Point pt (plot.getX() + x01 * plot.getWidth(),
-                                      plot.getCentreY() - v * plot.getHeight() * 0.42f);
+                                      plot.getCentreY() - v * osc.level * plot.getHeight() * 0.42f);
                 if (p == 0) path.startNewSubPath (pt);
                 else        path.lineTo (pt);
             }
@@ -166,6 +204,9 @@ public:
         g.setOpacity (1.0f);
         g.setGradientFill (ramp);
         g.strokePath (shape, main);
+
+        if (! osc.on)
+            g.endTransparencyLayer();
     }
 
 private:
@@ -176,6 +217,14 @@ private:
     void retarget()
     {
         const auto target = preview >= 0 ? (Waveform) preview : getState().wave;
+        if (! hasShape)
+        {
+            // The first shape it is given simply appears.
+            morphFrom = morphTo = target;
+            hasShape  = true;
+            repaint();
+            return;
+        }
         if (target == morphTo)
             return;
         morphFrom  = morphTo;
@@ -198,7 +247,10 @@ private:
             stopTimer();
     }
 
+    Osc          osc;
+    juce::String caption { "OSC 1" };
     int      preview    = -1;
+    bool     hasShape   = false;
     Waveform morphFrom  = Waveform::saw;
     Waveform morphTo    = Waveform::saw;
     double   morphStart = 0.0;

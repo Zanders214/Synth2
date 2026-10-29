@@ -34,9 +34,39 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
                             : String (value, 2) + " s";
     };
 
+    const StringArray waves { "Sine", "Triangle", "Saw", "Square" };
+    const auto semitonesFromValue = [] (int value, int) { return (value > 0 ? "+" : "") + String (value) + " st"; };
+    const auto centsFromValue     = [] (float value, int) { return (value > 0.0f ? "+" : "") + String (value, 1) + " ct"; };
+
+    // The two oscillators: each a shape, a transposition, a fine tune and a
+    // level. OSC 2 is off until it is switched on. (OSC 1's shape keeps its
+    // original "wave" ID, so older sessions load as they were.)
     layout.add (std::make_unique<AudioParameterChoice> (
-        ParameterID { ParamID::wave, 1 }, "Wave",
-        StringArray { "Sine", "Triangle", "Saw", "Square" }, (int) Waveform::saw));
+        ParameterID { ParamID::wave, 1 }, "Osc 1 Wave", waves, (int) Waveform::saw));
+
+    const auto addOscillator = [&] (int number, const char* pitch, const char* fine, const char* level, float defaultLevel, int defaultPitch)
+    {
+        const String name = "Osc " + String (number) + " ";
+        layout.add (std::make_unique<AudioParameterInt> (
+            ParameterID { pitch, 2 }, name + "Pitch", -Synth2Engine::maxSemitones, Synth2Engine::maxSemitones, defaultPitch,
+            AudioParameterIntAttributes().withStringFromValueFunction (semitonesFromValue)));
+        layout.add (std::make_unique<AudioParameterFloat> (
+            ParameterID { fine, 2 }, name + "Fine",
+            NormalisableRange<float> (-Synth2Engine::maxFineCents, Synth2Engine::maxFineCents, 0.1f), 0.0f,
+            AudioParameterFloatAttributes().withStringFromValueFunction (centsFromValue)));
+        layout.add (std::make_unique<AudioParameterFloat> (
+            ParameterID { level, 2 }, name + "Level",
+            NormalisableRange<float> (0.0f, 1.0f), defaultLevel,
+            AudioParameterFloatAttributes().withStringFromValueFunction (percentFromValue)));
+    };
+
+    const Synth2Engine::Settings defaults;
+    addOscillator (1, ParamID::osc1Pitch, ParamID::osc1Fine, ParamID::osc1Level, defaults.osc1Level, defaults.osc1Semitones);
+
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::osc2On, 2 }, "Osc 2 On", defaults.osc2On));
+    layout.add (std::make_unique<AudioParameterChoice> (
+        ParameterID { ParamID::osc2Wave, 2 }, "Osc 2 Wave", waves, (int) defaults.osc2Wave));
+    addOscillator (2, ParamID::osc2Pitch, ParamID::osc2Fine, ParamID::osc2Level, defaults.osc2Level, defaults.osc2Semitones);
 
     // Unison: how many copies play each note, how far apart they are tuned and
     // how wide they spread (see Unison.h).
@@ -100,6 +130,14 @@ Synth2Engine::Settings Synth2AudioProcessor::currentSettings() const noexcept
     settings.attackSeconds  = param (ParamID::attack);
     settings.releaseSeconds = param (ParamID::release);
     settings.outputDb       = param (ParamID::output);
+    settings.osc1Semitones  = juce::roundToInt (param (ParamID::osc1Pitch));
+    settings.osc1FineCents  = param (ParamID::osc1Fine);
+    settings.osc1Level      = param (ParamID::osc1Level);
+    settings.osc2On         = param (ParamID::osc2On) >= 0.5f;
+    settings.osc2Wave       = (Waveform) juce::jlimit (0, 3, juce::roundToInt (param (ParamID::osc2Wave)));
+    settings.osc2Semitones  = juce::roundToInt (param (ParamID::osc2Pitch));
+    settings.osc2FineCents  = param (ParamID::osc2Fine);
+    settings.osc2Level      = param (ParamID::osc2Level);
     return settings;
 }
 
