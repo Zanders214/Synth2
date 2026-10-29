@@ -1,7 +1,9 @@
 #pragma once
 
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 
 #include "Oscillator.h"
@@ -189,10 +191,8 @@ public:
     /** Whether `midiNote` is sounding on any channel (held, sustained or releasing). */
     bool isNoteSounding (int midiNote) const noexcept
     {
-        for (const auto& voice : voices)
-            if (voice.isActive() && voice.getNote() == midiNote)
-                return true;
-        return false;
+        return std::any_of (voices.begin(), voices.end(),
+                            [midiNote] (const SynthVoice& voice) { return voice.isActive() && voice.getNote() == midiNote; });
     }
 
     /** Where every voice is in its envelope (idle ones included). */
@@ -221,10 +221,8 @@ public:
     /** Whether `midiNote` is sounding from MIDI `midiChannel`. */
     bool isNoteSounding (int midiChannel, int midiNote) const noexcept
     {
-        for (const auto& voice : voices)
-            if (voice.plays (midiChannel, midiNote))
-                return true;
-        return false;
+        return std::any_of (voices.begin(), voices.end(),
+                            [midiChannel, midiNote] (const SynthVoice& voice) { return voice.plays (midiChannel, midiNote); });
     }
 
     bool isSustainPedalDown (int midiChannel) const noexcept { return sustainDown[channelIndex (midiChannel)]; }
@@ -235,10 +233,16 @@ private:
         if (numBytes < 1)
             return;
 
-        const int status  = data[0] & 0xf0;
-        const int channel = (data[0] & 0x0f) + 1;
-        const int first   = numBytes > 1 ? data[1] & 0x7f : 0;
-        const int second  = numBytes > 2 ? data[2] & 0x7f : 0;
+        // Byte `index` of the message under `mask`, or 0 past its end.
+        const auto bits = [data, numBytes] (int index, std::byte mask)
+        {
+            return index < numBytes ? std::to_integer<int> (std::byte { data[index] } & mask) : 0;
+        };
+
+        const int status  = bits (0, std::byte { 0xf0 });
+        const int channel = bits (0, std::byte { 0x0f }) + 1;
+        const int first   = bits (1, std::byte { 0x7f });
+        const int second  = bits (2, std::byte { 0x7f });
 
         switch (status)
         {

@@ -56,13 +56,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
 
     // The amp envelope, in seconds. Skewed so the short times, where the ear
     // is fussiest, get most of the knob.
-    NormalisableRange<float> attackRange (0.001f, 5.0f);
+    NormalisableRange attackRange (0.001f, 5.0f);
     attackRange.setSkewForCentre (0.2f);
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { ParamID::attack, 1 }, "Attack", attackRange, 0.005f,
         AudioParameterFloatAttributes().withStringFromValueFunction (timeFromValue)));
 
-    NormalisableRange<float> releaseRange (0.005f, 10.0f);
+    NormalisableRange releaseRange (0.005f, 10.0f);
     releaseRange.setSkewForCentre (0.5f);
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { ParamID::release, 1 }, "Release", releaseRange, 0.3f,
@@ -81,9 +81,9 @@ std::array<NoteActivity, Synth2Engine::maxNotes> Synth2AudioProcessor::getNoteAc
     std::array<NoteActivity, Synth2Engine::maxNotes> activity {};
     for (size_t i = 0; i < activity.size(); ++i)
     {
-        activity[i].stage       = (NoteActivity::Stage) noteActivity[i].stage.load (std::memory_order_relaxed);
-        activity[i].level       = noteActivity[i].level.load (std::memory_order_relaxed);
-        activity[i].releaseFrom = noteActivity[i].releaseFrom.load (std::memory_order_relaxed);
+        activity[i].stage       = (NoteActivity::Stage) noteActivity[i].stage.load();
+        activity[i].level       = noteActivity[i].level.load();
+        activity[i].releaseFrom = noteActivity[i].releaseFrom.load();
     }
     return activity;
 }
@@ -134,9 +134,9 @@ void Synth2AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     const auto activity = engine.getActivity();
     for (size_t i = 0; i < activity.size(); ++i)
     {
-        noteActivity[i].stage      .store ((int) activity[i].stage, std::memory_order_relaxed);
-        noteActivity[i].level      .store (activity[i].level,       std::memory_order_relaxed);
-        noteActivity[i].releaseFrom.store (activity[i].releaseFrom, std::memory_order_relaxed);
+        noteActivity[i].stage      .store ((int) activity[i].stage);
+        noteActivity[i].level      .store (activity[i].level);
+        noteActivity[i].releaseFrom.store (activity[i].releaseFrom);
     }
 
     const auto held = engine.getHeldNotes();
@@ -193,7 +193,7 @@ void Synth2AudioProcessor::showHostNotesOnKeyboard()
     const std::array<std::uint64_t, 2> held { hostHeldNotes[0].load (std::memory_order_relaxed),
                                               hostHeldNotes[1].load (std::memory_order_relaxed) };
 
-    const juce::ScopedValueSetter<bool> lighting (showingHostNotes, true);
+    const juce::ScopedValueSetter lighting (showingHostNotes, true);
     for (int note = 0; note < 128; ++note)
     {
         if (keysHeldByMouse.test ((size_t) note))

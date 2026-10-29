@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 
 /** The four basic shapes, in the order the WAVE parameter lists them. */
@@ -79,7 +80,7 @@ public:
     /** Cycles per sample: the frequency over the sample rate (kept below 0.5). */
     void setIncrement (double cyclesPerSample) noexcept
     {
-        dt = cyclesPerSample < 0.0 ? 0.0 : (cyclesPerSample > 0.49 ? 0.49 : cyclesPerSample);
+        dt = std::clamp (cyclesPerSample, 0.0, 0.49);
     }
 
     double getPhase() const noexcept     { return phase; }

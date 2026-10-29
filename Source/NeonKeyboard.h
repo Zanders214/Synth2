@@ -57,7 +57,10 @@ public:
         shape.addRoundedRectangle (key.getX(), key.getY(), key.getWidth(), key.getHeight(),
                                    4.0f * s, 4.0f * s, false, false, true, true);
 
-        g.setColour (isDown ? Palette::keyWhiteDown : (isOver ? Palette::keyWhite.darker (0.04f) : Palette::keyWhite));
+        auto colour = isOver ? Palette::keyWhite.darker (0.04f) : Palette::keyWhite;
+        if (isDown)
+            colour = Palette::keyWhiteDown;
+        g.setColour (colour);
         g.fillPath (shape);
 
         // inset 0 -7px 9px -7px rgba(0,0,0,.22): a soft shade at the key's tip.
@@ -90,7 +93,10 @@ public:
         else
             juce::DropShadow (juce::Colours::black.withAlpha (0.4f), (int) (4.0f * s), { 0, (int) (3.0f * s) }).drawForPath (g, shape);
 
-        g.setColour (isDown ? Palette::keyBlackDown : (isOver ? Palette::keyBlack.brighter (0.15f) : Palette::keyBlack));
+        auto colour = isOver ? Palette::keyBlack.brighter (0.15f) : Palette::keyBlack;
+        if (isDown)
+            colour = Palette::keyBlackDown;
+        g.setColour (colour);
         g.fillPath (shape);
 
         // inset 0 -3px 5px rgba(255,255,255,.07): a faint lip at the tip.

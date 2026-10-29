@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 
 /**
@@ -28,7 +29,7 @@ namespace Unison
 
     inline int clampVoices (int numVoices) noexcept
     {
-        return numVoices < 1 ? 1 : (numVoices > maxVoices ? maxVoices : numVoices);
+        return std::clamp (numVoices, 1, maxVoices);
     }
 
     /** Where voice `index` of `numVoices` sits, from -1 (flattest) to +1 (sharpest). */
@@ -67,7 +68,7 @@ namespace Unison
     {
         constexpr float quarterPi = 0.78539816f;
         constexpr float sqrt2     = 1.41421356f;
-        const float p = panPosition < -1.0f ? -1.0f : (panPosition > 1.0f ? 1.0f : panPosition);
+        const float p = std::clamp (panPosition, -1.0f, 1.0f);
         const float angle = (p + 1.0f) * quarterPi;   // 0 (left) .. pi/4 (centre) .. pi/2 (right)
         return { sqrt2 * std::cos (angle), sqrt2 * std::sin (angle) };
     }
