@@ -14,11 +14,12 @@
 
     A dark panel, top to bottom: the wordmark and POLY badge; then four groups
     in two rows, each a display over the three dials it shows. On top, the
-    oscillators: the OSC 1 and OSC 2 wells (the shape at its pitch and level,
-    and a faint copy per unison voice) over their PITCH / FINE / LEVEL. Each
-    well is also where its shape is picked (a pill that steps and scrolls, and
-    a click that drops open a tray of the four), and OSC 2's switches it on and
-    off. Below, the UNISON well (a dot per voice, by detune and pan) over
+    oscillators: the OSC 1 well (the shape at its pitch and level, and a faint
+    copy per unison voice) over its PITCH / FINE / LEVEL, across the whole row
+    until OSC 2 is added (the "+ OSC 2" chip in its corner); then OSC 1 takes
+    the left half and OSC 2 fades in on the right, its power chip taking it
+    away again. Each well is also where its shape is picked (a pill that steps
+    and scrolls, and a click that drops open a tray of the four). Below, the UNISON well (a dot per voice, by detune and pan) over
     VOICES / DETUNE / WIDTH, and the AMP well (the envelope, with a dot riding
     it for each note that sounds) over ATTACK / RELEASE / OUTPUT. Each row of
     dials runs the spectrum, and each display draws in its dials' colours. A
@@ -45,6 +46,8 @@ public:
     WaveMenu&      getWaveMenu (int oscillator = 0) noexcept   { return waveMenus[(size_t) oscillator]; }
     WaveDisplay&   getWaveDisplay (int oscillator = 0) noexcept { return waveDisplays[(size_t) oscillator]; }
     NeonKeyboard&  getKeyboard() noexcept                      { return keyboard; }
+    AddChip&       getAddOsc2Chip() noexcept                   { return addOsc2; }
+    bool           isOsc2Shown() const noexcept                { return osc2Shown; }
     UnisonDisplay& getUnisonDisplay() noexcept  { return unisonDisplay; }
     AmpDisplay&    getAmpDisplay() noexcept     { return ampDisplay; }
 
@@ -54,6 +57,7 @@ private:
     void paintDialLabels (juce::Graphics&, float scale) const;
     VoiceDisplayState displayState (Waveform wave) const;
     WaveDisplay::Osc  oscView (int oscillator) const;
+    void showOsc2 (bool shown, bool fadeIn);
     AmpDisplayState   ampState() const;
 
     Synth2AudioProcessor& processorRef;
@@ -65,6 +69,7 @@ private:
     WavePicker    osc1Picker;
     WavePicker    osc2Picker;
     std::array<WaveMenu, numOscillators> waveMenus;
+    AddChip       addOsc2 { "OSC 2" };
     NeonKeyboard  keyboard;
 
     std::array<juce::Slider, numDials> dials;
@@ -83,7 +88,7 @@ private:
     Layout layout;
 
     float uiScale = 1.0f;
-    bool  osc2Shown = true;    // OSC 2's dials and labels are drawn lit (the first tick sets it)
+    bool  osc2Shown = false;   // OSC 2 is on, and its well and dials are in view
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Synth2AudioProcessorEditor)
 };

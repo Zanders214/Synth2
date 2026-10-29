@@ -85,6 +85,14 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
     ampDisplay.setColours (dialColour (9), dialColour (10), dialColour (11));   // ATTACK, RELEASE, OUTPUT
     addAndMakeVisible (keyboard);
 
+    // OSC 2 is out of sight until it is added.
+    addChildComponent (addOsc2);
+    addOsc2.onClick = [this]
+    {
+        osc2Picker.setOn (true);
+        showOsc2 (true, true);
+    };
+
     for (size_t i = 0; i < dials.size(); ++i)
     {
         auto& dial = dials[i];
@@ -118,6 +126,7 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
     setResizeLimits ((int) kDesignWidth, (int) kDesignHeight,
                      (int) (kDesignWidth * 2.0f), (int) (kDesignHeight * 2.0f));
 
+    showOsc2 (p.currentSettings().osc2On, false);
     setSize ((int) kDesignWidth, (int) kDesignHeight);
     for (auto& menu : waveMenus)
         addChildComponent (menu);   // last, so they open over everything
@@ -157,9 +166,28 @@ WaveDisplay::Osc Synth2AudioProcessorEditor::oscView (int oscillator) const
     {
         view.cycles = Synth2VisualModel::cyclesFor (settings.osc2Semitones, settings.osc2FineCents);
         view.level  = settings.osc2Level;
-        view.on     = settings.osc2On;
     }
     return view;
+}
+
+void Synth2AudioProcessorEditor::showOsc2 (bool shown, bool fadeIn)
+{
+    osc2Shown = shown;
+    if (! shown)
+        waveMenus[1].close();
+
+    // OSC 2's well (with its picker) and its three dials come and go together;
+    // OSC 1 takes the whole row while they're away.
+    const std::array<juce::Component*, 5> parts { &waveDisplays[1], &osc2Picker, &dials[3], &dials[4], &dials[5] };
+    for (auto* part : parts)
+        part->setVisible (shown && ! fadeIn);
+    addOsc2.setVisible (! shown);
+
+    resized();
+    if (shown && fadeIn)
+        for (auto* part : parts)
+            juce::Desktop::getInstance().getAnimator().fadeIn (part, 150);   // --dur-base
+    repaint();
 }
 
 AmpDisplayState Synth2AudioProcessorEditor::ampState() const
@@ -192,14 +220,10 @@ void Synth2AudioProcessorEditor::timerCallback()
     unisonDisplay.setState (displayState (settings.wave));
     ampDisplay.setAmpState (ampState());
 
-    // OSC 2's dials sit dimmed while it is off (still there to set up).
+    // OSC 2 appears when it is added and goes when it is switched off, from
+    // its chips or from the host.
     if (settings.osc2On != osc2Shown)
-    {
-        osc2Shown = settings.osc2On;
-        for (size_t i = firstOsc2Dial; i < firstOsc2Dial + 3; ++i)
-            dials[i].setAlpha (osc2Shown ? 1.0f : 0.4f);
-        repaint();
-    }
+        showOsc2 (settings.osc2On, settings.osc2On);
 
     // Light the keys the host is playing.
     processorRef.showHostNotesOnKeyboard();
@@ -283,15 +307,16 @@ void Synth2AudioProcessorEditor::paintDialLabels (juce::Graphics& g, float s) co
     {
         const auto  column  = layout.dialColumns[i].toFloat();
         const float textTop = dials[i].getBounds().toFloat().getBottom() + 6.0f * s;
-        const float alpha   = isOsc2Dial (i) && ! osc2Shown ? 0.4f : 1.0f;
+        if (isOsc2Dial (i) && ! osc2Shown)
+            continue;
 
         g.setFont (nameFont);
-        g.setColour (Palette::textMid.withMultipliedAlpha (alpha));
+        g.setColour (Palette::textMid);
         g.drawText (dialNames[i], juce::Rectangle (column.getX(), textTop, column.getWidth(), 12.0f * s),
                     juce::Justification::centredTop, false);
 
         g.setFont (valueFont);
-        g.setColour (dialColour (i).withMultipliedAlpha (alpha));
+        g.setColour (dialColour (i));
         g.drawText (dialValueText (processorRef, i),
                     juce::Rectangle (column.getX(), textTop + 13.0f * s, column.getWidth(), 13.0f * s),
                     juce::Justification::centredTop, false);
@@ -300,6 +325,13 @@ void Synth2AudioProcessorEditor::paintDialLabels (juce::Graphics& g, float s) co
 
 void Synth2AudioProcessorEditor::resized()
 {
+    // A fade still running (OSC 2 coming in, a tray opening) would put its
+    // component back where it started: finish it before laying out afresh.
+    auto& animator = juce::Desktop::getInstance().getAnimator();
+    for (auto* part : std::initializer_list<juce::Component*> { &waveDisplays[1], &osc2Picker, &dials[3], &dials[4], &dials[5],
+                                                                &waveMenus[0], &waveMenus[1] })
+        animator.cancelAnimation (part, true);
+
     uiScale = (float) getWidth() / kDesignWidth;
     const float s = uiScale;
     const auto px = [s] (float v) { return (int) std::round (v * s); };
@@ -325,6 +357,16 @@ void Synth2AudioProcessorEditor::resized()
 
     // Two rows of two groups, each group a display over its three dials.
     const int groupGap = px (12.0f);
+    const auto layDials = [&] (juce::Rectangle<int> row, size_t first)
+    {
+        const int columnWidth = row.getWidth() / 3;
+        for (size_t i = first; i < first + 3; ++i)
+        {
+            auto column = i + 1 == first + 3 ? row : row.removeFromLeft (columnWidth);
+            layout.dialColumns[i] = column;
+            dials[i].setBounds (column.withHeight (px (52.0f)).withSizeKeepingCentre (px (52.0f), px (52.0f)));
+        }
+    };
     const auto layRow = [&] (juce::Rectangle<int> row, juce::Component& leftDisplay, juce::Component& rightDisplay, size_t firstDial)
     {
         auto left  = row.removeFromLeft ((row.getWidth() - groupGap) / 2);
@@ -334,30 +376,41 @@ void Synth2AudioProcessorEditor::resized()
         left .removeFromTop (px (12.0f));
         right.removeFromTop (px (12.0f));
 
-        for (const auto& [dialsRow, first] : { std::pair (left, firstDial), std::pair (right, firstDial + 3) })
-        {
-            auto columns = dialsRow;
-            const int columnWidth = columns.getWidth() / 3;
-            for (size_t i = first; i < first + 3; ++i)
-            {
-                auto column = i + 1 == first + 3 ? columns : columns.removeFromLeft (columnWidth);
-                layout.dialColumns[i] = column;
-                dials[i].setBounds (column.withHeight (px (52.0f)).withSizeKeepingCentre (px (52.0f), px (52.0f)));
-            }
-        }
+        layDials (left, firstDial);
+        layDials (right, firstDial + 3);
     };
 
-    // The oscillators: OSC 1 and OSC 2, each well with its picker laid over
-    // it; their trays cover the editor and drop across the row.
+    // The oscillators: OSC 1 and OSC 2 side by side, or OSC 1 across the whole
+    // row until OSC 2 is added. Each well has its picker laid over it; their
+    // trays cover the editor and drop across the row.
     area.removeFromTop (px (16.0f));
-    layRow (area.removeFromTop (px (190.0f)), waveDisplays[0], waveDisplays[1], 0);
-    const auto wells = waveDisplays[0].getBounds().getUnion (waveDisplays[1].getBounds());
+    auto oscillators = area.removeFromTop (px (190.0f));
+    if (osc2Shown)
+    {
+        layRow (oscillators, waveDisplays[0], waveDisplays[1], 0);
+    }
+    else
+    {
+        waveDisplays[0].setBounds (oscillators.removeFromTop (px (96.0f)));
+        oscillators.removeFromTop (px (12.0f));
+        layDials (oscillators, 0);
+    }
+    const auto wells = osc2Shown ? waveDisplays[0].getBounds().getUnion (waveDisplays[1].getBounds())
+                                 : waveDisplays[0].getBounds();
+
     for (int osc = 0; osc < numOscillators; ++osc)
     {
         getWavePicker (osc).setBounds (waveDisplays[(size_t) osc].getBounds());
         waveMenus[(size_t) osc].setBounds (getLocalBounds());
         waveMenus[(size_t) osc].setAnchor (waveDisplays[(size_t) osc].getBounds(), wells);
     }
+
+    // "+ OSC 2" sits in OSC 1's well, just left of its pill.
+    const auto osc1Well = waveDisplays[0].getBounds();
+    const auto pill     = osc1Picker.pillBounds();
+    addOsc2.setUiScale (s);
+    addOsc2.setBounds (osc1Well.getX() + (int) pill.getX() - px (6.0f + 72.0f), osc1Well.getY() + (int) pill.getY(),
+                       px (72.0f), (int) pill.getHeight());
 
     // Hairline, then the voice: UNISON on the left, AMP on the right.
     area.removeFromTop (px (12.0f));

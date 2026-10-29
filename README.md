@@ -14,7 +14,7 @@ note -> VOICES x (OSC 1 + OSC 2) -> DETUNE + WIDTH -> ATTACK / RELEASE -> OUTPUT
 | Control     | What it does                                                        |
 |-------------|---------------------------------------------------------------------|
 | **Wave**    | Each oscillator's shape: **SINE**, **TRIANGLE**, **SAW** (OSC 1's default) or **SQUARE** (OSC 2's), picked in its display (see below). |
-| **OSC 2**   | Switches the second oscillator on and off (off by default). |
+| **OSC 2**   | Adds the second oscillator, or takes it away (off by default). |
 | **Pitch**   | Transposes the oscillator, -24 to +24 semitones: +12 is an octave up, +7 a fifth. |
 | **Fine**    | Tunes the oscillator by up to ±50 cents, for a slow beat against the other one. |
 | **Level**   | The oscillator's level, 0 to 100%. |
@@ -29,9 +29,12 @@ Every control is a parameter, so it's saved with your set and can be automated.
 
 ### Two oscillators
 
-OSC 1 plays on its own until you switch OSC 2 on: click the **OSC 2** chip in its
-display's corner (or anywhere on the display while it's off). It comes set up as a
-square an octave below, at 70%, a classic way to add weight. Each oscillator has
+OSC 1 plays on its own, across the whole top row, until you add OSC 2 with the
+**+ OSC 2** chip in its display. OSC 1 then moves over to the left half and OSC 2
+fades in on the right, with its own display and dials; its glowing **OSC 2** chip
+switches it off again, and it goes back out of sight (its settings are kept for next
+time). It comes set up as a square an octave below, at 70%, a classic way to add
+weight. Each oscillator has
 its own shape, PITCH, FINE and LEVEL; both share the unison stack (every copy plays
 both, so DETUNE and WIDTH spread both) and the envelope. Switching OSC 2 on or off,
 and moving either LEVEL, fades rather than clicks, and while OSC 2 is off it costs
@@ -56,7 +59,7 @@ Each group of dials has a display right above it, drawn in the dials' colours:
 - **OSC 1** and **OSC 2** (above their PITCH / FINE / LEVEL): the oscillator's shape,
   with a faint copy for every unison voice, shifted by its detune. PITCH squeezes or
   stretches it (two cycles at 0, four an octave up, one an octave down), LEVEL sets its
-  height, and a switched-off OSC 2 is drawn faint.
+  height.
 - **UNISON** (above VOICES / DETUNE / WIDTH): a glowing dot per voice, placed left to
   right by its detune (on a fixed -50..+50 cent scale) and top to bottom by its place in
   the stereo field. DETUNE fans the dots out sideways, WIDTH up and down.
@@ -128,7 +131,7 @@ Source/
   Unison.h                   where each unison voice sits: its detune, its pan, the stack's level
   PluginEditor.{h,cpp}       the Neon Plugins editor: wells, wave picker, dials, keyboard
   Synth2LookAndFeel.{h,cpp}  the dials (design-system Dial: arc + glowing core)
-  WavePicker.h               an oscillator well's picker (pill, arrows, wheel, OSC 2's switch) and its tray of shapes
+  WavePicker.h               an oscillator well's picker (pill, arrows, wheel, OSC 2's switch), its tray of shapes, the + OSC 2 chip
   VoiceDisplays.h            the OSC, UNISON and AMP wells
   NeonKeyboard.h             the on-screen keyboard
   Synth2Theme.h              shared palette, fonts, colour + value formatting
@@ -150,7 +153,8 @@ mode badge, then four groups of three Dials in two rows, each row coloured along
 cyan → violet → pink → amber spectrum and each group under the display it drives:
 OSC 1 and OSC 2 (the shape in the spectrum gradient with a faint copy per unison
 voice, each with its picker pill and a drop-open tray of glowing shape tiles, the
-chosen one ringed in the accent; OSC 2 with its glowing power chip), UNISON (a
+chosen one ringed in the accent; OSC 1 alone across the row, with a "+ OSC 2" chip,
+until OSC 2 is added with its glowing power chip), UNISON (a
 glowing dot per voice, by detune and pan) and AMP (the envelope in its dials'
 colours, with a live dot per sounding note); and an ivory keyboard whose
 pressed keys glow violet. The displays draw on the engine's own wave, unison and

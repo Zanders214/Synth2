@@ -305,11 +305,18 @@ void testEditor()
     const auto first = render (*editor);
     check (hasDetail (first), "renders its face");
 
-    // Big enough to grab: every dial and the keyboard.
+    // Big enough to grab: every dial in view (OSC 2's wait until it is added)
+    // and the keyboard.
     bool dialsFit = true;
+    int  inView   = 0;
     for (int i = 0; i < Synth2AudioProcessorEditor::numDials; ++i)
+    {
+        if (! editor->getDial (i).isVisible())
+            continue;
+        ++inView;
         dialsFit = dialsFit && editor->getDial (i).getWidth() >= 40 && editor->getLocalBounds().contains (editor->getDial (i).getBounds());
-    check (dialsFit, "all twelve dials are laid out inside the panel");
+    }
+    check (dialsFit && inView == 9, "the nine dials in view are laid out inside the panel");
     check (editor->getLocalBounds().contains (editor->getKeyboard().getBounds()) && editor->getKeyboard().getHeight() > 80,
            "the keyboard fits along the bottom");
 
@@ -443,17 +450,26 @@ void testEditor()
             && display.getRight() >= lastDial.getRight();
     };
     check (above (editor->getWaveDisplay (0), editor->getDial (0), editor->getDial (2)), "the OSC 1 well sits over its PITCH, FINE and LEVEL");
-    check (above (editor->getWaveDisplay (1), editor->getDial (3), editor->getDial (5)), "the OSC 2 well sits over its own");
     check (above (editor->getUnisonDisplay(), editor->getDial (6), editor->getDial (8)), "the UNISON well sits over VOICES, DETUNE and WIDTH");
     check (above (editor->getAmpDisplay(), editor->getDial (9), editor->getDial (11)), "the AMP well sits over ATTACK, RELEASE and OUTPUT");
     check (editor->getWaveDisplay (0).getBottom() < editor->getUnisonDisplay().getY(), "the oscillators come first, the voice below");
 
-    // OSC 2: off, its well faint and its dials dimmed; its chip switches it on.
-    auto& osc2       = editor->getWavePicker (1);
-    auto& osc2Well   = editor->getWaveDisplay (1);
+    // OSC 2 is out of sight until it is added: OSC 1 takes the whole row, with
+    // a "+ OSC 2" chip in its well.
+    auto& osc2     = editor->getWavePicker (1);
+    auto& osc2Well = editor->getWaveDisplay (1);
+    auto& osc1Well = editor->getWaveDisplay (0);
+    auto& addOsc2  = editor->getAddOsc2Chip();
     check (osc2.hasPowerSwitch() && ! editor->getWavePicker (0).hasPowerSwitch(), "OSC 2 has a power switch, OSC 1 doesn't");
-    check (! osc2.isOn() && ! osc2Well.getOsc().on && editor->getDial (3).getAlpha() < 1.0f && editor->getDial (0).getAlpha() >= 1.0f,
-           "switched off, OSC 2's well is faint and its dials dimmed");
+    check (! editor->isOsc2Shown() && ! osc2Well.isVisible() && ! osc2.isVisible()
+               && ! editor->getDial (3).isVisible() && ! editor->getDial (4).isVisible() && ! editor->getDial (5).isVisible(),
+           "while OSC 2 is off, its well and dials are hidden");
+    check (osc1Well.getWidth() == editor->getUnisonDisplay().getWidth() * 2 + (editor->getAmpDisplay().getX() - editor->getUnisonDisplay().getRight()),
+           "and OSC 1's well spans the whole row");
+    check (editor->getDial (2).getRight() > editor->getAmpDisplay().getX(), "its dials spread across it");
+    check (addOsc2.isVisible() && osc1Well.getBounds().contains (addOsc2.getBounds())
+               && ! addOsc2.getBounds().toFloat().intersects (osc1Well.getBounds().toFloat().withTrimmedLeft ((float) osc1Well.getWidth() - 130.0f)),
+           "with a + OSC 2 chip in its corner, clear of its pill");
     const auto osc2Off = render (*editor);
 
     const auto clickOn = [] (juce::Component& target, juce::Point<float> at)
@@ -461,11 +477,16 @@ void testEditor()
         return juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), at, {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
                                  &target, &target, juce::Time::getCurrentTime(), at, juce::Time::getCurrentTime(), 1, false);
     };
-    osc2.mouseDown (clickOn (osc2, osc2.powerBounds().getCentre()));
-    check (param (p, ParamID::osc2On) >= 0.5f && osc2.isOn(), "its chip switches OSC 2 on");
-    check (pumpUntil ([&] { return osc2Well.getOsc().on && editor->getDial (3).getAlpha() >= 1.0f; }), "and its well and dials light up");
+    addOsc2.mouseDown (clickOn (addOsc2, addOsc2.getLocalBounds().getCentre().toFloat()));
+    check (param (p, ParamID::osc2On) >= 0.5f && osc2.isOn() && editor->isOsc2Shown(), "the chip adds OSC 2");
+    check (pumpUntil ([&] { return osc2Well.isVisible() && osc2Well.getAlpha() >= 1.0f && editor->getDial (5).getAlpha() >= 1.0f; }),
+           "which fades in with its dials");
+    check (! addOsc2.isVisible(), "and the chip goes");
+    check (above (osc2Well, editor->getDial (3), editor->getDial (5)) && osc2Well.getX() > osc1Well.getRight(),
+           "OSC 2's well sits on the right, over its own dials");
+    check (osc1Well.getWidth() == editor->getUnisonDisplay().getWidth(), "and OSC 1 moves over to the left half");
     check (pixelsChanged (osc2Off, render (*editor)) > 200, "visibly");
-    check (! editor->getWaveMenu (1).isOpen(), "without opening its tray");
+    check (! editor->getWaveMenu (1).isOpen() && ! editor->getWaveMenu (0).isOpen(), "without opening a tray");
 
     const float osc1Wave = param (p, ParamID::wave);
     osc2.mouseDown (clickOn (osc2, osc2.nextArrow().getCentre()));
@@ -490,11 +511,15 @@ void testEditor()
            "its well shows twice the cycles, half as tall");
 
     osc2.mouseDown (clickOn (osc2, osc2.powerBounds().getCentre()));
-    check (param (p, ParamID::osc2On) < 0.5f && pumpUntil ([&] { return editor->getDial (3).getAlpha() < 1.0f; }),
-           "and its chip switches it off again");
-    osc2.mouseDown (clickOn (osc2, { 100.0f, 60.0f }));
-    check (param (p, ParamID::osc2On) >= 0.5f && ! osc2Menu.isOpen(), "while off, a click anywhere on its well switches it on");
-    osc2.setOn (false);
+    check (param (p, ParamID::osc2On) < 0.5f, "its power chip switches OSC 2 off");
+    check (pumpUntil ([&] { return ! editor->isOsc2Shown(); }) && ! osc2Well.isVisible() && ! editor->getDial (3).isVisible()
+               && addOsc2.isVisible() && osc1Well.getRight() > editor->getAmpDisplay().getX(),
+           "and it goes out of sight again, OSC 1 taking the row back");
+
+    setParam (p, ParamID::osc2On, 1.0f);
+    check (pumpUntil ([&] { return editor->isOsc2Shown() && osc2Well.isVisible(); }), "the host switching it on brings it back too");
+    setParam (p, ParamID::osc2On, 0.0f);
+    check (pumpUntil ([&] { return ! editor->isOsc2Shown(); }), "and off takes it away");
 
     // The AMP well follows its dials, and a dot rides the envelope for each note.
     playAndMeasure (p, {}, 100);      // let the earlier tests' notes fade out
