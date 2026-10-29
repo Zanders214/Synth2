@@ -32,11 +32,11 @@ namespace BenchStyle
             if (id == osc.detune) return Format::cents (value);
         }
         for (const auto& env : ParamID::envelopes)
-            if (id == env.attack || id == env.release)
+            if (id == env.delay || id == env.attack || id == env.hold || id == env.decay || id == env.release)
                 return Format::seconds (value);
         if (id == ParamID::output)
             return Format::decibels (value);
-        return Format::percent (value);   // the levels and WIDTH
+        return Format::percent (value);   // the levels, WIDTH and SUSTAIN
     }
 
     /** A dial in the house style, tied to its parameter. */
@@ -660,7 +660,8 @@ private:
     WavePicker  picker;
 };
 
-/** An envelope: its AMP well over ATTACK / RELEASE. It shapes one oscillator. */
+/** An envelope: its AMP well over DELAY / ATTACK / HOLD and DECAY / SUSTAIN /
+    RELEASE. It shapes one oscillator. */
 class EnvelopeModule final : public BenchModule
 {
 public:
@@ -668,10 +669,17 @@ public:
         : BenchModule ({ Bench::Kind::envelope, slot }, "ENV " + juce::String (slot + 1), looksToUse, stateToUse)
     {
         addAndMakeVisible (display);
-        display.setColours (BenchStyle::dialColour (0.6f), BenchStyle::dialColour (0.8f), BenchStyle::dialColour (1.0f));
         const auto& ids = ParamID::envelopes[slot];
-        addDial (ids.attack,  "ATTACK",  BenchStyle::dialColour (0.6f));
-        addDial (ids.release, "RELEASE", BenchStyle::dialColour (0.8f));
+        const std::array<std::pair<const char*, const char*>, 6> stages { {
+            { ids.delay, "DELAY" }, { ids.attack, "ATTACK" }, { ids.hold, "HOLD" },
+            { ids.decay, "DECAY" }, { ids.sustain, "SUSTAIN" }, { ids.release, "RELEASE" } } };
+        std::array<juce::Colour, 6> colours;
+        for (size_t i = 0; i < stages.size(); ++i)
+        {
+            colours[i] = BenchStyle::dialColour (0.2f * (float) i);
+            addDial (stages[i].first, stages[i].second, colours[i]);
+        }
+        display.setColours (colours);
         setJackColour (BenchStyle::dialColour (0.6f + 0.1f * (float) slot));
     }
 

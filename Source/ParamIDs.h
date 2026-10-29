@@ -60,30 +60,51 @@ namespace ParamID
         { osc3On, osc3Wave, osc3Pitch, osc3Fine, osc3Level, osc3Voices, osc3Detune, osc3Width },
         { osc4On, osc4Wave, osc4Pitch, osc4Fine, osc4Level, osc4Voices, osc4Detune, osc4Width } };
 
-    // The four envelopes. ENV 1's times are `attack` and `release` above.
+    // The four envelopes. ENV 1's attack and release are `attack` and
+    // `release` above.
     inline constexpr const char* env1On      = "env1On";
+    inline constexpr const char* env1Delay   = "env1Delay";
+    inline constexpr const char* env1Hold    = "env1Hold";
+    inline constexpr const char* env1Decay   = "env1Decay";
+    inline constexpr const char* env1Sustain = "env1Sustain";
     inline constexpr const char* env2On      = "env2On";
+    inline constexpr const char* env2Delay   = "env2Delay";
     inline constexpr const char* env2Attack  = "env2Attack";
+    inline constexpr const char* env2Hold    = "env2Hold";
+    inline constexpr const char* env2Decay   = "env2Decay";
+    inline constexpr const char* env2Sustain = "env2Sustain";
     inline constexpr const char* env2Release = "env2Release";
     inline constexpr const char* env3On      = "env3On";
+    inline constexpr const char* env3Delay   = "env3Delay";
     inline constexpr const char* env3Attack  = "env3Attack";
+    inline constexpr const char* env3Hold    = "env3Hold";
+    inline constexpr const char* env3Decay   = "env3Decay";
+    inline constexpr const char* env3Sustain = "env3Sustain";
     inline constexpr const char* env3Release = "env3Release";
     inline constexpr const char* env4On      = "env4On";
+    inline constexpr const char* env4Delay   = "env4Delay";
     inline constexpr const char* env4Attack  = "env4Attack";
+    inline constexpr const char* env4Hold    = "env4Hold";
+    inline constexpr const char* env4Decay   = "env4Decay";
+    inline constexpr const char* env4Sustain = "env4Sustain";
     inline constexpr const char* env4Release = "env4Release";
 
     /** Envelope `index`'s (0..3) parameters, by role. */
     struct Envelope
     {
         const char* on;
+        const char* delay;
         const char* attack;
+        const char* hold;
+        const char* decay;
+        const char* sustain;
         const char* release;
     };
     inline constexpr Envelope envelopes[] {
-        { env1On, attack,     release },
-        { env2On, env2Attack, env2Release },
-        { env3On, env3Attack, env3Release },
-        { env4On, env4Attack, env4Release } };
+        { env1On, env1Delay, attack,     env1Hold, env1Decay, env1Sustain, release },
+        { env2On, env2Delay, env2Attack, env2Hold, env2Decay, env2Sustain, env2Release },
+        { env3On, env3Delay, env3Attack, env3Hold, env3Decay, env3Sustain, env3Release },
+        { env4On, env4Delay, env4Attack, env4Hold, env4Decay, env4Sustain, env4Release } };
 
     // How sound flows between the modules on the bench.
     inline constexpr const char* signalFlow = "signalFlow";

@@ -74,10 +74,17 @@ public:
         int      envelope    = -1;
     };
 
-    /** One envelope: how long a note takes to fade in, and to ring on after its key goes up. */
+    /** One envelope (see Envelope.h): how long a note waits, takes to fade
+        in, stays at the top and takes to fall to its sustain level, that
+        level, and how long it rings on after its key goes up. With the
+        defaults it fades in and stays up while the key is held. */
     struct EnvelopeSettings
     {
+        float delaySeconds   = 0.0f;
         float attackSeconds  = 0.005f;
+        float holdSeconds    = 0.0f;
+        float decaySeconds   = 0.3f;
+        float sustainLevel   = 1.0f;
         float releaseSeconds = 0.3f;
     };
 
@@ -410,20 +417,25 @@ private:
         for (size_t k = 0; k < (size_t) numOscillators; ++k)
         {
             const int shapedBy = settings.oscillators[k].envelope;
-            juce::ADSR::Parameters envelope;
+            Envelope::Parameters envelope;
             envelope.attack  = gateAttackSeconds;
             envelope.decay   = 0.0f;
-            envelope.sustain = 1.0f;
             envelope.release = gateReleaseSeconds;
             if (shapedBy >= 0)
             {
                 const auto& shape = settings.envelopes[(size_t) shapedBy];
+                envelope.delay   = juce::jmax (0.0f, shape.delaySeconds);
                 envelope.attack  = juce::jmax (0.001f, shape.attackSeconds);
+                envelope.hold    = juce::jmax (0.0f, shape.holdSeconds);
+                envelope.decay   = juce::jmax (0.001f, shape.decaySeconds);
+                envelope.sustain = juce::jlimit (0.0f, 1.0f, shape.sustainLevel);
                 envelope.release = juce::jmax (0.005f, shape.releaseSeconds);
             }
 
             auto& applied = appliedEnvelopes[k];
-            if (juce::exactlyEqual (envelope.attack, applied.attack) && juce::exactlyEqual (envelope.release, applied.release))
+            const auto same = [] (float a, float b) { return juce::exactlyEqual (a, b); };
+            if (same (envelope.delay, applied.delay) && same (envelope.attack, applied.attack) && same (envelope.hold, applied.hold)
+                && same (envelope.decay, applied.decay) && same (envelope.sustain, applied.sustain) && same (envelope.release, applied.release))
                 continue;
 
             applied = envelope;
@@ -445,7 +457,7 @@ private:
     };
     Smoothed smoothed;
 
-    std::array<juce::ADSR::Parameters, numOscillators> appliedEnvelopes {};
+    std::array<Envelope::Parameters, numOscillators> appliedEnvelopes {};
     juce::Random  random { 0x5eed };
     std::uint64_t noteCounter = 0;
     std::array<bool, 16> sustainDown {};   // per MIDI channel

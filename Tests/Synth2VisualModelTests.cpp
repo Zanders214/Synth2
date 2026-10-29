@@ -259,32 +259,45 @@ void testEnvelope()
     std::printf ("AMP envelope:\n");
     using M = Synth2VisualModel;
 
-    const auto shortest = M::envelope (0.0f, 0.0f, 0.0f);
-    const auto longest  = M::envelope (1.0f, 1.0f, 0.0f);
-    check (shortest.attackEnd > 0.0f && shortest.attackEnd < shortest.holdEnd && shortest.holdEnd < shortest.releaseEnd,
-           "the rise, the top and the fall come in order");
-    check (longest.releaseEnd <= 1.0f + 1e-6f, "at their longest the ramps still fit the well");
-    check (longest.attackEnd > shortest.attackEnd && approx (longest.holdEnd - longest.attackEnd, shortest.holdEnd - shortest.attackEnd, 1e-6f),
-           "turning ATTACK up stretches the rise; the top keeps its length");
-    check (longest.releaseEnd - longest.holdEnd > shortest.releaseEnd - shortest.holdEnd, "turning RELEASE up stretches the fall");
+    M::EnvelopeDials none, all;
+    none.sustain = 0.5f;
+    all          = { 1.0f, 1.0f, 1.0f, 1.0f, 0.5f, 1.0f };
+    const auto shortest = M::envelope (none, 0.0f);
+    const auto longest  = M::envelope (all, 0.0f);
+    check (approx (shortest.delayEnd, 0.0f, 1e-6f) && shortest.attackEnd > 0.0f && approx (shortest.holdEnd, shortest.attackEnd, 1e-6f)
+               && shortest.holdEnd < shortest.decayEnd && shortest.decayEnd < shortest.sustainEnd && shortest.sustainEnd < shortest.releaseEnd,
+           "the stages come in order, with no delay or hold at their shortest");
+    check (longest.releaseEnd <= 1.0f + 1e-6f, "at their longest the stages still fit the well");
+    check (longest.delayEnd > 0.0f && longest.holdEnd > longest.attackEnd, "turning DELAY and HOLD up opens a wait and a stretch at the top");
+    check (longest.attackEnd - longest.delayEnd > shortest.attackEnd - shortest.delayEnd
+               && longest.decayEnd - longest.holdEnd > shortest.decayEnd - shortest.holdEnd
+               && longest.releaseEnd - longest.sustainEnd > shortest.releaseEnd - shortest.sustainEnd,
+           "turning ATTACK, DECAY and RELEASE up stretches their ramps");
+    check (approx (longest.sustainEnd - longest.decayEnd, shortest.sustainEnd - shortest.decayEnd, 1e-6f),
+           "the sustain stretch keeps its length");
+    check (approx (shortest.sustain, 0.5f * shortest.peak, 1e-6f), "SUSTAIN sets its stretch's height, as a share of the top");
 
     check (approx (M::heightForDb (-24.0f), 0.0f, 1e-6f) && approx (M::heightForDb (6.0f), 1.0f, 1e-6f)
                && approx (M::heightForDb (0.0f), 0.8f, 1e-6f),
            "OUTPUT sets the top's height on a -24..+6 dB scale");
-    check (M::envelope (0.5f, 0.5f, -12.0f).peak < M::envelope (0.5f, 0.5f, 0.0f).peak, "turning OUTPUT down lowers the top");
+    check (M::envelope (none, -12.0f).peak < M::envelope (none, 0.0f).peak, "turning OUTPUT down lowers the top");
 
-    const auto e = M::envelope (0.5f, 0.5f, 0.0f);
-    const auto rising  = M::noteDot (e, 1, 0.5f, 1.0f);
-    const auto holding = M::noteDot (e, 2, 1.0f, 1.0f);
-    const auto falling = M::noteDot (e, 3, 0.25f, 1.0f);
-    check (approx (rising.x, 0.5f * e.attackEnd, 1e-6f) && approx (rising.y, 0.5f * e.peak, 1e-6f),
-           "halfway up the attack, a note's dot is halfway up the rise");
-    check (holding.x > e.attackEnd && holding.x < e.holdEnd && approx (holding.y, e.peak, 1e-6f),
-           "a held note rests on the top");
-    check (falling.x > e.holdEnd && falling.x < e.releaseEnd && approx (falling.y, 0.25f * e.peak, 1e-6f),
-           "a releasing note walks down the fall");
-    const auto letGoEarly = M::noteDot (e, 3, 0.4f, 0.4f);
-    check (approx (letGoEarly.x, e.holdEnd, 1e-6f), "a note let go mid-attack starts its fall at the release's top");
+    using Stage = Envelope::Stage;
+    const auto e = M::envelope (all, 0.0f);
+    const auto waiting = M::noteDot (e, Stage::delay, 0.0f, 0.5f);
+    const auto rising  = M::noteDot (e, Stage::attack, 0.5f, 0.5f);
+    const auto holding = M::noteDot (e, Stage::hold, 1.0f, 0.5f);
+    const auto falling = M::noteDot (e, Stage::decay, 0.75f, 0.5f);
+    const auto resting = M::noteDot (e, Stage::sustain, 0.5f, 0.5f);
+    const auto leaving = M::noteDot (e, Stage::release, 0.25f, 0.5f);
+    check (approx (waiting.x, 0.5f * e.delayEnd, 1e-6f) && approx (waiting.y, 0.0f, 1e-6f), "halfway through the delay, a note's dot waits halfway along it");
+    check (approx (rising.x, 0.5f * (e.delayEnd + e.attackEnd), 1e-6f) && approx (rising.y, 0.5f * e.peak, 1e-6f),
+           "halfway up the attack, it is halfway up the rise");
+    check (approx (holding.x, 0.5f * (e.attackEnd + e.holdEnd), 1e-6f) && approx (holding.y, e.peak, 1e-6f), "holding, it walks the top");
+    check (falling.x > e.holdEnd && falling.x < e.decayEnd && approx (falling.y, 0.75f * e.peak, 1e-6f), "decaying, it walks down to the sustain level");
+    check (approx (resting.x, 0.5f * (e.decayEnd + e.sustainEnd), 1e-6f) && approx (resting.y, e.sustain, 1e-6f),
+           "sustaining, it rests on the sustain stretch");
+    check (leaving.x > e.sustainEnd && leaving.x < e.releaseEnd && approx (leaving.y, 0.25f * e.peak, 1e-6f), "releasing, it walks down the fall");
 }
 } // namespace
 

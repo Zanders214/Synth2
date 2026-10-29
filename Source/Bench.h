@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "ParamIDs.h"
@@ -95,7 +96,7 @@ namespace Bench
 
     inline constexpr float moduleWidth      = 236.0f;
     inline constexpr float oscillatorHeight = 336.0f;   // its wave well over two rows of dials
-    inline constexpr float envelopeHeight   = 240.0f;   // its AMP well over one
+    inline constexpr float envelopeHeight   = 336.0f;   // its AMP well over two rows of dials, like an oscillator
     inline constexpr float areaWidth        = 992.0f;   // four modules and three 16 px gaps
     inline constexpr float areaHeight       = 688.0f;   // two rows of oscillators
     inline constexpr float gap              = 16.0f;
@@ -595,8 +596,12 @@ namespace Bench
                 const ModuleId env { Kind::envelope, k };
                 if (! isPresent ({ Kind::oscillator, k }) || isPresent (env))
                     continue;
-                setValue (ParamID::envelopes[k].attack, valueOf (ParamID::envelopes[0].attack));
-                setValue (ParamID::envelopes[k].release, valueOf (ParamID::envelopes[0].release));
+                const auto& from = ParamID::envelopes[0];
+                const auto& to   = ParamID::envelopes[k];
+                for (const auto& [target, source] : { std::pair (to.delay, from.delay), std::pair (to.attack, from.attack),
+                                                      std::pair (to.hold, from.hold), std::pair (to.decay, from.decay),
+                                                      std::pair (to.sustain, from.sustain), std::pair (to.release, from.release) })
+                    setValue (target, valueOf (source));
                 setPosition (env, resolveOverlap (positionOf (env), Kind::envelope, othersThan (env)));
                 setPresent (env, true);
             }

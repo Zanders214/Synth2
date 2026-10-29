@@ -8,7 +8,7 @@ detuned, spread copies on every note, give each its own envelope, and play
 chords: the classic wide, detuned "supersaw" pad in a few turns.
 
 ```
-note -> OSC n (VOICES x shape, DETUNE + WIDTH) -> ENV n (ATTACK / RELEASE) -> + -> OUTPUT
+note -> OSC n (VOICES x shape, DETUNE + WIDTH) -> ENV n (DELAY ATTACK HOLD DECAY SUSTAIN RELEASE) -> + -> OUTPUT
 ```
 
 ## The workbench
@@ -19,7 +19,7 @@ and a tray offers what can go there:
 | Module         | What it holds                                                             |
 |----------------|---------------------------------------------------------------------------|
 | **Oscillator** | One shape at its own pitch and level, WAVE, PITCH, FINE, LEVEL, over its own unison stack, VOICES, DETUNE, WIDTH. Up to four (OSC 1 to OSC 4). |
-| **Envelope**   | How one oscillator's notes fade in and out: ATTACK, RELEASE. Up to four (ENV 1 to ENV 4). An oscillator without one starts and stops with the key, with a short click-free fade. |
+| **Envelope**   | How one oscillator's notes rise and fall: DELAY, ATTACK, HOLD, DECAY, SUSTAIN, RELEASE. Up to four (ENV 1 to ENV 4). An oscillator without one starts and stops with the key, with a short click-free fade. |
 
 The module lands where you clicked. Drag a module by its header to move it anywhere
 on the bench; drop it on another and it slides off to the nearest free spot, so
@@ -66,8 +66,12 @@ more as effects (a filter, a reverb) join the bench.
 | **Voices**  | How many copies of the oscillator play each note, 1 to 16. One voice is a plain, centred oscillator. |
 | **Detune**  | How far apart the voices are tuned: the outer two sit this many cents flat and sharp (up to ±50 ct) and the rest fall evenly between. Detuned voices beat against each other, which is what makes the sound thick. |
 | **Width**   | How far the voices spread across the stereo field. 0% keeps them in the centre (mono); 100% puts the outer ones hard left and right. |
-| **Attack**  | How long the envelope's oscillator takes to fade in, 1 ms to 5 s.    |
-| **Release** | How long it rings on after its key goes up, 5 ms to 10 s. A note lasts until the slowest of its oscillators has faded. |
+| **Delay**   | How long the envelope waits, silent, after the key goes down, 0 to 5 s. |
+| **Attack**  | How long its oscillator then takes to fade in, 1 ms to 5 s.          |
+| **Hold**    | How long it stays at the top before decaying, 0 to 5 s.              |
+| **Decay**   | How long it takes to fall from the top to the sustain level, 1 ms to 10 s. |
+| **Sustain** | The level it stays at while the key is held, 0 to 100% of the top. At 100% (the default) there is no decay; turned down, notes hit and then settle, for plucks and keys. Turning it while a note is held glides there. |
+| **Release** | How long it rings on after its key goes up, 5 ms to 10 s, falling from wherever it was. A note lasts until the slowest of its oscillators has faded. |
 | **Output**  | Output level, -24 to +6 dB.                                          |
 
 Every control is a parameter, so it's saved with your set and can be automated.
@@ -103,10 +107,11 @@ Each module has a display right above its dials, drawn in the dials' colours:
   for every one of its unison voices, shifted by its detune. PITCH squeezes or
   stretches it (two cycles at 0, four an octave up, one an octave down), LEVEL sets its
   height.
-- **AMP**, in each envelope (above ATTACK / RELEASE): the envelope its oscillator's notes
-  follow: the rise (ATTACK), the top while the key is down (its height is OUTPUT, against
-  a dashed 0 dB line) and the fall (RELEASE). Every note you play is a dot riding it: up
-  the attack, resting on the top while held, down the release once you let go.
+- **AMP**, in each envelope (above its six dials): the envelope its oscillator's notes
+  follow, each stage in its dial's colour: the wait (DELAY), the rise (ATTACK), the top
+  (HOLD; its height is OUTPUT, against a dashed 0 dB line), the fall (DECAY) to the
+  SUSTAIN level, held while the key is down, and the fall to silence (RELEASE). Every note
+  you play is a dot riding it through the stages, resting on the sustain while held.
 
 ### How the voices spread
 
@@ -172,6 +177,7 @@ Source/
   ParamIDs.h                 the parameter IDs
   Synth2Engine.h             host-agnostic DSP core: 16 voices, up to four oscillators, MIDI, smoothing, output
   SynthVoice.h               one note: each oscillator's unison copies, under that oscillator's envelope
+  Envelope.h                 the delay / attack / hold / decay / sustain / release envelope
   Oscillator.h               the four wave shapes, and the PolyBLEP oscillator that plays them
   Unison.h                   where each unison voice sits: its detune, its pan, the stack's level
   Bench.h                    the workbench model: modules, where they sit, cables, which envelope shapes which oscillator, older sessions

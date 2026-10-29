@@ -143,7 +143,9 @@ void testProcessorBasics()
                             ParamID::osc1Pitch, ParamID::osc1Fine, ParamID::osc1Level,
                             ParamID::osc2On, ParamID::osc2Wave, ParamID::osc2Pitch, ParamID::osc2Fine, ParamID::osc2Level,
                             ParamID::osc4Voices, ParamID::osc4Detune, ParamID::osc4Width,
-                            ParamID::env1On, ParamID::env4On, ParamID::env4Attack, ParamID::env4Release })
+                            ParamID::env1On, ParamID::env1Delay, ParamID::env1Hold, ParamID::env1Decay, ParamID::env1Sustain,
+                            ParamID::env4On, ParamID::env4Delay, ParamID::env4Attack, ParamID::env4Hold, ParamID::env4Decay,
+                            ParamID::env4Sustain, ParamID::env4Release })
         check (p.getState().getParameter (id) != nullptr, std::string ("has the '") + id + "' parameter");
     check (p.getState().getParameter (ParamID::unisonOn) == nullptr && p.getState().getParameter (ParamID::envelopeOn) == nullptr,
            "the first bench's shared unison and envelope switches are gone");
@@ -152,6 +154,13 @@ void testProcessorBasics()
     check (approx (param (p, ParamID::voices), 1.0f, 1e-6f), "starts with one voice");
     check (approx (param (p, ParamID::detune), 15.0f, 1e-4f) && approx (param (p, ParamID::width), 0.5f, 1e-6f),
            "DETUNE and WIDTH start at 15 ct and 50%, ready for when VOICES goes up");
+    check (approx (param (p, ParamID::env2Delay), 0.0f, 1e-6f) && approx (param (p, ParamID::env2Hold), 0.0f, 1e-6f)
+               && approx (param (p, ParamID::env2Sustain), 1.0f, 1e-6f) && approx (param (p, ParamID::env2Decay), 0.3f, 1e-4f),
+           "an envelope starts with no delay or hold, sustaining at the top (so older sessions sound as they did)");
+    auto* sustain = p.getState().getParameter (ParamID::env2Sustain);
+    auto* hold    = p.getState().getParameter (ParamID::env2Hold);
+    check (sustain->getText (sustain->convertTo0to1 (0.4f), 32) == "40 %" && hold->getText (hold->convertTo0to1 (0.25f), 32) == "250 ms",
+           "SUSTAIN reads as a level, HOLD as a time");
 
     setParam (p, ParamID::release, 2.0f);
     setParam (p, ParamID::osc1On, 1.0f);
@@ -209,11 +218,17 @@ void testProcessorBasics()
     setParam (p, ParamID::osc4Voices, 5.0f);
     setParam (p, ParamID::osc4Width, 0.25f);
     setParam (p, ParamID::env4Attack, 0.5f);
+    setParam (p, ParamID::env4Delay, 0.1f);
+    setParam (p, ParamID::env4Hold, 0.2f);
+    setParam (p, ParamID::env4Decay, 0.7f);
+    setParam (p, ParamID::env4Sustain, 0.4f);
     const auto modules = p.currentSettings();
     check (modules.oscillators[3].on && modules.oscillators[3].wave == Waveform::sine && modules.oscillators[3].voices == 5
                && approx (modules.oscillators[3].width, 0.25f, 1e-6f) && modules.oscillators[0].voices == 1
-               && approx (modules.envelopes[3].attackSeconds, 0.5f, 0.001f),
-           "OSC 4's own unison stack and ENV 4 reach the engine");
+               && approx (modules.envelopes[3].attackSeconds, 0.5f, 0.001f) && approx (modules.envelopes[3].delaySeconds, 0.1f, 0.001f)
+               && approx (modules.envelopes[3].holdSeconds, 0.2f, 0.001f) && approx (modules.envelopes[3].decaySeconds, 0.7f, 0.001f)
+               && approx (modules.envelopes[3].sustainLevel, 0.4f, 1e-4f),
+           "OSC 4's own unison stack and all of ENV 4's stages reach the engine");
 
     // Which envelope shapes which oscillator follows the flow: by number...
     Bench::Model bench (p.getState());
@@ -668,7 +683,7 @@ void testEditor()
     tray.mouseDown (mouseAt (tray, tray.choiceBounds (1).getCentre()));   // ENV 1 at (0, 352)
     auto& env1 = bench.getEnvelope (0);
     check (pumpUntil ([&env1] { return env1.isVisible() && env1.getAlpha() >= 1.0f; }) && env1.getTitle() == "ENV 1"
-               && env1.getBounds() == juce::Rectangle<int> (0, 352, 236, 240),
+               && env1.getBounds() == juce::Rectangle<int> (0, 352, 236, 336),
            "picking Envelope puts ENV 1 on the bench");
     addAt (1, { 370.0f, 367.0f });    // ENV 2 at (252, 352)
     addAt (1, { 622.0f, 367.0f });    // ENV 3 at (504, 352)
@@ -799,6 +814,26 @@ void testEditor()
     check (pumpUntil ([&amp] { return amp.getAmpState().numSounding() == 0; }), "which leave once the notes have faded");
     setParam (p, ParamID::attack, 0.005f);
     setParam (p, ParamID::env2Attack, 0.005f);
+
+    // An envelope's six dials, DELAY / ATTACK / HOLD over DECAY / SUSTAIN /
+    // RELEASE, drive its own stages, and its well draws them.
+    auto& env2 = bench.getEnvelope (1);
+    check (env2.getNumDials() == 6, "an envelope has six dials");
+    const auto before = render (env2);
+    env2.getDial (0).setValue (0.2, juce::sendNotificationSync);
+    env2.getDial (2).setValue (0.1, juce::sendNotificationSync);
+    env2.getDial (4).setValue (0.3, juce::sendNotificationSync);
+    check (approx (param (p, ParamID::env2Delay), 0.2f, 1e-4f) && approx (param (p, ParamID::env2Hold), 0.1f, 1e-4f)
+               && approx (param (p, ParamID::env2Sustain), 0.3f, 1e-4f) && approx (param (p, ParamID::env1Sustain), 1.0f, 1e-6f),
+           "ENV 2's DELAY, HOLD and SUSTAIN set its own stages");
+    check (pumpUntil ([&env2] { const auto& dials = env2.getDisplay().getAmpState().dials;
+                                return approx (dials.sustain, 0.3f, 1e-4f) && dials.delay > 0.0f && dials.hold > 0.0f; }),
+           "and its well follows");
+    check (pixelsChanged (before, render (env2)) > 50, "drawing the wait, the hold and the fall to the sustain level");
+    snapshot (render (*editor), "4b-envelope-stages");
+    setParam (p, ParamID::env2Delay, 0.0f);
+    setParam (p, ParamID::env2Hold, 0.0f);
+    setParam (p, ParamID::env2Sustain, 1.0f);
 
     // The gear picks how sound flows: following the layout numbers the modules,
     // and each envelope shapes the first oscillator before it without one.

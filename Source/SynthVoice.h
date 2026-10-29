@@ -5,17 +5,18 @@
 #include <array>
 #include <cstdint>
 
+#include "Envelope.h"
 #include "Oscillator.h"
 #include "Unison.h"
 
 /** Where a note is in its envelope, for the editor's AMP display. */
 struct NoteActivity
 {
-    enum class Stage { idle, attack, hold, release };
+    using Stage = Envelope::Stage;
 
-    Stage stage       = Stage::idle;
-    float level       = 0.0f;   // the envelope, 0..1
-    float releaseFrom = 1.0f;   // the envelope when the release began
+    Stage stage    = Stage::idle;
+    float level    = 0.0f;   // the envelope, 0..1
+    float progress = 0.0f;   // how far through its stage, 0..1
 };
 
 /** How every note sounds right now: the engine hands these to each voice once
@@ -44,7 +45,7 @@ struct VoiceSettings
 
     One note, played by up to four oscillators. Each oscillator is a part of
     its own: a stack of up to 16 unison copies (see Unison.h) with its own
-    detune and spread, under its own attack / release envelope, so each
+    detune and spread, under its own envelope (see Envelope.h), so each
     oscillator can be shaped differently.
 
     Changing VOICES while a note sounds fades copies in and out over 5 ms
@@ -74,7 +75,7 @@ public:
     }
 
     /** Sets oscillator `osc`'s envelope. */
-    void setEnvelope (int osc, const juce::ADSR::Parameters& parameters) { parts[(size_t) osc].envelope.setParameters (parameters); }
+    void setEnvelope (int osc, const Envelope::Parameters& parameters) { parts[(size_t) osc].envelope.setParameters (parameters); }
 
     /** Plays `midiNote` on MIDI `midiChannel` (1..16). A voice taken over while
         still sounding glides its envelopes on from where they were instead of
@@ -122,10 +123,7 @@ public:
         held      = false;
         sustained = false;
         for (auto& part : parts)
-        {
-            part.releaseFrom = part.envelopeLevel;
             part.envelope.noteOff();
-        }
     }
 
     /** The key went up while the sustain pedal is down: keep sounding until it lifts. */
@@ -162,25 +160,18 @@ public:
     }
     std::uint64_t getAge() const noexcept { return age; }
 
-    /** Where this note is in oscillator `osc`'s envelope: rising, holding
-        (key or pedal down) or releasing, and how loud the envelope is. */
+    /** Where this note is in oscillator `osc`'s envelope: which stage, how far
+        through it, and how loud the envelope is. */
     NoteActivity getActivity (int osc) const noexcept
     {
         NoteActivity activity;
         if (! isActive())
             return activity;
 
-        const auto& part = parts[(size_t) osc];
-        activity.level = part.envelopeLevel;
-        if (isReleasing())
-        {
-            activity.stage       = NoteActivity::Stage::release;
-            activity.releaseFrom = juce::jmax (part.envelopeLevel, part.releaseFrom);
-        }
-        else
-        {
-            activity.stage = part.envelopeLevel < 0.999f ? NoteActivity::Stage::attack : NoteActivity::Stage::hold;
-        }
+        const auto& envelope = parts[(size_t) osc].envelope;
+        activity.stage    = envelope.getStage();
+        activity.level    = envelope.getLevel();
+        activity.progress = envelope.getProgress();
         return activity;
     }
 
@@ -204,8 +195,10 @@ public:
             if (running)
                 renderPart (part, osc, left, right, numSamples, ramp);
             else
-                for (int n = 0; n < numSamples; ++n)
-                    part.envelopeLevel = part.envelope.getNextSample();
+            {
+                part.envelope.advance (numSamples);
+                part.envelopeLevel = part.envelope.getLevel();
+            }
             part.level = osc.level;
             sounding = sounding || (running && part.envelope.isActive());
         }
@@ -240,12 +233,11 @@ private:
     struct Part
     {
         std::array<Copy, Unison::maxVoices> copies {};
-        juce::ADSR envelope;
+        Envelope   envelope;
         Layout     layout;
         float      stackLevel    = 1.0f;
         float      level         = 0.0f;   // the level the last chunk ended on
         float      envelopeLevel = 0.0f;
-        float      releaseFrom   = 1.0f;
     };
 
     // Adds one oscillator's chunk into left / right: its sounding copies, one
