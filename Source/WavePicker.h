@@ -4,6 +4,7 @@
 #include <array>
 #include <functional>
 #include <memory>
+#include <utility>
 
 #include "Synth2Theme.h"
 #include "Synth2VisualModel.h"
@@ -62,8 +63,8 @@ class WavePicker final : public juce::Component
 public:
     static constexpr int numWaves = WaveGlyph::numWaves;
 
-    /** A click on the well (not on an arrow): open, or close, the menu. */
-    std::function<void()> onOpenMenu;
+    /** What a click on the well (not on an arrow) does: open, or close, the menu. */
+    void onOpenMenu (std::function<void()> handler) { openMenuHandler = std::move (handler); }
 
     explicit WavePicker (juce::RangedAudioParameter& waveParameter,
                          juce::RangedAudioParameter* powerParameter = nullptr,
@@ -135,8 +136,8 @@ public:
             step (-1);
         else if (nextArrow().contains (e.position))
             step (1);
-        else if (onOpenMenu != nullptr)
-            onOpenMenu();
+        else if (openMenuHandler != nullptr)
+            openMenuHandler();
     }
 
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& wheel) override
@@ -216,7 +217,8 @@ private:
         const float s    = uiScale;
         const auto  chip = powerBounds();
 
-        g.setColour (on ? Palette::accentSoft : Palette::idleFill.withMultipliedAlpha (hot ? 1.6f : 1.0f));
+        const float idleAlpha = hot ? 1.6f : 1.0f;
+        g.setColour (on ? Palette::accentSoft : Palette::idleFill.withMultipliedAlpha (idleAlpha));
         g.fillRoundedRectangle (chip, chip.getHeight() * 0.5f);
         g.setColour (on ? Palette::accent.withAlpha (0.45f) : Palette::strongLine);
         g.drawRoundedRectangle (chip.reduced (0.5f), chip.getHeight() * 0.5f, juce::jmax (1.0f, s));
@@ -237,7 +239,8 @@ private:
         }
 
         g.setFont (Fonts::sans (9.0f * s, true, 0.22f));
-        g.setColour (on ? Palette::textStrong : (hot ? Palette::textMid : Palette::textDim));
+        const auto offText = hot ? Palette::textMid : Palette::textDim;
+        g.setColour (on ? Palette::textStrong : offText);
         g.drawText (powerName, chip.withTrimmedLeft (22.0f * s), juce::Justification::centredLeft, false);
     }
 
@@ -247,6 +250,7 @@ private:
         repaint();
     }
 
+    std::function<void()> openMenuHandler;
     juce::ParameterAttachment attachment;
     std::unique_ptr<juce::ParameterAttachment> power;
     juce::String powerName;
@@ -273,9 +277,9 @@ class WaveMenu final : public juce::Component
 public:
     static constexpr int numWaves = WaveGlyph::numWaves;
 
-    std::function<void (int)> onChoose;   // a tile was picked
-    std::function<void (int)> onHover;    // the tile under the mouse (or keys), -1 for none
-    std::function<void()>     onClose;
+    void onChoose (std::function<void (int)> handler) { chooseHandler = std::move (handler); }   // a tile was picked
+    void onHover  (std::function<void (int)> handler) { hoverHandler  = std::move (handler); }   // the tile under the mouse (or keys), -1 for none
+    void onClose  (std::function<void()> handler)     { closeHandler  = std::move (handler); }
 
     WaveMenu()
     {
@@ -311,8 +315,8 @@ public:
             return;
         setVisible (false);
         setHighlighted (-1);
-        if (onClose != nullptr)
-            onClose();
+        if (closeHandler != nullptr)
+            closeHandler();
     }
 
     juce::Rectangle<float> trayBounds() const noexcept
@@ -445,18 +449,21 @@ private:
         if (index == highlighted)
             return;
         highlighted = index;
-        if (onHover != nullptr)
-            onHover (index);
+        if (hoverHandler != nullptr)
+            hoverHandler (index);
         repaint();
     }
 
     void pick (int index)
     {
-        if (onChoose != nullptr)
-            onChoose (index);
+        if (chooseHandler != nullptr)
+            chooseHandler (index);
         close();
     }
 
+    std::function<void (int)> chooseHandler;
+    std::function<void (int)> hoverHandler;
+    std::function<void()>     closeHandler;
     juce::Rectangle<int> anchor;
     juce::Rectangle<int> row;
     int   selected    = 0;
@@ -473,7 +480,7 @@ private:
 class AddChip final : public juce::Component
 {
 public:
-    std::function<void()> onClick;
+    void onClick (std::function<void()> handler) { clickHandler = std::move (handler); }
 
     explicit AddChip (const juce::String& name) : label (name)
     {
@@ -486,8 +493,8 @@ public:
 
     void mouseDown (const juce::MouseEvent&) override
     {
-        if (onClick != nullptr)
-            onClick();
+        if (clickHandler != nullptr)
+            clickHandler();
     }
 
     void paint (juce::Graphics& g) override
@@ -517,6 +524,7 @@ public:
     }
 
 private:
+    std::function<void()> clickHandler;
     juce::String label;
     float uiScale = 1.0f;
 

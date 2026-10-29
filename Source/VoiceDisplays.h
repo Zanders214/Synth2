@@ -48,7 +48,10 @@ protected:
     float getUiScale() const noexcept { return uiScale; }
 
     /** Called when setState() brings something new, before the repaint. */
-    virtual void stateChanged() {}
+    virtual void stateChanged()
+    {
+        // Nothing by default: only a well that animates between states needs to know.
+    }
 
     /** Paints the well and its captions, and returns the area left for the plot. */
     juce::Rectangle<float> paintWell (juce::Graphics& g, const juce::String& caption, const juce::String& readout) const
@@ -210,7 +213,8 @@ private:
         if (! hasShape)
         {
             // The first shape it is given simply appears.
-            morphFrom = morphTo = target;
+            morphFrom = target;
+            morphTo   = target;
             hasShape  = true;
             repaint();
             return;
@@ -400,7 +404,7 @@ public:
         g.setColour (Synth2::Palette::gridLine);
         g.fillRect (juce::Rectangle (plot.getX(), plot.getBottom() - line, plot.getWidth(), line));
         const float zeroDb = at (0.0f, Synth2VisualModel::heightForDb (0.0f)).y;
-        const int dashes = (int) std::ceil (plot.getWidth() / (6.0f * s));
+        const auto dashes = (int) std::ceil (plot.getWidth() / (6.0f * s));
         for (int i = 0; i < dashes; ++i)
             g.fillRect (juce::Rectangle (plot.getX() + (float) i * 6.0f * s, zeroDb - line * 0.5f, 3.0f * s, line));
 
