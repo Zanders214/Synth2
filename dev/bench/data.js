@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793273964689,
+  "lastUpdate": 1793279657042,
   "repoUrl": "https://github.com/Zanders214/Synth2",
   "entries": {
     "ZandersSynth2 DSP": [
@@ -391,6 +391,70 @@ window.BENCHMARK_DATA = {
           {
             "name": "DSP load 16x16 2-osc @48k/512",
             "value": 6.954,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "152227414+Zanders214@users.noreply.github.com",
+            "name": "Dennis Zanders",
+            "username": "Zanders214"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "940c47ec851d3ddfd48f7302efeeb7d38d07e3aa",
+          "message": "Merge pull request #9 from Zanders214/claude/bench-engine\n\nReady the engine for the bench: four oscillators, unison and envelope that can be switched off, routing to the output",
+          "timestamp": "2026-10-29T14:12:16+01:00",
+          "tree_id": "c4c61bf1ffcdbf37c191f17b60e8a47cf4c42ad1",
+          "url": "https://github.com/Zanders214/Synth2/commit/940c47ec851d3ddfd48f7302efeeb7d38d07e3aa"
+        },
+        "date": 1793279656192,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "processBlock 8x7",
+            "value": 76632.743,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 8x7 @48k/512",
+            "value": 0.718,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16",
+            "value": 311738.65,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 @48k/512",
+            "value": 2.923,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 2-osc",
+            "value": 627691.038,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 2-osc @48k/512",
+            "value": 5.885,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 4-osc",
+            "value": 1162965.142,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 4-osc @48k/512",
+            "value": 10.903,
             "unit": "%"
           }
         ]
