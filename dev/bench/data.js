@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793271067701,
+  "lastUpdate": 1793272890931,
   "repoUrl": "https://github.com/Zanders214/Synth2",
   "entries": {
     "ZandersSynth2 DSP": [
@@ -283,6 +283,60 @@ window.BENCHMARK_DATA = {
           {
             "name": "DSP load 16x16 2-osc @48k/512",
             "value": 8.357,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "152227414+Zanders214@users.noreply.github.com",
+            "name": "Dennis Zanders",
+            "username": "Zanders214"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8c892a8d80a0dfe746b8bb2255ebbf6128dc51a7",
+          "message": "Merge pull request #7 from Zanders214/claude/faster-dsp\n\nPlay each note's oscillators side by side, about twice as fast, to the same samples bit for bit",
+          "timestamp": "2026-10-29T12:19:28+01:00",
+          "tree_id": "fd8eea02ca0eff3162cb7bfcc374e7856d324430",
+          "url": "https://github.com/Zanders214/Synth2/commit/8c892a8d80a0dfe746b8bb2255ebbf6128dc51a7"
+        },
+        "date": 1793272890156,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "processBlock 8x7",
+            "value": 102992.063,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 8x7 @48k/512",
+            "value": 0.966,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16",
+            "value": 344151.922,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 @48k/512",
+            "value": 3.226,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 2-osc",
+            "value": 646849.286,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 2-osc @48k/512",
+            "value": 6.064,
             "unit": "%"
           }
         ]
