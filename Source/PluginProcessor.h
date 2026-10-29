@@ -23,6 +23,16 @@ class Synth2AudioProcessor : public juce::AudioProcessor,
                              private juce::MidiKeyboardState::Listener
 {
 public:
+    /** How sound flows between the modules on the bench: in a fixed order by
+        kind, in the order they are laid out, or along the cables patched
+        between them. */
+    enum class SignalFlow
+    {
+        fixed,
+        layout,
+        cables
+    };
+
     Synth2AudioProcessor();
     ~Synth2AudioProcessor() override;
 
@@ -71,6 +81,10 @@ public:
     /** The engine's settings, from the parameters. */
     Synth2Engine::Settings currentSettings() const noexcept;
 
+    /** Whether oscillator `oscillator` (0..3) is patched through to the
+        output, for when the signal flow follows the cables. Any thread. */
+    void setRoutedToOutput (int oscillator, bool routed) noexcept;
+
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
@@ -82,6 +96,7 @@ private:
     juce::AudioProcessorValueTreeState apvts;
     Synth2Engine engine;
     std::atomic<int> activeNotes { 0 };
+    std::array<std::atomic<bool>, Synth2Engine::numOscillators> routedToOutput { true, true, true, true };
 
     // Each voice's envelope, published by the audio thread every block.
     struct PublishedActivity

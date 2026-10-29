@@ -125,8 +125,8 @@ ctest --test-dir build --output-on-failure
 Source/
   PluginProcessor.{h,cpp}    thin host wrapper + parameters (APVTS); the on-screen keyboard's lock-free hand-over
   ParamIDs.h                 the parameter IDs
-  Synth2Engine.h             host-agnostic DSP core: 16 voices, two oscillators, MIDI, smoothing, output
-  SynthVoice.h               one note: up to 16 unison copies of both oscillators under the envelope
+  Synth2Engine.h             host-agnostic DSP core: 16 voices, up to four oscillators, MIDI, smoothing, output
+  SynthVoice.h               one note: up to 16 unison copies of its oscillators under the envelope
   Oscillator.h               the four wave shapes, and the PolyBLEP oscillator that plays them
   Unison.h                   where each unison voice sits: its detune, its pan, the stack's level
   PluginEditor.{h,cpp}       the Neon Plugins editor: wells, wave picker, dials, keyboard

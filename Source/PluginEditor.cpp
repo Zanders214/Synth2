@@ -126,7 +126,7 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
     setResizeLimits ((int) kDesignWidth, (int) kDesignHeight,
                      (int) (kDesignWidth * 2.0f), (int) (kDesignHeight * 2.0f));
 
-    showOsc2 (p.currentSettings().osc2On, false);
+    showOsc2 (p.currentSettings().oscillators[1].on, false);
     setSize ((int) kDesignWidth, (int) kDesignHeight);
     for (auto& menu : waveMenus)
         addChildComponent (menu);   // last, so they open over everything
@@ -156,17 +156,10 @@ VoiceDisplayState Synth2AudioProcessorEditor::displayState (Waveform wave) const
 WaveDisplay::Osc Synth2AudioProcessorEditor::oscView (int oscillator) const
 {
     const auto settings = processorRef.currentSettings();
+    const auto& osc = settings.oscillators[(size_t) oscillator];
     WaveDisplay::Osc view;
-    if (oscillator == 0)
-    {
-        view.cycles = Synth2VisualModel::cyclesFor (settings.osc1Semitones, settings.osc1FineCents);
-        view.level  = settings.osc1Level;
-    }
-    else
-    {
-        view.cycles = Synth2VisualModel::cyclesFor (settings.osc2Semitones, settings.osc2FineCents);
-        view.level  = settings.osc2Level;
-    }
+    view.cycles = Synth2VisualModel::cyclesFor (osc.semitones, osc.fineCents);
+    view.level  = osc.level;
     return view;
 }
 
@@ -213,17 +206,17 @@ void Synth2AudioProcessorEditor::timerCallback()
     // automation, a restored set), and the AMP well the notes as they play;
     // each repaints only when its state moved.
     const auto settings = processorRef.currentSettings();
-    waveDisplays[0].setState (displayState (settings.wave));
-    waveDisplays[1].setState (displayState (settings.osc2Wave));
+    waveDisplays[0].setState (displayState (settings.oscillators[0].wave));
+    waveDisplays[1].setState (displayState (settings.oscillators[1].wave));
     for (int osc = 0; osc < numOscillators; ++osc)
         waveDisplays[(size_t) osc].setOsc (oscView (osc));
-    unisonDisplay.setState (displayState (settings.wave));
+    unisonDisplay.setState (displayState (settings.oscillators[0].wave));
     ampDisplay.setAmpState (ampState());
 
     // OSC 2 appears when it is added and goes when it is switched off, from
     // its chips or from the host.
-    if (settings.osc2On != osc2Shown)
-        showOsc2 (settings.osc2On, settings.osc2On);
+    if (settings.oscillators[1].on != osc2Shown)
+        showOsc2 (settings.oscillators[1].on, settings.oscillators[1].on);
 
     // Light the keys the host is playing.
     processorRef.showHostNotesOnKeyboard();
