@@ -109,6 +109,22 @@ namespace ParamID
     // How sound flows between the modules on the bench.
     inline constexpr const char* signalFlow = "signalFlow";
 
+    // The effects after the mix (see Effects.h).
+    inline constexpr const char* delayOn       = "delayOn";
+    inline constexpr const char* delaySync     = "delaySync";
+    inline constexpr const char* delayTime     = "delayTime";
+    inline constexpr const char* delayNote     = "delayNote";
+    inline constexpr const char* delayFeedback = "delayFeedback";
+    inline constexpr const char* delayTone     = "delayTone";
+    inline constexpr const char* delayMix      = "delayMix";
+    inline constexpr const char* delayPingPong = "delayPingPong";
+    inline constexpr const char* reverbOn      = "reverbOn";
+    inline constexpr const char* reverbSize    = "reverbSize";
+    inline constexpr const char* reverbDamping = "reverbDamping";
+    inline constexpr const char* reverbWidth   = "reverbWidth";
+    inline constexpr const char* reverbMix     = "reverbMix";
+    inline constexpr const char* effectsOrder  = "effectsOrder";   // 0: delay first, 1: reverb first
+
     // Retired with the first bench's shared unison and envelope modules; only
     // read from sessions saved with them, to carry them over.
     inline constexpr const char* unisonOn   = "unisonOn";

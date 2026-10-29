@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "Effects.h"
 #include "Oscillator.h"
 #include "RtSafety.h"
 #include "SynthVoice.h"
@@ -25,11 +26,14 @@
     by WIDTH (see Unison.h), under the ATTACK / RELEASE envelope that shapes
     it (one of four):
 
-        note  ->  OSC n: VOICES x shape  ->  detune + pan  ->  ENV  ->  +  ->  OUTPUT
+        note  ->  OSC n: VOICES x shape  ->  detune + pan  ->  ENV  ->  +  ->  EFFECTS  ->  OUTPUT
 
     An oscillator with no envelope simply opens and closes over a few
     milliseconds, so it never clicks. One that is on but not routed to the
     output (see OscillatorSettings::routed) is silent, as if it were off.
+
+    Every note goes through the effects together, the delay and the reverb
+    (see Effects.h), before OUTPUT.
 
     MIDI is read sample-accurately: the block is rendered up to each event,
     then the event applied. A seventeenth note takes over the voice that has
@@ -100,6 +104,7 @@ public:
             OscillatorSettings { false, true, Waveform::triangle, 12, 0.0f, 0.4f, 1, 15.0f, 0.5f, 3 } };
 
         std::array<EnvelopeSettings, numEnvelopes> envelopes {};
+        Effects::Settings effects {};
         float outputDb = 0.0f;
     };
 
@@ -123,6 +128,8 @@ public:
             appliedEnvelopes[k].attack = -1.0f;   // hand every voice the envelope afresh
         }
         applyEnvelopes();
+        effects.set (settings.effects);
+        effects.prepare (sampleRate);
         sustainDown = {};
     }
 
@@ -146,6 +153,7 @@ public:
         }
         smoothed.gain.setTargetValue (juce::Decibels::decibelsToGain (settings.outputDb, -100.0f));
         applyEnvelopes();
+        effects.set (settings.effects);
     }
 
     const Settings& getSettings() const noexcept { return settings; }
@@ -238,13 +246,15 @@ public:
                 voice.release();
     }
 
-    /** Silences every note on `midiChannel` at once, as All Sound Off does. */
+    /** Silences every note on `midiChannel` at once, as All Sound Off does,
+        and the delay's repeats and the reverb's ring with them. */
     void allSoundOff (int midiChannel) noexcept
     {
         sustainDown[channelIndex (midiChannel)] = false;
         for (auto& voice : voices)
             if (voice.getChannel() == midiChannel)
                 voice.kill();
+        effects.clear();
     }
 
     /** How many notes are sounding (held, sustained or releasing). */
@@ -344,6 +354,7 @@ private:
             std::array<float, SynthVoice::maxChunk> mixR {};
             for (auto& voice : voices)
                 voice.render (mixL.data(), mixR.data(), length, chunkSettings);
+            effects.process (mixL.data(), mixR.data(), length);
 
             for (int n = 0; n < length; ++n)
             {
@@ -446,6 +457,7 @@ private:
 
     std::array<SynthVoice, maxNotes> voices;
     Settings settings;
+    Effects::Chain effects;
 
     struct Smoothed
     {

@@ -343,6 +343,44 @@ void testWavePicking()
     check (between, "and passes between them on the way");
 }
 
+
+void testEffects()
+{
+    std::printf ("Effects:\n");
+
+    using VM = Synth2VisualModel;
+    check (approx (Effects::dryGain (0.25f), 1.0f, 1e-6f) && approx (Effects::wetGain (0.25f), 0.5f, 1e-6f),
+           "MIX below the middle keeps the dry sound whole and adds the effect");
+    check (approx (Effects::dryGain (0.75f), 0.5f, 1e-6f) && approx (Effects::wetGain (0.75f), 1.0f, 1e-6f),
+           "and above it fades the dry sound out under the whole effect");
+
+    const auto e = VM::echoes (0.5, 0.5f, 1.0f, 0.5f, false);
+    check (e.count == 5 && approx (e.taps[0].x, 0.0f, 1e-6f) && approx (e.taps[1].x, 0.25f, 1e-6f) && approx (e.taps[4].x, 1.0f, 1e-6f),
+           "the dry sound, then a repeat every TIME across the two-second well");
+    check (approx (e.taps[1].left, 1.0f, 1e-6f) && approx (e.taps[2].left, 0.5f, 1e-6f) && approx (e.taps[3].right, 0.25f, 1e-6f),
+           "each FEEDBACK as loud as the last");
+    const auto dark = VM::echoes (0.5, 0.5f, 0.0f, 0.5f, false);
+    check (dark.taps[3].brightness < dark.taps[1].brightness && dark.taps[1].brightness < e.taps[1].brightness,
+           "a low TONE dims the repeats, each more than the last");
+    const auto bounce = VM::echoes (0.5, 0.5f, 1.0f, 0.5f, true);
+    check (bounce.taps[1].right <= 0.0f && bounce.taps[1].left > 0.0f && bounce.taps[2].left <= 0.0f && bounce.taps[2].right > 0.0f,
+           "PING-PONG: left, then right");
+    check (VM::echoes (0.01, 0.95f, 1.0f, 1.0f, false).count == VM::maxEchoes, "a short TIME fills the well, but no further");
+    check (VM::echoes (0.375, 0.0f, 1.0f, 0.5f, false).count == 2, "with no FEEDBACK, one repeat");
+
+    check (VM::roomHeight (0.9f, 0.5f, 0.3f) > VM::roomHeight (0.3f, 0.5f, 0.3f), "a bigger room stands taller for longer");
+    check (approx (VM::roomHeight (0.5f, 0.0f, 0.1f), 0.0f, 1e-6f), "at no MIX there is no room");
+    check (approx (VM::roomHeight (0.5f, 1.0f, 0.0f), 0.0f, 1e-6f) && VM::roomHeight (0.5f, 1.0f, 0.01f) > 0.5f, "it swells in quickly");
+    check (VM::roomHeight (0.0f, 1.0f, 0.5f) <= 0.0f, "and the smallest room is gone within three seconds");
+    check (VM::roomBrightness (0.5f, 1.0f, 0.1f) < VM::roomBrightness (0.5f, 0.0f, 0.1f), "DAMPING dulls it sooner");
+
+    Effects::DelaySettings synced;
+    synced.sync     = true;
+    synced.division = 8;
+    check (std::abs (Effects::delaySeconds (synced, 120.0) - 0.5) < 1e-9, "a synced quarter note at 120 BPM is 500 ms");
+    check (std::abs (Effects::delaySeconds (Effects::DelaySettings {}, 77.0) - 0.375) < 1e-9, "unsynced, TIME ignores the tempo");
+}
+
 int main()
 {
     std::printf ("Synth2VisualModel tests\n=======================\n");
@@ -354,6 +392,7 @@ int main()
     testVisualModel();
     testEnvelope();
     testWavePicking();
+    testEffects();
 
     std::printf ("\n%s\n", failures == 0 ? "ALL TESTS PASSED" : "SOME TESTS FAILED");
     return failures == 0 ? 0 : 1;

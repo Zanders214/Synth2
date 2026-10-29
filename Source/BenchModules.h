@@ -36,7 +36,29 @@ namespace BenchStyle
                 return Format::seconds (value);
         if (id == ParamID::output)
             return Format::decibels (value);
-        return Format::percent (value);   // the levels, WIDTH and SUSTAIN
+        if (id == ParamID::delayTime)
+            return juce::String (juce::roundToInt (value)) + " ms";
+        if (id == ParamID::delayNote)
+            return Effects::divisions[(size_t) juce::jlimit (0, (int) Effects::divisions.size() - 1, juce::roundToInt (value))].name;
+        return Format::percent (value);   // the levels, WIDTH, SUSTAIN and the effects' amounts
+    }
+
+    /** A dial's name and value, stacked under it in `column`: the name in
+        grey, the value in the dial's own colour. */
+    inline void paintDialLabel (juce::Graphics& g, juce::Rectangle<float> column, float dialBottom, const juce::String& name,
+                                const juce::String& value, juce::Colour colour, float alpha, float s)
+    {
+        using namespace Synth2;
+        const float textTop = dialBottom + 6.0f * s;
+        g.setFont (Fonts::sans (10.0f * s, true, 0.10f));
+        g.setColour (Palette::textMid.withMultipliedAlpha (alpha));
+        g.drawText (name, juce::Rectangle (column.getX(), textTop, column.getWidth(), 12.0f * s),
+                    juce::Justification::centredTop, false);
+
+        g.setFont (Fonts::mono (10.0f * s));
+        g.setColour (colour.withMultipliedAlpha (alpha));
+        g.drawText (value, juce::Rectangle (column.getX(), textTop + 13.0f * s, column.getWidth(), 13.0f * s),
+                    juce::Justification::centredTop, false);
     }
 
     /** A dial in the house style, tied to its parameter. */
@@ -567,25 +589,10 @@ private:
     // grey, the value in the dial's own colour.
     void paintDialLabels (juce::Graphics& g) const
     {
-        using namespace Synth2;
-        const float s = uiScale;
         for (const auto& dial : dials)
-        {
-            const auto  column  = dial->column.toFloat();
-            const float textTop = dial->slider.getBounds().toFloat().getBottom() + 6.0f * s;
-            const float alpha   = dimmed ? 0.4f : 1.0f;
-
-            g.setFont (Fonts::sans (10.0f * s, true, 0.10f));
-            g.setColour (Palette::textMid.withMultipliedAlpha (alpha));
-            g.drawText (dial->name, juce::Rectangle (column.getX(), textTop, column.getWidth(), 12.0f * s),
-                        juce::Justification::centredTop, false);
-
-            g.setFont (Fonts::mono (10.0f * s));
-            g.setColour (dial->colour.withMultipliedAlpha (alpha));
-            g.drawText (BenchStyle::dialText (dial->paramId, state.getRawParameterValue (dial->paramId)->load()),
-                        juce::Rectangle (column.getX(), textTop + 13.0f * s, column.getWidth(), 13.0f * s),
-                        juce::Justification::centredTop, false);
-        }
+            BenchStyle::paintDialLabel (g, dial->column.toFloat(), dial->slider.getBounds().toFloat().getBottom(), dial->name,
+                                        BenchStyle::dialText (dial->paramId, state.getRawParameterValue (dial->paramId)->load()),
+                                        dial->colour, dimmed ? 0.4f : 1.0f, uiScale);
     }
 
     Bench::ModuleId id;

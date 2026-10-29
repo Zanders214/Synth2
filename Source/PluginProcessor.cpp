@@ -146,6 +146,44 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
         ParameterID { ParamID::signalFlow, 3 }, "Signal Flow", StringArray { "Fixed order", "Follow layout", "Patch cables" },
         (int) SignalFlow::fixed, AudioParameterChoiceAttributes().withAutomatable (false)));
 
+    // The effects after the mix (version 6), both off to start with, so
+    // older sessions sound as they did.
+    const Effects::Settings effects;
+    const auto percent = [&] (const char* id, const String& effectName, float to, float value)
+    {
+        layout.add (std::make_unique<AudioParameterFloat> (
+            ParameterID { id, 6 }, effectName, NormalisableRange<float> (0.0f, to), value,
+            AudioParameterFloatAttributes().withStringFromValueFunction (percentFromValue)));
+    };
+    StringArray notes;
+    for (const auto& division : Effects::divisions)
+        notes.add (division.name);
+
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::delayOn, 6 }, "Delay On", effects.delay.on));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::delaySync, 6 }, "Delay Sync", effects.delay.sync));
+    NormalisableRange<float> delayRange (Effects::minTimeMs, Effects::maxTimeMs, 1.0f);
+    delayRange.setSkewForCentre (300.0f);
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { ParamID::delayTime, 6 }, "Delay Time", delayRange, effects.delay.timeMs,
+        AudioParameterFloatAttributes().withLabel ("ms")
+            .withStringFromValueFunction ([] (float value, int) { return String (roundToInt (value)) + " ms"; })));
+    layout.add (std::make_unique<AudioParameterChoice> (
+        ParameterID { ParamID::delayNote, 6 }, "Delay Note", notes, effects.delay.division));
+    percent (ParamID::delayFeedback, "Delay Feedback", Effects::maxFeedback, effects.delay.feedback);
+    percent (ParamID::delayTone,     "Delay Tone",     1.0f, effects.delay.tone);
+    percent (ParamID::delayMix,      "Delay Mix",      1.0f, effects.delay.mix);
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::delayPingPong, 6 }, "Delay Ping-Pong", effects.delay.pingPong));
+
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::reverbOn, 6 }, "Reverb On", effects.reverb.on));
+    percent (ParamID::reverbSize,    "Reverb Size",    1.0f, effects.reverb.size);
+    percent (ParamID::reverbDamping, "Reverb Damping", 1.0f, effects.reverb.damping);
+    percent (ParamID::reverbWidth,   "Reverb Width",   1.0f, effects.reverb.width);
+    percent (ParamID::reverbMix,     "Reverb Mix",     1.0f, effects.reverb.mix);
+
+    layout.add (std::make_unique<AudioParameterChoice> (
+        ParameterID { ParamID::effectsOrder, 6 }, "Effects Order", StringArray { "Delay, then reverb", "Reverb, then delay" },
+        (int) effects.reverbFirst, AudioParameterChoiceAttributes().withAutomatable (false)));
+
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { ParamID::output, 1 }, "Output",
         NormalisableRange<float> (-24.0f, 6.0f, 0.1f), 0.0f,
@@ -200,6 +238,25 @@ Synth2Engine::Settings Synth2AudioProcessor::currentSettings() const noexcept
         envelope.sustainLevel   = param (ids.sustain);
         envelope.releaseSeconds = param (ids.release);
     }
+    auto& delay = settings.effects.delay;
+    delay.on       = param (ParamID::delayOn) >= 0.5f;
+    delay.sync     = param (ParamID::delaySync) >= 0.5f;
+    delay.timeMs   = param (ParamID::delayTime);
+    delay.division = juce::roundToInt (param (ParamID::delayNote));
+    delay.feedback = param (ParamID::delayFeedback);
+    delay.tone     = param (ParamID::delayTone);
+    delay.mix      = param (ParamID::delayMix);
+    delay.pingPong = param (ParamID::delayPingPong) >= 0.5f;
+
+    auto& reverb = settings.effects.reverb;
+    reverb.on      = param (ParamID::reverbOn) >= 0.5f;
+    reverb.size    = param (ParamID::reverbSize);
+    reverb.damping = param (ParamID::reverbDamping);
+    reverb.width   = param (ParamID::reverbWidth);
+    reverb.mix     = param (ParamID::reverbMix);
+
+    settings.effects.reverbFirst = param (ParamID::effectsOrder) >= 0.5f;
+    settings.effects.bpm         = hostBpm.load (std::memory_order_relaxed);
     settings.outputDb = param (ParamID::output);
     return settings;
 }
@@ -226,6 +283,12 @@ bool Synth2AudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) c
 void Synth2AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
+
+    // A synced delay follows the host's tempo (or keeps the last one it had).
+    if (auto* playHead = getPlayHead())
+        if (const auto position = playHead->getPosition())
+            if (const auto bpm = position->getBpm(); bpm.hasValue() && *bpm > 0.0)
+                hostBpm.store (*bpm, std::memory_order_relaxed);
 
     engine.setSettings (currentSettings());
     playOnScreenKeys();
@@ -328,7 +391,8 @@ bool Synth2AudioProcessor::producesMidi() const         { return false; }
 bool Synth2AudioProcessor::isMidiEffect() const         { return false; }
 
 // Once the last key goes up, the notes ring on for the longest release of the
-// envelopes shaping the oscillators on the bench (or a moment, with none).
+// envelopes shaping the oscillators on the bench (or a moment, with none),
+// and then the delay's repeats and the reverb's ring.
 double Synth2AudioProcessor::getTailLengthSeconds() const
 {
     const auto settings = currentSettings();
@@ -336,7 +400,7 @@ double Synth2AudioProcessor::getTailLengthSeconds() const
     for (const auto& oscillator : settings.oscillators)
         if (oscillator.on && oscillator.envelope >= 0)
             tail = juce::jmax (tail, (double) settings.envelopes[(size_t) oscillator.envelope].releaseSeconds);
-    return tail;
+    return tail + Effects::tailSeconds (settings.effects);
 }
 
 void Synth2AudioProcessor::setRoutedToOutput (int oscillator, bool routed) noexcept

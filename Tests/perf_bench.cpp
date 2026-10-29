@@ -4,7 +4,7 @@
 // github-action-benchmark "customSmallerIsBetter" JSON file so the perf workflow
 // can chart the trend and alert on regressions. A typical load (an 8-note chord
 // of 7 detuned saws) and 16 notes of 16 voices on one, two and all four
-// oscillators (the worst case).
+// oscillators (the worst case), and that again through the delay and reverb.
 // The headline metric is the "DSP load %" = ns_per_block / (blockSize / sampleRate);
 // < 100% = real-time capable.
 
@@ -19,7 +19,8 @@
 
 namespace
 {
-double benchChord (const char* name, int notes, int voices, ankerl::nanobench::Bench& bench, int numOscillators = 1)
+double benchChord (const char* name, int notes, int voices, ankerl::nanobench::Bench& bench, int numOscillators = 1,
+                   bool effects = false)
 {
     const double sr = 48000.0;
     const int    bs = 512;
@@ -40,6 +41,8 @@ double benchChord (const char* name, int notes, int voices, ankerl::nanobench::B
         set (ParamID::envelopes[k].on, k < numOscillators ? 1.0f : 0.0f);
         set (ParamID::envelopes[k].release, 10.0f);
     }
+    set (ParamID::delayOn,  effects ? 1.0f : 0.0f);
+    set (ParamID::reverbOn, effects ? 1.0f : 0.0f);
 
     juce::AudioBuffer<float> buffer (2, bs);
     juce::MidiBuffer chord;
@@ -72,12 +75,14 @@ int main (int argc, char** argv)
     const double worstNs   = benchChord ("processBlock 16 notes x 16 voices", 16, 16, bench);
     const double bothNs    = benchChord ("processBlock 16 notes x 16 voices, OSC 1 + OSC 2", 16, 16, bench, 2);
     const double fourNs    = benchChord ("processBlock 16 notes x 16 voices, OSC 1..4", 16, 16, bench, 4);
+    const double effectsNs = benchChord ("processBlock 16 notes x 16 voices, OSC 1..4, delay + reverb", 16, 16, bench, 4, true);
 
     const double budgetNs = (double) bs / sr * 1.0e9;          // 10.67 ms @48k/512
     const double typicalPct = typicalNs / budgetNs * 100.0;
     const double worstPct   = worstNs   / budgetNs * 100.0;
     const double bothPct    = bothNs    / budgetNs * 100.0;
     const double fourPct    = fourNs    / budgetNs * 100.0;
+    const double effectsPct = effectsNs / budgetNs * 100.0;
 
     // github-action-benchmark "customSmallerIsBetter" schema:
     juce::String json;
@@ -89,12 +94,14 @@ int main (int argc, char** argv)
          << "  { \"name\": \"processBlock 16x16 2-osc\", \"unit\": \"ns/block\", \"value\": " << juce::String (bothNs, 3)     << " },\n"
          << "  { \"name\": \"DSP load 16x16 2-osc @48k/512\", \"unit\": \"%\",  \"value\": " << juce::String (bothPct, 3)    << " },\n"
          << "  { \"name\": \"processBlock 16x16 4-osc\", \"unit\": \"ns/block\", \"value\": " << juce::String (fourNs, 3)     << " },\n"
-         << "  { \"name\": \"DSP load 16x16 4-osc @48k/512\", \"unit\": \"%\",  \"value\": " << juce::String (fourPct, 3)    << " }\n"
+         << "  { \"name\": \"DSP load 16x16 4-osc @48k/512\", \"unit\": \"%\",  \"value\": " << juce::String (fourPct, 3)    << " },\n"
+         << "  { \"name\": \"processBlock 16x16 4-osc + effects\", \"unit\": \"ns/block\", \"value\": " << juce::String (effectsNs, 3) << " },\n"
+         << "  { \"name\": \"DSP load 16x16 4-osc + effects @48k/512\", \"unit\": \"%\", \"value\": " << juce::String (effectsPct, 3) << " }\n"
          << "]\n";
     const juce::String out = (argc > 1) ? juce::String (argv[1]) : juce::String ("bench_result.json");
     juce::File::getCurrentWorkingDirectory().getChildFile (out).replaceWithText (json);
     std::printf ("8x7:   %.0f ns (%.1f%% RT load)\n16x16: %.0f ns (%.1f%% RT load)\n16x16, two oscillators: %.0f ns (%.1f%% RT load)\n"
-                 "16x16, four oscillators: %.0f ns (%.1f%% RT load)\n",
-                 typicalNs, typicalPct, worstNs, worstPct, bothNs, bothPct, fourNs, fourPct);
+                 "16x16, four oscillators: %.0f ns (%.1f%% RT load)\n16x16, four oscillators, delay + reverb: %.0f ns (%.1f%% RT load)\n",
+                 typicalNs, typicalPct, worstNs, worstPct, bothNs, bothPct, fourNs, fourPct, effectsNs, effectsPct);
     return 0;
 }

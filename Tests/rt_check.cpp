@@ -111,11 +111,25 @@ int main()
             proc.setRoutedToOutput ((b / 24) % 4, (b / 24) % 3 != 0);
         }
 
+        // The effects switch on and off, swap order and change time mid-note.
+        if (b % 24 == 12)
+        {
+            set (ParamID::delayOn,       (float) ((b / 24) % 3 != 0));
+            set (ParamID::reverbOn,      (float) ((b / 24 + 1) % 3 != 0));
+            set (ParamID::delaySync,     (float) ((b / 24) % 2));
+            set (ParamID::delayTime,     50.0f + 150.0f * (float) ((b / 24) % 7));
+            set (ParamID::delayNote,     (float) ((b / 24) % 12));
+            set (ParamID::delayFeedback, 0.95f);
+            set (ParamID::delayPingPong, (float) ((b / 48) % 2));
+            set (ParamID::reverbSize,    0.2f * (float) ((b / 24) % 6));
+            set (ParamID::effectsOrder,  (float) ((b / 72) % 2));
+        }
+
         audioCallback (proc, buffer, midi);         // the full callback, under RTSan
     }
 
     std::printf ("PASS: %d blocks of 16-voice unison chords on up to four oscillators (stolen notes,\n"
-                 "      sustain pedal, on-screen keys, settings, modules, envelopes and routing changing mid-note),\n"
+                 "      sustain pedal, on-screen keys, settings, modules, envelopes, routing and effects changing mid-note),\n"
                  "      no RT-safety violations\n", blocks);
     return 0;
 }

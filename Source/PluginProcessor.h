@@ -115,6 +115,7 @@ private:
     Synth2Engine engine;
     std::atomic<int> activeNotes { 0 };
     std::array<std::atomic<bool>, Synth2Engine::numOscillators> routedToOutput { true, true, true, true };
+    std::atomic<double> hostBpm { 120.0 };   // the host's tempo, as of the last block
 
     // Which envelope shapes each oscillator (-1 for none), for each way sound
     // can flow, so the audio thread just picks the row for the flow in use.
