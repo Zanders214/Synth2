@@ -6,8 +6,8 @@
 // plays the worst case: sixteen-note chords of sixteen detuned voices, both
 // oscillators on, with notes stolen, the sustain pedal, the on-screen
 // keyboard's notes, and the settings moving underneath (each oscillator's
-// VOICES, both WAVEs, OSC 2 switching on and off, the tuning, the envelopes
-// and which oscillator each shapes) while they sound.
+// VOICES, both WAVEs, OSC 2 switching on and off, the tuning, every stage of
+// the envelopes and which oscillator each shapes) while they sound.
 
 #include <juce_audio_utils/juce_audio_utils.h>
 #include "PluginProcessor.h"
@@ -75,6 +75,10 @@ int main()
             set (ParamID::voices,  (float) (1 + (b / 12) % 16));
             set (ParamID::attack,  0.001f + 0.01f * (float) ((b / 12) % 5));
             set (ParamID::release, 0.05f + 0.1f * (float) ((b / 12) % 5));
+            set (ParamID::env1Delay,   0.005f * (float) ((b / 12) % 3));
+            set (ParamID::env1Hold,    0.01f * (float) ((b / 12 + 1) % 3));
+            set (ParamID::env1Decay,   0.02f + 0.05f * (float) ((b / 12) % 4));
+            set (ParamID::env1Sustain, 0.25f * (float) ((b / 12) % 5));
             set (ParamID::osc2Voices, (float) (16 - (b / 12) % 16));
             set (ParamID::osc2Wave,  (float) ((b / 12 + 1) % 4));
             set (ParamID::osc2Pitch, (float) ((b / 12) % 25 - 12));

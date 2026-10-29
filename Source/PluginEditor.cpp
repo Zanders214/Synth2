@@ -127,12 +127,13 @@ AmpDisplayState Synth2AudioProcessorEditor::ampState (const Synth2Engine::Settin
     const auto& ids        = ParamID::envelopes[envelope];
     const auto& times      = settings.envelopes[(size_t) envelope];
 
+    const auto position = [&parameters] (const char* id) { return parameters.getParameter (id)->getValue(); };
     AmpDisplayState state;
-    state.attackPosition  = parameters.getParameter (ids.attack)->getValue();
-    state.releasePosition = parameters.getParameter (ids.release)->getValue();
-    state.attackSeconds   = times.attackSeconds;
-    state.releaseSeconds  = times.releaseSeconds;
-    state.outputDb        = settings.outputDb;
+    state.dials          = { position (ids.delay), position (ids.attack), position (ids.hold),
+                             position (ids.decay), times.sustainLevel, position (ids.release) };
+    state.attackSeconds  = times.attackSeconds;
+    state.releaseSeconds = times.releaseSeconds;
+    state.outputDb       = settings.outputDb;
 
     static_assert (std::tuple_size_v<decltype (state.notes)> == Synth2Engine::maxNotes);
     for (int k = 0; k < Bench::numOscillators; ++k)

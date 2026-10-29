@@ -104,9 +104,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
     addOscillator (2, 3);
     addOscillator (3, 3);
 
-    // The four envelopes: each on the bench or not, and its attack and release
-    // in seconds, skewed so the short times, where the ear is fussiest, get
-    // most of the knob. (ENV 1's times keep their original IDs.)
+    // The four envelopes: each on the bench or not, its times in seconds,
+    // skewed so the short times, where the ear is fussiest, get most of the
+    // knob, and its sustain level. (ENV 1's attack and release keep their
+    // original IDs; the DAHDSR stages came in version 5, set so that older
+    // sessions sound as they did: no delay or hold, sustaining at the top.)
     const auto addEnvelope = [&] (int index)
     {
         const auto& ids      = ParamID::envelopes[index];
@@ -117,17 +119,23 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
         layout.add (std::make_unique<AudioParameterBool> (
             ParameterID { ids.on, 4 }, "Env " + String (index + 1) + " On", false, onOff (false)));
 
-        NormalisableRange attackRange (0.001f, 5.0f);
-        attackRange.setSkewForCentre (0.2f);
+        const String stageName = "Env " + String (index + 1) + " ";
+        const auto time = [&] (const char* id, int idVersion, const String& timeName, float from, float to, float centre, float value)
+        {
+            NormalisableRange range (from, to);
+            range.setSkewForCentre (centre);
+            layout.add (std::make_unique<AudioParameterFloat> (
+                ParameterID { id, idVersion }, timeName, range, value,
+                AudioParameterFloatAttributes().withStringFromValueFunction (timeFromValue)));
+        };
+        time (ids.delay,   5,       stageName + "Delay",   0.0f,   5.0f,  0.2f, defaults.delaySeconds);
+        time (ids.attack,  version, name + "Attack",       0.001f, 5.0f,  0.2f, defaults.attackSeconds);
+        time (ids.hold,    5,       stageName + "Hold",    0.0f,   5.0f,  0.2f, defaults.holdSeconds);
+        time (ids.decay,   5,       stageName + "Decay",   0.001f, 10.0f, 0.5f, defaults.decaySeconds);
         layout.add (std::make_unique<AudioParameterFloat> (
-            ParameterID { ids.attack, version }, name + "Attack", attackRange, defaults.attackSeconds,
-            AudioParameterFloatAttributes().withStringFromValueFunction (timeFromValue)));
-
-        NormalisableRange releaseRange (0.005f, 10.0f);
-        releaseRange.setSkewForCentre (0.5f);
-        layout.add (std::make_unique<AudioParameterFloat> (
-            ParameterID { ids.release, version }, name + "Release", releaseRange, defaults.releaseSeconds,
-            AudioParameterFloatAttributes().withStringFromValueFunction (timeFromValue)));
+            ParameterID { ids.sustain, 5 }, stageName + "Sustain", NormalisableRange<float> (0.0f, 1.0f), defaults.sustainLevel,
+            AudioParameterFloatAttributes().withStringFromValueFunction (percentFromValue)));
+        time (ids.release, version, name + "Release",      0.005f, 10.0f, 0.5f, defaults.releaseSeconds);
     };
 
     for (int index = 0; index < Synth2Engine::numEnvelopes; ++index)
@@ -154,7 +162,7 @@ std::array<NoteActivity, Synth2Engine::maxNotes> Synth2AudioProcessor::getNoteAc
     {
         activity[i].stage       = (NoteActivity::Stage) published[i].stage.load();
         activity[i].level       = published[i].level.load();
-        activity[i].releaseFrom = published[i].releaseFrom.load();
+        activity[i].progress = published[i].progress.load();
     }
     return activity;
 }
@@ -183,8 +191,14 @@ Synth2Engine::Settings Synth2AudioProcessor::currentSettings() const noexcept
     }
     for (size_t e = 0; e < settings.envelopes.size(); ++e)
     {
-        settings.envelopes[e].attackSeconds  = param (ParamID::envelopes[e].attack);
-        settings.envelopes[e].releaseSeconds = param (ParamID::envelopes[e].release);
+        const auto& ids = ParamID::envelopes[e];
+        auto& envelope  = settings.envelopes[e];
+        envelope.delaySeconds   = param (ids.delay);
+        envelope.attackSeconds  = param (ids.attack);
+        envelope.holdSeconds    = param (ids.hold);
+        envelope.decaySeconds   = param (ids.decay);
+        envelope.sustainLevel   = param (ids.sustain);
+        envelope.releaseSeconds = param (ids.release);
     }
     settings.outputDb = param (ParamID::output);
     return settings;
@@ -223,9 +237,9 @@ void Synth2AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         const auto activity = engine.getActivity ((int) k);
         for (size_t i = 0; i < activity.size(); ++i)
         {
-            noteActivity[k][i].stage      .store ((int) activity[i].stage);
-            noteActivity[k][i].level      .store (activity[i].level);
-            noteActivity[k][i].releaseFrom.store (activity[i].releaseFrom);
+            noteActivity[k][i].stage   .store ((int) activity[i].stage);
+            noteActivity[k][i].level   .store (activity[i].level);
+            noteActivity[k][i].progress.store (activity[i].progress);
         }
     }
 
