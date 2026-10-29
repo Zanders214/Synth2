@@ -20,16 +20,19 @@
     whatever modules are put on it, wherever they are put (see BenchView);
     and along the bottom the keyboard that plays it and the OUTPUT dial.
 
-    Click an empty spot on the bench to add a module there: an oscillator (up
-    to four), the unison stack or the envelope. Drag a module by its header to
-    move it; its cross takes it off the bench.
+    Click an empty spot on the bench to add a module there: an oscillator,
+    with its own unison stack, or an envelope (up to four of each). Drag a
+    module by its header to move it; its cross takes it off the bench.
 
-    The gear picks how sound flows between the modules: in a fixed order by
-    kind, following the layout (each module shows its place in the order), or
-    along patch cables. With patch cables each oscillator gets an OUT jack and
-    the output an IN jack: drag from one to the other to patch a cable (an
-    oscillator with no cable to the output is greyed out and silent), and drag
-    a cable off either end to unplug it.
+    The gear picks how sound flows between the modules, and so which
+    oscillator each envelope shapes: by number (ENV 1 shapes OSC 1),
+    following the layout (each module shows its place in the order, and each
+    envelope takes the first free oscillator before it), or along patch
+    cables, OSC -> ENV -> OUT. With patch cables the modules get jacks: drag
+    from an OUT to an envelope's IN or to the output's IN to patch a cable
+    (an oscillator that doesn't reach the output is greyed out and silent),
+    and drag a cable off either end to unplug it. An oscillator no envelope
+    shapes simply starts and stops with its key.
 
     Everything is drawn natively (no WebView) and scales proportionally from
     the 1040 px design.
@@ -48,7 +51,7 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
 
     static constexpr float designWidth  = 1040.0f;
-    static constexpr float designHeight = 740.0f;
+    static constexpr float designHeight = 916.0f;
 
     // For the tests: the bench, the trays, the OUTPUT dial and keyboard, and
     // where the gear and the output's IN jack sit (in the editor).
@@ -62,8 +65,8 @@ public:
     juce::Rectangle<float> outputJackBounds() const noexcept;
     bool isPatching() const noexcept                   { return patchingFrom.has_value(); }
 
-    /** Where module `id`'s OUT jack sits, in the editor. */
-    juce::Point<float> jackCentre (const Bench::ModuleId& id);
+    /** Where one of module `id`'s jacks sits, in the editor. */
+    juce::Point<float> jackCentre (const Bench::ModuleId& id, BenchModule::Jack which = BenchModule::Jack::out);
 
 private:
     // Draws the cables over the bench and the bottom strip, without taking
@@ -88,10 +91,11 @@ private:
     void showFlow();
     void openAddTray (juce::Point<float> benchAt, juce::Point<int> editorAt);
     void openSettings();
-    void patch (const Bench::ModuleId& from, const juce::MouseEvent& e, int phase);
+    void patch (const Bench::ModuleId& module, BenchModule::Jack which, const juce::MouseEvent& e, int phase);
+    void dropCable (juce::Point<float> at);
+    void showCables();
     juce::String cableSignature();
-    VoiceDisplayState voiceState (const Synth2Engine::Settings& settings) const;
-    AmpDisplayState   ampState (const Synth2Engine::Settings& settings) const;
+    AmpDisplayState ampState (const Synth2Engine::Settings& settings, int envelope, const std::array<int, Bench::numOscillators>& shapedBy) const;
 
     Synth2AudioProcessor& processorRef;
     Synth2LookAndFeel looks;

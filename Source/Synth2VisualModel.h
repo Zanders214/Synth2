@@ -9,11 +9,11 @@
 /**
     Synth2VisualModel
 
-    Pure, framework-free numbers behind the editor's displays: the OSC 1 and
-    OSC 2 wells (the shape at its pitch and level, and a faint copy per unison
-    voice), the UNISON well (a
-    marker per voice at its detune and pan) and the AMP well (the envelope's
-    shape at OUTPUT's level, and a dot per sounding note riding it).
+    Pure, framework-free numbers behind the editor's displays: the
+    oscillators' WAVE wells (the shape at its pitch and level, and a faint copy
+    per unison voice, each placed and tinted by its detune and pan) and the
+    envelopes' AMP wells (the envelope's shape at OUTPUT's level, and a dot per
+    sounding note riding it).
 
     It draws on the very same Oscillator::naive and Unison maths the engine
     plays, so what the displays show never drifts from what you hear. The
@@ -96,7 +96,7 @@ struct Synth2VisualModel
         return Unison::detuneCents (index, numVoices, detuneCents) / Unison::maxDetuneCents * 0.125f;
     }
 
-    /** One voice's marker in the UNISON well. */
+    /** Where one unison voice sits: its detune, its pan and its tint. */
     struct Marker
     {
         float x     = 0.5f;   // 0..1: its detune on a fixed -50..+50 cent scale

@@ -7,7 +7,7 @@
 #include "Synth2VisualModel.h"
 #include "SynthVoice.h"
 
-/** What the two displays show: the sound's wave and its unison stack. */
+/** What an oscillator's WAVE well shows: its shape and its unison stack. */
 struct VoiceDisplayState
 {
     Waveform wave   = Waveform::saw;
@@ -24,7 +24,7 @@ struct VoiceDisplayState
 };
 
 /**
-    DisplayWell — the inset, near-black window both displays sit in, with a
+    DisplayWell — the inset, near-black window every display sits in, with a
     small all-caps caption at its top left and a mono readout at its top right.
 */
 class DisplayWell : public juce::Component
@@ -247,68 +247,6 @@ private:
     Waveform morphFrom  = Waveform::saw;
     Waveform morphTo    = Waveform::saw;
     double   morphStart = 0.0;
-};
-
-/**
-    UnisonDisplay — the UNISON well: a glowing dot per voice, placed left to
-    right by its detune (on a fixed -50..+50 cent scale) and top to bottom by
-    where it sits in the stereo field (L at the top, R at the bottom), each
-    tinted flat (cyan) to sharp (amber). With one voice it is a single dot in
-    the centre; DETUNE fans the dots out sideways and WIDTH up and down.
-*/
-class UnisonDisplay final : public DisplayWell
-{
-public:
-    UnisonDisplay() { setInterceptsMouseClicks (false, false); }
-
-    void paint (juce::Graphics& g) override
-    {
-        const auto& state = getState();
-        const float s = getUiScale();
-        const auto readout = state.voices == 1 ? juce::String ("1 VOICE")
-                                               : juce::String (state.voices) + juce::String (juce::CharPointer_UTF8 (" \xc3\x97 ")) + Synth2::Format::cents (state.detune);
-        auto plot = paintWell (g, "UNISON", readout);
-
-        // Tick labels along the bottom, pan labels down the left.
-        auto ticks = plot.removeFromBottom (10.0f * s);
-        auto lanes = plot.removeFromLeft (10.0f * s);
-        g.setFont (Synth2::Fonts::mono (8.5f * s));
-        g.setColour (Synth2::Palette::textFaint);
-        g.drawText ("-50", ticks, juce::Justification::centredLeft, false);
-        g.drawText ("0",   ticks, juce::Justification::centred, false);
-        g.drawText ("+50", ticks, juce::Justification::centredRight, false);
-        g.drawText ("L", lanes.removeFromTop (10.0f * s), juce::Justification::centredLeft, false);
-        g.drawText ("R", lanes.removeFromBottom (10.0f * s), juce::Justification::centredLeft, false);
-
-        plot = plot.reduced (4.0f * s, 4.0f * s);
-
-        // Grid: the in-tune line and the centre of the stereo field.
-        g.setColour (Synth2::Palette::gridLine);
-        const float line = juce::jmax (1.0f, s);
-        g.fillRect (juce::Rectangle (plot.getCentreX() - line * 0.5f, plot.getY(), line, plot.getHeight()));
-        g.fillRect (juce::Rectangle (plot.getX(), plot.getCentreY() - line * 0.5f, plot.getWidth(), line));
-        for (const float x : { 0.25f, 0.75f })
-            g.fillRect (juce::Rectangle (plot.getX() + x * plot.getWidth() - line * 0.5f, plot.getCentreY() - 3.0f * s, line, 6.0f * s));
-
-        const float dot = 3.5f * s;
-        for (int i = 0; i < state.voices; ++i)
-        {
-            const auto m      = Synth2VisualModel::marker (i, state.voices, state.detune, state.width);
-            const auto colour = Synth2::ColourMath::spectrum (m.tint);
-            const juce::Point centre (plot.getX() + m.x * plot.getWidth(),
-                                      plot.getCentreY() + m.pan * plot.getHeight() * 0.5f);
-
-            // A faint stem back to the in-tune line shows how far it is detuned.
-            g.setColour (colour.withAlpha (0.25f));
-            g.drawLine (plot.getCentreX(), centre.y, centre.x, centre.y, juce::jmax (1.0f, s));
-
-            juce::Path body;
-            body.addEllipse (juce::Rectangle<float> (dot * 2.0f, dot * 2.0f).withCentre (centre));
-            juce::DropShadow (colour.withAlpha (0.9f), (int) (7.0f * s), {}).drawForPath (g, body);
-            g.setColour (colour);
-            g.fillPath (body);
-        }
-    }
 };
 
 /** What the AMP well shows: the envelope's settings and where each note is in it. */
