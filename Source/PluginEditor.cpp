@@ -71,7 +71,7 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
         dial.setComponentID (dialParamIds[i]);
         dial.setPaintingIsUnclipped (true);   // the arc's glow reaches past the dial
 
-        auto* parameter = p.getState().getParameter (dialParamIds[i]);
+        const auto* parameter = p.getState().getParameter (dialParamIds[i]);
         dial.setDoubleClickReturnValue (true, p.getState().getParameterRange (dialParamIds[i])
                                                   .convertFrom0to1 (parameter->getDefaultValue()));
         dial.setTooltip (parameter->getName (64));

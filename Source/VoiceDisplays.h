@@ -15,12 +15,12 @@ struct VoiceDisplayState
     float    detune = 0.0f;   // cents
     float    width  = 0.0f;   // 0..1
 
-    bool operator== (const VoiceDisplayState& other) const noexcept
+    friend bool operator== (const VoiceDisplayState& a, const VoiceDisplayState& b) noexcept
     {
-        return wave == other.wave && voices == other.voices
-            && juce::exactlyEqual (detune, other.detune) && juce::exactlyEqual (width, other.width);
+        return a.wave == b.wave && a.voices == b.voices
+            && juce::exactlyEqual (a.detune, b.detune) && juce::exactlyEqual (a.width, b.width);
     }
-    bool operator!= (const VoiceDisplayState& other) const noexcept { return ! (*this == other); }
+    friend bool operator!= (const VoiceDisplayState& a, const VoiceDisplayState& b) noexcept { return ! (a == b); }
 };
 
 /**
@@ -34,15 +34,17 @@ public:
 
     void setState (const VoiceDisplayState& newState)
     {
-        if (newState == state)
+        if (newState == displayState)
             return;
-        state = newState;
+        displayState = newState;
         repaint();
     }
 
-    const VoiceDisplayState& getState() const noexcept { return state; }
+    const VoiceDisplayState& getState() const noexcept { return displayState; }
 
 protected:
+    float getUiScale() const noexcept { return uiScale; }
+
     /** Paints the well and its captions, and returns the area left for the plot. */
     juce::Rectangle<float> paintWell (juce::Graphics& g, const juce::String& caption, const juce::String& readout) const
     {
@@ -76,8 +78,9 @@ protected:
         return inner.withTrimmedTop (4.0f * s);
     }
 
+private:
     float uiScale = 1.0f;
-    VoiceDisplayState state;
+    VoiceDisplayState displayState;
 };
 
 /**
@@ -93,7 +96,8 @@ public:
     void paint (juce::Graphics& g) override
     {
         static const juce::StringArray names { "SINE", "TRIANGLE", "SAW", "SQUARE" };
-        const float s    = uiScale;
+        const auto& state = getState();
+        const float s    = getUiScale();
         const auto  plot = paintWell (g, "WAVE", names[(int) state.wave]);
 
         // Centre line.
@@ -159,7 +163,8 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        const float s = uiScale;
+        const auto& state = getState();
+        const float s = getUiScale();
         const auto readout = state.voices == 1 ? juce::String ("1 VOICE")
                                                : juce::String (state.voices) + juce::String (juce::CharPointer_UTF8 (" \xc3\x97 ")) + Synth2::Format::cents (state.detune);
         auto plot = paintWell (g, "UNISON", readout);
@@ -216,21 +221,21 @@ struct AmpDisplayState
     float outputDb        = 0.0f;
     std::array<NoteActivity, 16> notes {};
 
-    bool operator== (const AmpDisplayState& other) const noexcept
+    friend bool operator== (const AmpDisplayState& a, const AmpDisplayState& b) noexcept
     {
-        const auto same = [] (float a, float b) { return juce::exactlyEqual (a, b); };
-        if (! (same (attackPosition, other.attackPosition) && same (releasePosition, other.releasePosition)
-               && same (attackSeconds, other.attackSeconds) && same (releaseSeconds, other.releaseSeconds)
-               && same (outputDb, other.outputDb)))
+        const auto same = [] (float x, float y) { return juce::exactlyEqual (x, y); };
+        if (! (same (a.attackPosition, b.attackPosition) && same (a.releasePosition, b.releasePosition)
+               && same (a.attackSeconds, b.attackSeconds) && same (a.releaseSeconds, b.releaseSeconds)
+               && same (a.outputDb, b.outputDb)))
             return false;
 
-        for (size_t i = 0; i < notes.size(); ++i)
-            if (notes[i].stage != other.notes[i].stage || ! same (notes[i].level, other.notes[i].level)
-                || ! same (notes[i].releaseFrom, other.notes[i].releaseFrom))
+        for (size_t i = 0; i < a.notes.size(); ++i)
+            if (a.notes[i].stage != b.notes[i].stage || ! same (a.notes[i].level, b.notes[i].level)
+                || ! same (a.notes[i].releaseFrom, b.notes[i].releaseFrom))
                 return false;
         return true;
     }
-    bool operator!= (const AmpDisplayState& other) const noexcept { return ! (*this == other); }
+    friend bool operator!= (const AmpDisplayState& a, const AmpDisplayState& b) noexcept { return ! (a == b); }
 
     int numSounding() const noexcept
     {
@@ -275,7 +280,7 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        const float s = uiScale;
+        const float s = getUiScale();
         auto plot = paintWell (g, "AMP", Synth2::Format::decibels (amp.outputDb));
 
         // The times along the bottom: attack on the left, release on the right.
@@ -298,8 +303,9 @@ public:
         g.setColour (Synth2::Palette::gridLine);
         g.fillRect (juce::Rectangle (plot.getX(), plot.getBottom() - line, plot.getWidth(), line));
         const float zeroDb = at (0.0f, Synth2VisualModel::heightForDb (0.0f)).y;
-        for (float x = plot.getX(); x < plot.getRight(); x += 6.0f * s)
-            g.fillRect (juce::Rectangle (x, zeroDb - line * 0.5f, 3.0f * s, line));
+        const int dashes = (int) std::ceil (plot.getWidth() / (6.0f * s));
+        for (int i = 0; i < dashes; ++i)
+            g.fillRect (juce::Rectangle (plot.getX() + (float) i * 6.0f * s, zeroDb - line * 0.5f, 3.0f * s, line));
 
         // The shape, softly filled underneath.
         juce::Path shape;
@@ -338,9 +344,7 @@ public:
                 continue;
 
             const auto d = Synth2VisualModel::noteDot (e, (int) note.stage, note.level, note.releaseFrom);
-            const auto colour = note.stage == NoteActivity::Stage::attack  ? attackColour
-                              : note.stage == NoteActivity::Stage::release ? releaseColour
-                                                                           : outputColour;
+            const auto colour = colourFor (note.stage);
             juce::Path body;
             body.addEllipse (juce::Rectangle<float> (dot * 2.0f, dot * 2.0f).withCentre (at (d.x, d.y)));
             juce::DropShadow (colour.withAlpha (0.9f), (int) (8.0f * s), {}).drawForPath (g, body);
@@ -350,6 +354,19 @@ public:
     }
 
 private:
+    /** The colour of the part of the envelope a note in `stage` is on. */
+    juce::Colour colourFor (NoteActivity::Stage stage) const noexcept
+    {
+        switch (stage)
+        {
+            case NoteActivity::Stage::attack:  return attackColour;
+            case NoteActivity::Stage::release: return releaseColour;
+            case NoteActivity::Stage::idle:
+            case NoteActivity::Stage::hold:    break;
+        }
+        return outputColour;
+    }
+
     AmpDisplayState amp;
     juce::Colour attackColour  { Synth2::Palette::pink };
     juce::Colour releaseColour { Synth2::Palette::pink };
