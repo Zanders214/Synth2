@@ -99,6 +99,22 @@ void pump (int milliseconds)
     juce::MessageManager::getInstance()->runDispatchLoopUntil (milliseconds);
 }
 
+// Runs the message loop until `done` holds, for at most `milliseconds`: the
+// editor's displays catch up on its next timer tick, which a slow CI machine
+// may not reach inside a fixed wait. Returns whether `done` came to hold.
+template <typename Condition>
+bool pumpUntil (Condition done, int milliseconds = 2000)
+{
+    const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32) milliseconds;
+    while (! done())
+    {
+        if (juce::Time::getMillisecondCounter() > deadline)
+            return false;
+        pump (10);
+    }
+    return true;
+}
+
 // ---- The processor as a host sees it ------------------------------------------
 void testProcessorBasics()
 {
@@ -336,9 +352,9 @@ void testEditor()
     playAndMeasure (p, {}, 100);      // let the earlier tests' notes fade out
     setParam (p, ParamID::attack, 0.5f);
     setParam (p, ParamID::output, -6.0f);
-    pump (100);
-    check (approx (editor->getAmpDisplay().getAmpState().attackSeconds, 0.5f, 0.001f)
-               && approx (editor->getAmpDisplay().getAmpState().outputDb, -6.0f, 0.01f),
+    const auto& amp = editor->getAmpDisplay();
+    check (pumpUntil ([&amp] { return approx (amp.getAmpState().attackSeconds, 0.5f, 0.001f)
+                                   && approx (amp.getAmpState().outputDb, -6.0f, 0.01f); }),
            "the AMP well shows ATTACK and OUTPUT");
     const auto beforeNotes = render (*editor);
 
@@ -346,9 +362,8 @@ void testEditor()
     for (const int note : { 60, 64 })
         chordOn.addEvent (juce::MidiMessage::noteOn (2, note, 0.8f), 0);
     playAndMeasure (p, chordOn, 4);   // ~40 ms into a 500 ms attack
-    pump (100);
-    const auto& rising = editor->getAmpDisplay().getAmpState();
-    check (rising.numSounding() == 2, "two notes, two dots");
+    check (pumpUntil ([&amp] { return amp.getAmpState().numSounding() == 2; }), "two notes, two dots");
+    const auto& rising = amp.getAmpState();
     bool climbing = true;
     for (const auto& note : rising.notes)
         if (note.stage != NoteActivity::Stage::idle)
@@ -356,27 +371,32 @@ void testEditor()
     check (climbing, "early in the attack, they are partway up the rise");
     check (pixelsChanged (beforeNotes, render (*editor)) > 20, "and they show in the AMP well");
 
+    // Every sounding note is in `stage` (and there are two of them).
+    const auto allIn = [&amp] (NoteActivity::Stage stage)
+    {
+        const auto& state = amp.getAmpState();
+        bool all = state.numSounding() == 2;
+        for (const auto& note : state.notes)
+            if (note.stage != NoteActivity::Stage::idle)
+                all = all && note.stage == stage;
+        return all;
+    };
+
     playAndMeasure (p, {}, 60);       // past the attack
-    pump (100);
-    bool holding = editor->getAmpDisplay().getAmpState().numSounding() == 2;
-    for (const auto& note : editor->getAmpDisplay().getAmpState().notes)
-        if (note.stage != NoteActivity::Stage::idle)
-            holding = holding && note.stage == NoteActivity::Stage::hold;
-    check (holding, "with the keys down, they rest on the top");
+    check (pumpUntil ([&] { return allIn (NoteActivity::Stage::hold); }), "with the keys down, they rest on the top");
 
     juce::MidiBuffer chordOff;
     for (const int note : { 60, 64 })
         chordOff.addEvent (juce::MidiMessage::noteOff (2, note), 0);
     playAndMeasure (p, chordOff, 4);
-    pump (100);
-    bool falling = editor->getAmpDisplay().getAmpState().numSounding() == 2;
-    for (const auto& note : editor->getAmpDisplay().getAmpState().notes)
+    check (pumpUntil ([&] { return allIn (NoteActivity::Stage::release); }), "let go, they release");
+    bool falling = true;
+    for (const auto& note : amp.getAmpState().notes)
         if (note.stage != NoteActivity::Stage::idle)
-            falling = falling && note.stage == NoteActivity::Stage::release && note.level < note.releaseFrom;
-    check (falling, "let go, they walk down the release");
+            falling = falling && note.level < note.releaseFrom;
+    check (falling, "and walk down from where they were");
     playAndMeasure (p, {}, 100);
-    pump (100);
-    check (editor->getAmpDisplay().getAmpState().numSounding() == 0, "and leave once the notes have faded");
+    check (pumpUntil ([&amp] { return amp.getAmpState().numSounding() == 0; }), "and leave once the notes have faded");
     setParam (p, ParamID::attack, 0.005f);
     setParam (p, ParamID::output, 0.0f);
 
