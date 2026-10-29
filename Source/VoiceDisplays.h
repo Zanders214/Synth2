@@ -94,8 +94,7 @@ private:
     shape in the spectrum gradient, glowing, over a faint copy per unison
     voice, each drawn shifted by its detune (a picture of the stack spreading
     out, see Synth2VisualModel). Its PITCH squeezes or stretches the cycles
-    (twice as many an octave up), its LEVEL sets their height, and a switched-
-    off oscillator is drawn faint.
+    (twice as many an octave up) and its LEVEL sets their height.
 
     A new shape doesn't jump in: the old one morphs into it over 150 ms. While
     the wave menu is open, hovering a shape previews it here the same way.
@@ -111,11 +110,10 @@ public:
     {
         float cycles = Synth2VisualModel::cyclesShown;   // from its PITCH and FINE
         float level  = 1.0f;                              // its LEVEL, 0..1
-        bool  on     = true;
 
         friend bool operator== (const Osc& a, const Osc& b) noexcept
         {
-            return juce::exactlyEqual (a.cycles, b.cycles) && juce::exactlyEqual (a.level, b.level) && a.on == b.on;
+            return juce::exactlyEqual (a.cycles, b.cycles) && juce::exactlyEqual (a.level, b.level);
         }
         friend bool operator!= (const Osc& a, const Osc& b) noexcept { return ! (a == b); }
     };
@@ -152,11 +150,6 @@ public:
         const float s    = getUiScale();
         const auto  plot = paintWell (g, preview >= 0 && caption.isNotEmpty() ? caption + juce::String (juce::CharPointer_UTF8 ("  \xc2\xb7  PREVIEW")) : caption, {});
         const float amount = Synth2VisualModel::ease (morphProgress());
-
-        // A switched-off oscillator is drawn faint, as a hint of what it would add.
-        juce::Graphics::ScopedSaveState keep (g);
-        if (! osc.on)
-            g.beginTransparencyLayer (0.28f);
 
         // Centre line.
         g.setColour (Synth2::Palette::gridLine);
@@ -204,9 +197,6 @@ public:
         g.setOpacity (1.0f);
         g.setGradientFill (ramp);
         g.strokePath (shape, main);
-
-        if (! osc.on)
-            g.endTransparencyLayer();
     }
 
 private:

@@ -49,10 +49,10 @@ namespace WaveGlyph
     well opens the wave menu (onOpenMenu). Hovering lights the well's border
     in the accent, the design system's mark of a well you can act on.
 
-    Given a power parameter (OSC 2's), it also switches the oscillator: a
-    chip at the well's top left, a glowing dot and the oscillator's name, turns
-    it on and off. While it is off the pill steps aside for an "+ ADD" hint, and
-    a click anywhere on the well switches it on.
+    Given a power parameter (OSC 2's), it also carries the oscillator's power
+    chip at the well's top left: a glowing dot and the oscillator's name, which
+    switches it off (the editor then hides the oscillator until it is added
+    again).
 
     It is tied to the parameters directly (ParameterAttachment), so host
     automation and undo see each pick, and each switch, as one gesture.
@@ -131,8 +131,6 @@ public:
     {
         if (power != nullptr && powerBounds().contains (e.position))
             setOn (! on);
-        else if (! on)
-            setOn (true);
         else if (previousArrow().contains (e.position))
             step (-1);
         else if (nextArrow().contains (e.position))
@@ -143,9 +141,6 @@ public:
 
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& wheel) override
     {
-        if (! on)
-            return;
-
         // A trackpad sends many small deltas, a wheel a few big ones: gather
         // them, and step once each time enough has built up. Down (or right)
         // is the next shape.
@@ -177,16 +172,6 @@ public:
 
         if (power != nullptr)
             paintPowerChip (g, over && powerBounds().contains (mouse));
-
-        // Switched off, the pill steps aside for a hint.
-        if (! on)
-        {
-            g.setFont (Fonts::sans (10.0f * s, true, 0.14f));
-            g.setColour (Palette::accent.withAlpha (over ? 1.0f : 0.75f));
-            g.drawText ("+  ADD " + powerName, getLocalBounds().toFloat().withTrimmedTop (16.0f * s),
-                        juce::Justification::centred, false);
-            return;
-        }
 
         // The pill: arrows either side of the chosen shape and its name.
         const auto pill = pillBounds();
@@ -479,4 +464,61 @@ private:
     float uiScale     = 1.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WaveMenu)
+};
+
+/**
+    AddChip — a small accent-outlined pill with a "+" and a name ("+ OSC 2"),
+    for adding something that is out of sight until it is wanted.
+*/
+class AddChip final : public juce::Component
+{
+public:
+    std::function<void()> onClick;
+
+    explicit AddChip (const juce::String& name) : label (name)
+    {
+        setRepaintsOnMouseActivity (true);
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+        setTitle ("Add " + name);
+    }
+
+    void setUiScale (float newScale) { uiScale = newScale; repaint(); }
+
+    void mouseDown (const juce::MouseEvent&) override
+    {
+        if (onClick != nullptr)
+            onClick();
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        using namespace Synth2;
+        const float s     = uiScale;
+        const bool  over  = isMouseOver();
+        const auto  chip  = getLocalBounds().toFloat().reduced (0.5f);
+        const float round = chip.getHeight() * 0.5f;
+
+        g.setColour (over ? Palette::accentSoft.withMultipliedAlpha (1.8f) : Palette::accentSoft);
+        g.fillRoundedRectangle (chip, round);
+        g.setColour (Palette::accent.withAlpha (over ? 0.8f : 0.45f));
+        g.drawRoundedRectangle (chip, round, juce::jmax (1.0f, s));
+
+        // The plus, drawn rather than typed so it sits dead centre.
+        const auto  c   = juce::Point (chip.getX() + 12.0f * s, chip.getCentreY());
+        const float arm = 3.5f * s;
+        const float w   = juce::jmax (1.0f, 1.4f * s);
+        g.setColour (Palette::accent.brighter (over ? 0.4f : 0.0f));
+        g.fillRect (juce::Rectangle (c.x - arm, c.y - w * 0.5f, arm * 2.0f, w));
+        g.fillRect (juce::Rectangle (c.x - w * 0.5f, c.y - arm, w, arm * 2.0f));
+
+        g.setFont (Fonts::sans (9.0f * s, true, 0.22f));
+        g.setColour (over ? Palette::textStrong : Palette::accent.brighter (0.3f));
+        g.drawText (label, chip.withTrimmedLeft (22.0f * s), juce::Justification::centredLeft, false);
+    }
+
+private:
+    juce::String label;
+    float uiScale = 1.0f;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AddChip)
 };
