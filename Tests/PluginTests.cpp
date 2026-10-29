@@ -24,6 +24,7 @@
 #include <cstdio>
 #include <memory>
 #include <optional>
+#include <tuple>
 #include <string>
 #include <utility>
 #include <vector>
@@ -100,8 +101,8 @@ float playAndMeasure (Synth2AudioProcessor& p, juce::MidiBuffer midi, int blocks
     return buffer.getRMSLevel (0, 0, block);
 }
 
-// Puts OSC 1, unison and the envelope on the bench, as a session from before
-// the bench opens, so a processor has something to play.
+// Puts OSC 1 and ENV 1 on the bench, as a session from before the bench
+// opens, so a processor has something to play.
 void fillBench (Synth2AudioProcessor& p)
 {
     Bench::Model (p.getState()).adoptClassicLayout();
@@ -141,8 +142,12 @@ void testProcessorBasics()
     for (const auto* id : { ParamID::wave, ParamID::voices, ParamID::detune, ParamID::width,
                             ParamID::attack, ParamID::release, ParamID::output,
                             ParamID::osc1Pitch, ParamID::osc1Fine, ParamID::osc1Level,
-                            ParamID::osc2On, ParamID::osc2Wave, ParamID::osc2Pitch, ParamID::osc2Fine, ParamID::osc2Level })
+                            ParamID::osc2On, ParamID::osc2Wave, ParamID::osc2Pitch, ParamID::osc2Fine, ParamID::osc2Level,
+                            ParamID::osc4Voices, ParamID::osc4Detune, ParamID::osc4Width,
+                            ParamID::env1On, ParamID::env4On, ParamID::env4Attack, ParamID::env4Release })
         check (p.getState().getParameter (id) != nullptr, std::string ("has the '") + id + "' parameter");
+    check (p.getState().getParameter (ParamID::unisonOn) == nullptr && p.getState().getParameter (ParamID::envelopeOn) == nullptr,
+           "the first bench's shared unison and envelope switches are gone");
 
     check (approx (param (p, ParamID::wave), (float) Waveform::saw, 1e-6f), "starts on the saw");
     check (approx (param (p, ParamID::voices), 1.0f, 1e-6f), "starts with one voice");
@@ -150,14 +155,17 @@ void testProcessorBasics()
            "DETUNE and WIDTH start at 15 ct and 50%, ready for when VOICES goes up");
 
     setParam (p, ParamID::release, 2.0f);
-    check (approx ((float) p.getTailLengthSeconds(), Synth2Engine::gateReleaseSeconds, 1e-4f), "without the envelope, the tail is a few ms");
-    setParam (p, ParamID::envelopeOn, 1.0f);
-    check (approx ((float) p.getTailLengthSeconds(), 2.0f, 0.01f), "with it, the tail is the release time");
-    setParam (p, ParamID::envelopeOn, 0.0f);
+    setParam (p, ParamID::osc1On, 1.0f);
+    check (approx ((float) p.getTailLengthSeconds(), Synth2Engine::gateReleaseSeconds, 1e-4f), "without an envelope, the tail is a few ms");
+    setParam (p, ParamID::env1On, 1.0f);
+    check (approx ((float) p.getTailLengthSeconds(), 2.0f, 0.01f), "with ENV 1 shaping OSC 1, the tail is its release time");
 
     const auto settings = p.currentSettings();
-    check (approx (settings.releaseSeconds, 2.0f, 0.01f) && settings.oscillators[0].wave == Waveform::saw,
+    check (approx (settings.envelopes[0].releaseSeconds, 2.0f, 0.01f) && settings.oscillators[0].wave == Waveform::saw
+               && settings.oscillators[0].envelope == 0,
            "the engine's settings come from the parameters");
+    setParam (p, ParamID::env1On, 0.0f);
+    setParam (p, ParamID::osc1On, 0.0f);
 
     auto* detune = p.getState().getParameter (ParamID::detune);
     check (detune->getText (detune->convertTo0to1 (12.5f), 32) == "12.5 ct", "DETUNE reads in cents");
@@ -166,13 +174,15 @@ void testProcessorBasics()
                && attack->getText (attack->convertTo0to1 (1.5f), 32) == "1.50 s",
            "times read in ms below a second, s above");
 
-    // The bench starts empty: no oscillator, no unison, no envelope. Each
-    // oscillator has its own sound ready for when it's added: OSC 1 at the
-    // note at full level, OSC 2 a square an octave down.
+    // The bench starts empty: no oscillator, no envelope. Each oscillator has
+    // its own sound ready for when it's added: OSC 1 at the note at full
+    // level, OSC 2 a square an octave down.
     bool empty = true;
     for (const auto& osc : ParamID::oscillators)
         empty = empty && param (p, osc.on) < 0.5f;
-    check (empty && param (p, ParamID::unisonOn) < 0.5f && param (p, ParamID::envelopeOn) < 0.5f, "the bench starts empty");
+    for (const auto& env : ParamID::envelopes)
+        empty = empty && param (p, env.on) < 0.5f;
+    check (empty, "the bench starts empty");
     check (approx (param (p, ParamID::signalFlow), (float) Synth2AudioProcessor::SignalFlow::fixed, 1e-6f), "with sound in a fixed order");
     check (! p.getState().getParameter (ParamID::osc1On)->isAutomatable() && ! p.getState().getParameter (ParamID::signalFlow)->isAutomatable(),
            "what is on the bench, and the flow, aren't automatable");
@@ -197,22 +207,55 @@ void testProcessorBasics()
 
     setParam (p, ParamID::osc4On, 1.0f);
     setParam (p, ParamID::osc4Wave, (float) Waveform::sine);
-    setParam (p, ParamID::unisonOn, 1.0f);
-    setParam (p, ParamID::envelopeOn, 1.0f);
+    setParam (p, ParamID::osc4Voices, 5.0f);
+    setParam (p, ParamID::osc4Width, 0.25f);
+    setParam (p, ParamID::env4Attack, 0.5f);
     const auto modules = p.currentSettings();
-    check (modules.oscillators[3].on && modules.oscillators[3].wave == Waveform::sine && modules.unisonOn && modules.envelopeOn,
-           "OSC 4 and the modules' switches reach the engine");
+    check (modules.oscillators[3].on && modules.oscillators[3].wave == Waveform::sine && modules.oscillators[3].voices == 5
+               && approx (modules.oscillators[3].width, 0.25f, 1e-6f) && modules.oscillators[0].voices == 1
+               && approx (modules.envelopes[3].attackSeconds, 0.5f, 0.001f),
+           "OSC 4's own unison stack and ENV 4 reach the engine");
 
-    // Following the cables, only an oscillator patched to the output reaches it.
-    setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::cables);
+    // Which envelope shapes which oscillator follows the flow: by number...
     Bench::Model bench (p.getState());
-    check (! p.currentSettings().oscillators[1].routed, "with patch cables, an unpatched oscillator isn't routed");
-    check (bench.connect ({ Bench::Kind::oscillator, 1 }) && p.currentSettings().oscillators[1].routed
+    check (p.currentSettings().oscillators[3].envelope == -1, "with no envelope on the bench, OSC 4 has none");
+    bench.add (Bench::Kind::envelope, { 0.0f, 400.0f });   // ENV 1, under OSC 1's column
+    check (p.currentSettings().oscillators[0].envelope == -1, "nor OSC 1 while it is off the bench");
+    bench.remove ({ Bench::Kind::envelope, 0 });
+    setParam (p, ParamID::osc1On, 1.0f);
+    bench.add (Bench::Kind::envelope, { 0.0f, 400.0f });   // ENV 1, under OSC 1's column
+    check (p.currentSettings().oscillators[0].envelope == 0 && p.currentSettings().oscillators[3].envelope == -1,
+           "in a fixed order, ENV 1 shapes OSC 1, not OSC 4");
+    setParam (p, ParamID::osc1On, 0.0f);
+
+    // ...by the layout: each envelope the first free oscillator before it...
+    setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::layout);
+    check (p.currentSettings().oscillators[1].envelope == 0, "following the layout, ENV 1 below the oscillators shapes the first, OSC 2");
+    bench.move ({ Bench::Kind::oscillator, 3 }, { 0.0f, 0.0f });
+    bench.move ({ Bench::Kind::oscillator, 1 }, { 504.0f, 0.0f });
+    check (p.currentSettings().oscillators[3].envelope == 0 && p.currentSettings().oscillators[1].envelope == -1,
+           "moving OSC 4 first hands ENV 1 to it");
+
+    // ...or along the cables, where only what reaches the output is heard.
+    setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::cables);
+    const Bench::ModuleId osc2 { Bench::Kind::oscillator, 1 }, osc4 { Bench::Kind::oscillator, 3 }, env1 { Bench::Kind::envelope, 0 };
+    check (! p.currentSettings().oscillators[1].routed && p.currentSettings().oscillators[3].envelope == -1,
+           "with patch cables, an unpatched oscillator isn't routed or shaped");
+    check (bench.connect (osc2) && p.currentSettings().oscillators[1].routed && ! p.currentSettings().oscillators[3].routed,
+           "patching OSC 2 to the output routes it");
+    check (bench.connect (osc4, env1) && ! p.currentSettings().oscillators[3].routed, "OSC 4 into ENV 1 isn't heard yet");
+    check (bench.connect (env1) && p.currentSettings().oscillators[3].routed && p.currentSettings().oscillators[3].envelope == 0,
+           "until ENV 1 goes to the output: then OSC 4 is heard, shaped by ENV 1");
+    check (bench.connect (osc2, env1) && p.currentSettings().oscillators[1].envelope == 0 && p.currentSettings().oscillators[3].envelope == -1
                && ! p.currentSettings().oscillators[3].routed,
-           "and patching it to the output routes it");
-    check (! bench.connect ({ Bench::Kind::oscillator, 2 }), "an oscillator that isn't on the bench can't be patched");
+           "an envelope takes one oscillator: patching OSC 2 in unplugs OSC 4");
+    check (! bench.connect ({ Bench::Kind::oscillator, 2 }) && ! bench.connect (env1, Bench::ModuleId { Bench::Kind::envelope, 0 })
+               && ! bench.connect (osc4, Bench::ModuleId { Bench::Kind::envelope, 2 }),
+           "nothing patches from or to a module that isn't on the bench, nor an envelope into an envelope");
+    bench.remove (env1);
+    check (! bench.destinationOf (osc2).has_value() && bench.cables().empty(), "taking ENV 1 off unplugs its cables, in and out");
     setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::fixed);
-    check (p.currentSettings().oscillators[3].routed, "in a fixed order, every oscillator is");
+    check (p.currentSettings().oscillators[3].routed, "in a fixed order, every oscillator is heard");
 }
 
 void testBusLayouts()
@@ -332,25 +375,28 @@ void testStateRoundTrip()
     check (approx (param (b, ParamID::output), -4.0f, 0.01f), "OUTPUT comes back");
 
     // The bench comes back as it was left: what is on it, where, and the cables.
+    const Bench::ModuleId osc1 { Bench::Kind::oscillator, 0 }, osc2 { Bench::Kind::oscillator, 1 },
+                          env1 { Bench::Kind::envelope, 0 },   env2 { Bench::Kind::envelope, 1 };
     Bench::Model benchA (a.getState());
     benchA.add (Bench::Kind::oscillator, { 300.0f, 20.0f });
     benchA.add (Bench::Kind::oscillator, { 600.0f, 260.0f });
     benchA.add (Bench::Kind::envelope, { 0.0f, 0.0f });
-    benchA.connect ({ Bench::Kind::oscillator, 1 });
+    benchA.connect (osc1);
+    benchA.connect (osc2, env1);
+    benchA.connect (env1);
     setParam (a, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::cables);
     a.getStateInformation (saved);
     Synth2AudioProcessor c;
     c.setStateInformation (saved.getData(), (int) saved.getSize());
     const Bench::Model benchC (c.getState());
-    check (benchC.isPresent ({ Bench::Kind::oscillator, 1 }) && benchC.isPresent ({ Bench::Kind::envelope, 0 })
-               && ! benchC.isPresent ({ Bench::Kind::unison, 0 }) && benchC.present().size() == 3,
-           "the modules on the bench come back");
-    check (benchC.positionOf ({ Bench::Kind::oscillator, 0 }) == juce::Point<float> (300.0f, 20.0f)
-               && benchC.positionOf ({ Bench::Kind::oscillator, 1 }) == juce::Point<float> (600.0f, 260.0f),
+    check (benchC.isPresent (osc2) && benchC.isPresent (env1) && benchC.present().size() == 3, "the modules on the bench come back");
+    check (benchC.positionOf (osc1) == juce::Point<float> (300.0f, 20.0f) && benchC.positionOf (osc2) == juce::Point<float> (600.0f, 260.0f),
            "where they were");
-    check (benchC.isPatchedToOutput ({ Bench::Kind::oscillator, 1 }) && ! benchC.isPatchedToOutput ({ Bench::Kind::oscillator, 0 }),
+    check (benchC.isPatchedToOutput (osc1) && benchC.inputOf (env1) == std::optional (osc2) && benchC.isPatchedToOutput (env1),
            "with their cables");
-    check (c.currentSettings().oscillators[1].routed && ! c.currentSettings().oscillators[0].routed, "which the sound follows");
+    check (c.currentSettings().oscillators[1].routed && c.currentSettings().oscillators[1].envelope == 0
+               && c.currentSettings().oscillators[0].envelope == -1,
+           "which the sound follows");
 
     Synth2AudioProcessor fresh;
     fresh.getStateInformation (saved);
@@ -358,44 +404,96 @@ void testStateRoundTrip()
     d.setStateInformation (saved.getData(), (int) saved.getSize());
     check (Bench::Model (d.getState()).isEmpty(), "an empty bench comes back empty");
 
-    // A session from before the bench opens as it looked then: OSC 1 (and OSC 2,
-    // if it was on) along the top, unison and the envelope below.
-    auto old = juce::ValueTree::fromXml (*juce::parseXML (a.getState().copyState().toXmlString()));
-    old.removeChild (old.getChildWithName (Bench::benchType), nullptr);
-    for (const auto* id : { ParamID::osc1On, ParamID::unisonOn, ParamID::envelopeOn, ParamID::signalFlow })
-        old.removeChild (old.getChildWithProperty ("id", id), nullptr);
-    for (const auto* id : { ParamID::osc1On, ParamID::osc2On })
-        if (auto prm = old.getChildWithProperty ("id", id); prm.isValid())
-            prm.setProperty ("value", id == ParamID::osc2On ? 1.0f : 0.0f, nullptr);
-    juce::MemoryBlock oldSaved;
-    juce::AudioProcessor::copyXmlToBinary (*old.createXml(), oldSaved);
-    Synth2AudioProcessor e;
-    e.setStateInformation (oldSaved.getData(), (int) oldSaved.getSize());
-    const Bench::Model benchE (e.getState());
-    check (benchE.isPresent ({ Bench::Kind::oscillator, 0 }) && benchE.isPresent ({ Bench::Kind::oscillator, 1 })
-               && benchE.isPresent ({ Bench::Kind::unison, 0 }) && benchE.isPresent ({ Bench::Kind::envelope, 0 })
-               && benchE.present().size() == 4,
-           "a session from before the bench gets OSC 1, OSC 2 (it was on), unison and the envelope");
-    check (benchE.positionOf ({ Bench::Kind::oscillator, 1 }) == Bench::defaultPosition ({ Bench::Kind::oscillator, 1 })
-               && benchE.positionOf ({ Bench::Kind::unison, 0 }) == Bench::defaultPosition ({ Bench::Kind::unison, 0 }),
-           "set out as the old panel was");
-    check (approx (param (e, ParamID::voices), 7.0f, 1e-6f) && approx (param (e, ParamID::signalFlow), 0.0f, 1e-6f),
-           "keeping its sound, in a fixed order");
+    // Older sessions, made from this one: without the bench's tree and the
+    // parameters that came after them, and with any they had that are gone.
+    const auto olderSession = [&a] (const juce::ValueTree& bench, std::initializer_list<std::pair<const char*, float>> values)
+    {
+        auto older = a.getState().copyState().createCopy();
+        older.removeChild (older.getChildWithName (Bench::benchType), nullptr);
+        std::vector<juce::String> newer { ParamID::osc1On, ParamID::signalFlow };
+        for (const auto& osc : { ParamID::oscillators[1], ParamID::oscillators[2], ParamID::oscillators[3] })
+            newer.insert (newer.end(), { osc.voices, osc.detune, osc.width });
+        for (const auto& env : ParamID::envelopes)
+            newer.insert (newer.end(), { env.on, env.attack, env.release });
+        for (const auto& id : newer)
+            if (id != ParamID::attack && id != ParamID::release)
+                older.removeChild (older.getChildWithProperty ("id", id), nullptr);
+        for (const auto& [id, value] : values)
+        {
+            auto parameter = older.getChildWithProperty ("id", id);
+            if (! parameter.isValid())
+            {
+                parameter = juce::ValueTree ("PARAM");
+                parameter.setProperty ("id", id, nullptr);
+                older.appendChild (parameter, nullptr);
+            }
+            parameter.setProperty ("value", value, nullptr);
+        }
+        if (bench.isValid())
+            older.appendChild (bench.createCopy(), nullptr);
+        juce::MemoryBlock block;
+        juce::AudioProcessor::copyXmlToBinary (*older.createXml(), block);
+        auto restored = std::make_unique<Synth2AudioProcessor>();
+        restored->setStateInformation (block.getData(), (int) block.getSize());
+        return restored;
+    };
 
-    // One saved with the switches but before the layout keeps them as saved.
-    auto between = juce::ValueTree::fromXml (*juce::parseXML (a.getState().copyState().toXmlString()));
-    between.removeChild (between.getChildWithName (Bench::benchType), nullptr);
-    for (const auto* id : { ParamID::osc1On, ParamID::unisonOn, ParamID::envelopeOn })
-        between.getChildWithProperty ("id", id).setProperty ("value", juce::String (id) == ParamID::osc1On ? 1.0f : 0.0f, nullptr);
-    juce::AudioProcessor::copyXmlToBinary (*between.createXml(), oldSaved);
-    Synth2AudioProcessor f;
-    f.setStateInformation (oldSaved.getData(), (int) oldSaved.getSize());
-    const Bench::Model benchF (f.getState());
-    check (benchF.isPresent ({ Bench::Kind::oscillator, 0 }) && ! benchF.isPresent ({ Bench::Kind::unison, 0 })
-               && ! benchF.isPresent ({ Bench::Kind::envelope, 0 }),
+    // One from before the bench opens as it looked then: OSC 1 (and OSC 2,
+    // which was on) along the top, each under the envelope and with the
+    // unison stack they shared.
+    const auto e = olderSession ({}, { { ParamID::osc2On, 1.0f } });
+    const Bench::Model benchE (e->getState());
+    check (benchE.isPresent (osc1) && benchE.isPresent (osc2) && benchE.isPresent (env1) && benchE.isPresent (env2)
+               && benchE.present().size() == 4,
+           "a session from before the bench gets OSC 1, OSC 2 (it was on), and an envelope for each");
+    check (benchE.positionOf (osc2) == Bench::defaultPosition (osc2) && benchE.positionOf (env2) == Bench::defaultPosition (env2),
+           "each envelope under its oscillator");
+    check (approx (param (*e, ParamID::osc2Voices), 7.0f, 1e-6f) && approx (param (*e, ParamID::osc2Detune), 33.0f, 0.01f)
+               && approx (param (*e, ParamID::env2Attack), 0.5f, 0.001f) && approx (param (*e, ParamID::env2Release), 3.0f, 0.001f),
+           "OSC 2 keeping the unison stack, and ENV 2 the envelope, it shared with OSC 1");
+    check (e->currentSettings().oscillators[1].envelope == 1 && approx (param (*e, ParamID::signalFlow), 0.0f, 1e-6f),
+           "in a fixed order, so it sounds as it did");
+
+    // One saved with the switches but no layout keeps them as saved.
+    const auto f = olderSession ({}, { { ParamID::osc1On, 1.0f }, { ParamID::osc2On, 0.0f }, { ParamID::unisonOn, 0.0f }, { ParamID::envelopeOn, 0.0f } });
+    const Bench::Model benchF (f->getState());
+    check (benchF.isPresent (osc1) && ! benchF.isPresent (env1) && benchF.present().size() == 1,
            "one that saved its modules' switches, but no layout, keeps the switches as saved");
-    check (benchF.positionOf ({ Bench::Kind::oscillator, 0 }) == Bench::defaultPosition ({ Bench::Kind::oscillator, 0 }),
-           "and gets the old panel's layout");
+    check (approx (param (*f, ParamID::voices), 1.0f, 1e-6f), "with unison off, each oscillator plays one voice");
+
+    // One from the first bench: its unison module goes into the oscillators,
+    // its envelope becomes ENV 1 and a copy for OSC 2, and the cables run
+    // through them.
+    juce::ValueTree firstBench (Bench::benchType);
+    firstBench.setProperty (Bench::versionProperty, 1, nullptr);
+    for (const auto& [id, x, y] : { std::tuple ("osc:0", 0.0f, 0.0f), std::tuple ("osc:1", 252.0f, 0.0f),
+                                    std::tuple ("unison", 0.0f, 256.0f), std::tuple ("envelope", 252.0f, 256.0f) })
+    {
+        juce::ValueTree module (Bench::moduleType);
+        module.setProperty (Bench::idProperty, id, nullptr);
+        module.setProperty (Bench::xProperty, x, nullptr);
+        module.setProperty (Bench::yProperty, y, nullptr);
+        firstBench.appendChild (module, nullptr);
+    }
+    juce::ValueTree cable (Bench::cableType);
+    cable.setProperty (Bench::fromProperty, "osc:0", nullptr);
+    cable.setProperty (Bench::toProperty, "out", nullptr);
+    firstBench.appendChild (cable, nullptr);
+    const auto g = olderSession (firstBench, { { ParamID::osc1On, 1.0f }, { ParamID::osc2On, 1.0f },
+                                               { ParamID::unisonOn, 1.0f }, { ParamID::envelopeOn, 1.0f } });
+    const Bench::Model benchG (g->getState());
+    check (benchG.isPresent (env1) && benchG.isPresent (env2) && benchG.present().size() == 4,
+           "a session from the first bench gets an envelope for each oscillator");
+    bool apart = true;
+    for (const auto& one : benchG.present())
+        for (const auto& other : benchG.present())
+            apart = apart && (one == other || ! benchG.boundsOf (one).intersects (benchG.boundsOf (other)));
+    check (apart && benchG.positionOf (osc1) == juce::Point<float>(), "moved off one another, now oscillators are taller");
+    check (benchG.inputOf (env1) == std::optional (osc1) && benchG.isPatchedToOutput (env1) && ! benchG.isPatchedToOutput (osc1),
+           "OSC 1's cable to the output now runs through ENV 1");
+    check (approx (param (*g, ParamID::osc2Voices), 7.0f, 1e-6f), "and OSC 2 plays the unison stack it shared");
+    check ((int) g->getState().state.getChildWithName (Bench::benchType)[Bench::versionProperty] == Bench::currentVersion,
+           "brought up to the current bench");
 
     // Junk is ignored rather than resetting the sound.
     const char junk[] = "not a synth state";
@@ -477,7 +575,7 @@ void testEditor()
     if (editor == nullptr)
         return;
 
-    check (editor->getWidth() == 1040 && editor->getHeight() == 740, "opens at its 1040 x 740 design size");
+    check (editor->getWidth() == 1040 && editor->getHeight() == 916, "opens at its 1040 x 916 design size");
     check (editor->isResizable(), "is resizable");
 
     // An empty bench, inviting a click, and the keyboard and OUTPUT below it.
@@ -486,7 +584,7 @@ void testEditor()
     for (const auto& id : Bench::allModules)
         noneShown = noneShown && ! bench.getModule (id).isVisible();
     check (noneShown && bench.isShowingHint(), "opens on an empty bench, with a hint to click it");
-    check (editor->getLocalBounds().contains (bench.getBounds()) && bench.getWidth() == 992 && bench.getHeight() == 512,
+    check (editor->getLocalBounds().contains (bench.getBounds()) && bench.getWidth() == 992 && bench.getHeight() == 688,
            "the bench fills the middle of the panel");
     check (editor->getLocalBounds().contains (editor->getKeyboard().getBounds()) && editor->getKeyboard().getY() > bench.getBottom()
                && editor->getKeyboard().getHeight() > 80,
@@ -507,11 +605,11 @@ void testEditor()
     };
 
     clickBench ({ 150.0f, 40.0f });
-    check (tray.isOpen() && tray.getTitle() == "ADD TO THE BENCH" && tray.getNumChoices() == 3, "a click on the bench opens the add tray");
+    check (tray.isOpen() && tray.getTitle() == "ADD TO THE BENCH" && tray.getNumChoices() == 2, "a click on the bench opens the add tray");
     check (tray.getChoice (0).name == "Oscillator" && tray.getChoice (0).detail.startsWith ("4 of 4 left")
-               && tray.getChoice (1).name == "Unison" && tray.getChoice (2).name == "Envelope",
-           "offering an oscillator (4 left), unison and the envelope");
-    check (tray.getChoice (0).enabled && tray.getChoice (1).enabled && tray.getChoice (2).enabled, "all of them free");
+               && tray.getChoice (1).name == "Envelope" && tray.getChoice (1).detail.startsWith ("4 of 4 left"),
+           "offering an oscillator and an envelope, four of each");
+    check (tray.getChoice (0).enabled && tray.getChoice (1).enabled, "both free");
     check (editor->getLocalBounds().toFloat().contains (tray.trayBounds())
                && tray.trayBounds().getPosition().getDistanceFrom ((juce::Point<float> (150.0f, 40.0f) + bench.getPosition().toFloat())) < 1.0f,
            "opening where the click was");
@@ -527,10 +625,11 @@ void testEditor()
     check (! tray.isOpen() && param (p, ParamID::osc1On) >= 0.5f, "picking Oscillator puts OSC 1 on the bench");
     check (pumpUntil ([&osc1] { return osc1.isVisible() && osc1.getAlpha() >= 1.0f; }), "which fades in");
     check (osc1.getTitle() == "OSC 1" && model.positionOf (osc1.getId()) == juce::Point<float> (32.0f, 25.0f)
-               && osc1.getBounds() == juce::Rectangle<int> (32, 25, 236, 240),
+               && osc1.getBounds() == juce::Rectangle<int> (32, 25, 236, 336),
            "under the click, its header where the click was");
+    check (osc1.getNumDials() == 6, "with its own unison stack under PITCH / FINE / LEVEL");
     check (! bench.isShowingHint(), "and the hint goes");
-    check (holdAndMeasure (p) > 0.02f, "a note now sounds");
+    check (holdAndMeasure (p) > 0.02f, "a note now sounds, on and off with the key without an envelope");
     releaseAll (p);
 
     // Dragging a module by its header moves it, and the bench remembers.
@@ -549,7 +648,7 @@ void testEditor()
     check (juce::exactlyEqual (model.positionOf (osc2.getId()).x, Bench::areaWidth - Bench::moduleWidth), "kept inside the bench");
     dragHeader (osc2, juce::Point<float> (300.0f, 30.0f) - osc2.getPosition().toFloat());
     const auto landed = model.positionOf (osc2.getId());
-    check (! Bench::boundsAt (landed).intersects (Bench::boundsAt (model.positionOf (osc1.getId())))
+    check (! model.boundsOf (osc2.getId()).intersects (model.boundsOf (osc1.getId()))
                && landed != juce::Point<float> (300.0f, 30.0f) && landed.getDistanceFrom ({ 300.0f, 30.0f }) < 200.0f,
            "dropped on OSC 1, OSC 2 slides off to the nearest free spot");
     check (pumpUntil ([&] { return osc2.getBounds() == bench.boundsFor (osc2.getId()); }) && ! anyOverlap (bench), "and glides there");
@@ -558,37 +657,54 @@ void testEditor()
     osc2.mouseDown (mouseAt (osc2, osc2.closeBounds().getCentre()));
     check (param (p, ParamID::osc2On) < 0.5f && pumpUntil ([&osc2] { return ! osc2.isVisible(); }), "the cross takes OSC 2 off the bench");
 
-    // Fill the bench: a 4 x 2 grid, OSC 1 where it was.
+    // Fill the bench: the oscillators along the top, OSC 1 where it was, and
+    // the envelopes under them.
     addAt (0, { 118.0f, 15.0f });     // OSC 2, back again, at (0, 0)
-    addAt (0, { 118.0f, 271.0f });    // OSC 3 at (0, 256)
-    addAt (0, { 622.0f, 15.0f });     // OSC 4 at (504, 0)
-    clickBench ({ 370.0f, 271.0f });
+    addAt (0, { 622.0f, 15.0f });     // OSC 3 at (504, 0)
+    addAt (0, { 874.0f, 15.0f });     // OSC 4 at (756, 0)
+    clickBench ({ 118.0f, 367.0f });
     check (! tray.getChoice (0).enabled && tray.getChoice (0).detail == "All four are on the bench", "a fifth oscillator is greyed out");
     tray.mouseDown (mouseAt (tray, tray.choiceBounds (0).getCentre()));
     check (tray.isOpen(), "and picking it does nothing");
-    tray.mouseDown (mouseAt (tray, tray.choiceBounds (1).getCentre()));   // unison at (252, 256)
-    addAt (2, { 622.0f, 271.0f });                                         // the envelope at (504, 256)
-    check (pumpUntil ([&] { return bench.getEnvelope().isVisible() && bench.getEnvelope().getAlpha() >= 1.0f; }),
-           "unison and the envelope go on too");
-    bool allShown = true;
-    for (const auto& id : Bench::allModules)
-        allShown = allShown && bench.getModule (id).isVisible();
-    check (allShown && ! anyOverlap (bench), "six modules, none covering another");
+    tray.mouseDown (mouseAt (tray, tray.choiceBounds (1).getCentre()));   // ENV 1 at (0, 352)
+    auto& env1 = bench.getEnvelope (0);
+    check (pumpUntil ([&env1] { return env1.isVisible() && env1.getAlpha() >= 1.0f; }) && env1.getTitle() == "ENV 1"
+               && env1.getBounds() == juce::Rectangle<int> (0, 352, 236, 240),
+           "picking Envelope puts ENV 1 on the bench");
+    addAt (1, { 370.0f, 367.0f });    // ENV 2 at (252, 352)
+    addAt (1, { 622.0f, 367.0f });    // ENV 3 at (504, 352)
+    addAt (1, { 874.0f, 367.0f });    // ENV 4 at (756, 352)
+    const auto allShown = [&bench]
+    {
+        return std::all_of (Bench::allModules.begin(), Bench::allModules.end(),
+                            [&bench] (const auto& id) { return bench.getModule (id).isVisible() && bench.getModule (id).getAlpha() >= 1.0f; });
+    };
+    check (pumpUntil (allShown) && ! anyOverlap (bench), "eight modules, none covering another");
     check (model.positionOf (bench.getOscillator (1).getId()) == juce::Point<float> (0.0f, 0.0f)
-               && model.positionOf (bench.getUnison().getId()) == juce::Point<float> (252.0f, 256.0f),
+               && model.positionOf (bench.getEnvelope (3).getId()) == juce::Point<float> (756.0f, 352.0f),
            "each where it was put");
-    clickBench ({ 870.0f, 271.0f });
-    check (! tray.getChoice (0).enabled && ! tray.getChoice (1).enabled && ! tray.getChoice (2).enabled, "now the tray has nothing left to add");
+    clickBench ({ 500.0f, 650.0f });
+    check (! tray.getChoice (0).enabled && ! tray.getChoice (1).enabled, "now the tray has nothing left to add");
     tray.close();
-    snapshot (render (*editor), "3-full-bench");
 
-    // Dials in the modules drive their parameters, and the wells follow.
-    auto& unison = bench.getUnison();
-    unison.getDial (0).setValue (5.0, juce::sendNotificationSync);
-    unison.getDial (1).setValue (40.0, juce::sendNotificationSync);
-    check (approx (param (p, ParamID::voices), 5.0f, 1e-6f) && approx (param (p, ParamID::detune), 40.0f, 0.01f),
-           "UNISON's dials set VOICES and DETUNE");
-    check (pumpUntil ([&unison] { return unison.getDisplay().getState().voices == 5; }), "and its well shows the stack");
+    // In a fixed order, ENV n shapes OSC n, wherever they sit, and says so.
+    const auto tagsAre = [&bench] (std::initializer_list<const char*> expected)
+    {
+        int e = 0;
+        return std::all_of (expected.begin(), expected.end(), [&] (const char* tag) { return bench.getEnvelope (e++).getTag() == tag; });
+    };
+    check (pumpUntil ([&] { return tagsAre ({ "> OSC 1", "> OSC 2", "> OSC 3", "> OSC 4" }); }),
+           "each envelope shows the oscillator with its number");
+    snapshot (render (*editor), "3-full-bench");
+    setParam (p, ParamID::osc3On, 0.0f);
+    check (pumpUntil ([&] { return bench.getEnvelope (2).isDimmed() && bench.getEnvelope (2).getTag().isEmpty(); })
+               && ! bench.getEnvelope (1).isDimmed(),
+           "without OSC 3, ENV 3 shapes nothing and is greyed out");
+    setParam (p, ParamID::osc3On, 1.0f);
+    check (pumpUntil ([&] { return ! bench.getEnvelope (2).isDimmed() && model.positionOf (bench.getOscillator (2).getId()) == juce::Point<float> (504.0f, 0.0f); }),
+           "and OSC 3 comes back where it was");
+
+    // Dials in the modules drive their own parameters, and the wells follow.
     auto& osc3 = bench.getOscillator (2);
     osc3.getDial (0).setValue (12.0, juce::sendNotificationSync);
     osc3.getDial (2).setValue (0.5, juce::sendNotificationSync);
@@ -596,6 +712,13 @@ void testEditor()
            "OSC 3's dials set its own PITCH and LEVEL");
     check (pumpUntil ([&osc3] { return approx (osc3.getDisplay().getOsc().level, 0.5f, 1e-6f) && osc3.getDisplay().getOsc().cycles > 3.9f; }),
            "and its well shows twice the cycles, half as tall");
+    const float osc1Voices = param (p, ParamID::voices);
+    osc3.getDial (3).setValue (5.0, juce::sendNotificationSync);
+    osc3.getDial (4).setValue (40.0, juce::sendNotificationSync);
+    check (approx (param (p, ParamID::osc3Voices), 5.0f, 1e-6f) && approx (param (p, ParamID::osc3Detune), 40.0f, 0.01f)
+               && approx (param (p, ParamID::voices), osc1Voices, 1e-6f),
+           "its VOICES and DETUNE stack OSC 3 alone");
+    check (pumpUntil ([&osc3] { return osc3.getDisplay().getState().voices == 5; }), "and its well shows a copy per voice");
 
     // The wave picker, laid over each oscillator's WAVE well.
     auto& picker = osc1.getPicker();
@@ -656,10 +779,14 @@ void testEditor()
     check (pumpUntil ([&p] { return ! p.getKeyboardState().isNoteOn (1, 64); }), "and goes dark when the host lets go");
     releaseAll (p);
 
-    // The envelope's well: a dot rides the envelope for each note.
-    auto& amp = bench.getEnvelope().getDisplay();
+    // An envelope's well: a dot rides the envelope for each note.
+    auto& amp = env1.getDisplay();
     setParam (p, ParamID::attack, 0.5f);
-    check (pumpUntil ([&amp] { return approx (amp.getAmpState().attackSeconds, 0.5f, 0.001f); }), "the ENVELOPE well shows ATTACK");
+    check (pumpUntil ([&amp] { return approx (amp.getAmpState().attackSeconds, 0.5f, 0.001f); }), "ENV 1's well shows its ATTACK");
+    setParam (p, ParamID::env2Attack, 1.5f);
+    check (pumpUntil ([&] { return approx (bench.getEnvelope (1).getDisplay().getAmpState().attackSeconds, 1.5f, 0.001f); })
+               && approx (amp.getAmpState().attackSeconds, 0.5f, 0.001f),
+           "and ENV 2's its own");
     juce::MidiBuffer chordOn;
     for (const int note : { 60, 64 })
         chordOn.addEvent (juce::MidiMessage::noteOn (2, note, 0.8f), 0);
@@ -672,8 +799,10 @@ void testEditor()
     playAndMeasure (p, {}, 100);
     check (pumpUntil ([&amp] { return amp.getAmpState().numSounding() == 0; }), "which leave once the notes have faded");
     setParam (p, ParamID::attack, 0.005f);
+    setParam (p, ParamID::env2Attack, 0.005f);
 
-    // The gear picks how sound flows: following the layout numbers the modules.
+    // The gear picks how sound flows: following the layout numbers the modules,
+    // and each envelope shapes the first oscillator before it without one.
     auto& settings = editor->getSettingsTray();
     editor->mouseDown (mouseAt (*editor, editor->gearBounds().getCentre()));
     check (settings.isOpen() && settings.getTitle() == "SIGNAL FLOW" && settings.getNumChoices() == 3
@@ -691,82 +820,114 @@ void testEditor()
         return std::all_of (expected.begin(), expected.end(), [&bench] (const auto& e) { return bench.getModule (e.first).getOrder() == e.second; });
     };
     const Bench::ModuleId o1 { Bench::Kind::oscillator, 0 }, o2 { Bench::Kind::oscillator, 1 }, o3 { Bench::Kind::oscillator, 2 },
-                          o4 { Bench::Kind::oscillator, 3 }, un { Bench::Kind::unison, 0 }, env { Bench::Kind::envelope, 0 };
-    check (orderIs ({ { o2, 1 }, { o1, 2 }, { o4, 3 }, { o3, 4 }, { un, 5 }, { env, 6 } }),
+                          o4 { Bench::Kind::oscillator, 3 }, e1 { Bench::Kind::envelope, 0 },   e2 { Bench::Kind::envelope, 1 },
+                          e3 { Bench::Kind::envelope, 2 },   e4 { Bench::Kind::envelope, 3 };
+    check (pumpUntil ([&] { return orderIs ({ { o2, 1 }, { o1, 2 }, { o3, 3 }, { o4, 4 }, { e1, 5 }, { e2, 6 }, { e3, 7 }, { e4, 8 } }); }),
            "each module shows its place, row by row, left to right");
+    check (pumpUntil ([&] { return tagsAre ({ "> OSC 2", "> OSC 1", "> OSC 3", "> OSC 4" }); }),
+           "and each envelope shapes the oscillator over it (ENV 1 OSC 2, which comes first)");
     snapshot (render (*editor), "6-follow-layout");
-    dragHeader (bench.getOscillator (3), { 252.0f, 256.0f });
-    check (pumpUntil ([&] { return orderIs ({ { o2, 1 }, { o1, 2 }, { o3, 3 }, { un, 4 }, { env, 5 }, { o4, 6 } }); }),
-           "moving OSC 4 to the end of the second row renumbers them");
+    env1.mouseDown (mouseAt (env1, env1.closeBounds().getCentre()));
+    check (pumpUntil ([&] { return orderIs ({ { o4, 4 }, { e2, 5 }, { e3, 6 }, { e4, 7 } }) && tagsAre ({ "", "> OSC 2", "> OSC 1", "> OSC 3" }); }),
+           "taking ENV 1 away renumbers them, and the envelopes after it move up an oscillator");
+    addAt (1, { 118.0f, 367.0f });
+    check (pumpUntil ([&] { return allShown() && tagsAre ({ "> OSC 2", "> OSC 1", "> OSC 3", "> OSC 4" }); }), "putting it back restores them");
 
-    // Patch cables: the oscillators get OUT jacks, the output an IN jack, and
-    // only an oscillator patched to the output is heard.
+    // Patch cables: oscillators get an OUT jack, envelopes an IN and an OUT,
+    // and the output an IN; only what reaches the output is heard.
     editor->mouseDown (mouseAt (*editor, editor->gearBounds().getCentre()));
     settings.mouseDown (mouseAt (settings, settings.choiceBounds (2).getCentre()));
     check (approx (param (p, ParamID::signalFlow), 2.0f, 1e-6f), "picking Patch cables sets the flow");
-    check (pumpUntil ([&] { return osc1.isJackShown() && osc1.getOrder() == 0; }) && ! unison.isJackShown(),
-           "the oscillators show OUT jacks (unison doesn't), and no numbers");
+    using Jack = BenchModule::Jack;
+    check (pumpUntil ([&] { return osc1.isJackShown() && ! osc1.isJackShown (Jack::in) && osc1.getOrder() == 0; })
+               && env1.isJackShown (Jack::in) && env1.isJackShown (Jack::out) && env1.getTag().isEmpty(),
+           "the oscillators show OUT jacks, the envelopes IN and OUT, and no numbers");
     bool allDimmed = true;
-    for (int slot = 0; slot < Bench::numOscillators; ++slot)
-        allDimmed = allDimmed && bench.getOscillator (slot).isDimmed();
-    check (allDimmed && ! unison.isDimmed() && ! bench.getEnvelope().isDimmed(), "with nothing patched, every oscillator is greyed out");
+    for (const auto& id : Bench::allModules)
+        allDimmed = allDimmed && bench.getModule (id).isDimmed();
+    check (allDimmed, "with nothing patched, everything is greyed out");
     check (holdAndMeasure (p) < 1e-4f, "and silent");
     const auto unpatched = render (*editor);
 
+    // Drags a cable from `module`'s `jack` and lets go at `to` (in the editor).
+    const auto drag = [&editor] (BenchModule& module, Jack jack, juce::Point<float> to)
+    {
+        const auto from = module.jackBounds (jack).getCentre();
+        module.mouseDown (mouseAt (module, from));
+        module.mouseUp (mouseAt (module, module.getLocalPoint (editor, to), from));
+    };
+    const auto outputIn = editor->outputJackBounds().getCentre();
+
     const auto jack = osc1.jackBounds().getCentre();
-    const auto inJack = osc1.getLocalPoint (editor, editor->outputJackBounds().getCentre());
     osc1.mouseDown (mouseAt (osc1, jack));
-    osc1.mouseDrag (mouseAt (osc1, jack + juce::Point<float> (40.0f, 200.0f), jack));
+    osc1.mouseDrag (mouseAt (osc1, jack + juce::Point<float> (-80.0f, 300.0f), jack));
     check (editor->isPatching(), "dragging from OSC 1's OUT jack pulls a cable");
     snapshot (render (*editor), "7-patching");
-    osc1.mouseUp (mouseAt (osc1, inJack, jack));
-    check (! editor->isPatching() && model.isPatchedToOutput (o1), "dropped on the output's IN jack, it's patched");
-    check (! osc1.isDimmed() && bench.getOscillator (1).isDimmed(), "OSC 1 lights up, the others stay grey");
-    check (holdAndMeasure (p) > 0.02f, "and is heard");
-    check (pumpUntil ([&] { return pixelsChanged (unpatched, render (*editor)) > 200; }), "the cable hangs between the jacks");
+    osc1.mouseUp (mouseAt (osc1, osc1.getLocalPoint (editor, editor->jackCentre (e1, Jack::in)), jack));
+    check (! editor->isPatching() && model.inputOf (e1) == std::optional (o1), "dropped on ENV 1's IN jack, it's patched");
+    check (osc1.isDimmed() && holdAndMeasure (p) < 1e-4f, "but not heard until ENV 1 reaches the output");
+    releaseAll (p);
+    drag (env1, Jack::out, outputIn);
+    check (model.isPatchedToOutput (e1) && ! osc1.isDimmed() && ! env1.isDimmed() && osc2.isDimmed(),
+           "ENV 1's OUT to the output's IN: OSC 1 and ENV 1 light up, the others stay grey");
+    check (holdAndMeasure (p) > 0.02f, "and OSC 1 is heard");
+    releaseAll (p);
+    check (pumpUntil ([&] { return pixelsChanged (unpatched, render (*editor)) > 200; }), "the cables hang between the jacks");
+
+    // ENV 1 shapes only OSC 1: a slow attack on it leaves OSC 2, patched
+    // straight to the output, sounding at once.
+    setParam (p, ParamID::attack, 3.0f);
+    check (holdAndMeasure (p) < 0.01f, "a slow ATTACK on ENV 1 fades OSC 1 in");
+    releaseAll (p);
+    drag (osc2, Jack::out, outputIn);
+    check (model.isPatchedToOutput (o2) && holdAndMeasure (p) > 0.02f, "while OSC 2, straight to the output, sounds at once");
+    releaseAll (p);
+    setParam (p, ParamID::attack, 0.005f);
     snapshot (render (*editor), "8-cables");
 
-    osc1.mouseDown (mouseAt (osc1, jack));
-    osc1.mouseUp (mouseAt (osc1, jack + juce::Point<float> (0.0f, 120.0f), jack));
-    check (! model.isPatchedToOutput (o1) && osc1.isDimmed(), "a cable dropped anywhere else is unplugged");
-    check (holdAndMeasure (p) < 1e-3f, "and OSC 1 goes quiet");
+    // Picking a cable up: by its oscillator, an envelope's IN or the output's IN.
+    drag (osc1, Jack::out, { 400.0f, 860.0f });
+    check (! model.inputOf (e1).has_value() && osc1.isDimmed() && env1.isDimmed(), "a cable dropped anywhere else is unplugged");
+    drag (osc1, Jack::out, editor->jackCentre (e1, Jack::in));
+    const auto envIn = env1.jackBounds (Jack::in).getCentre();
+    env1.mouseDown (mouseAt (env1, envIn));
+    check (editor->isPatching() && ! model.inputOf (e1).has_value(), "grabbing ENV 1's IN jack picks up the cable into it");
+    env1.mouseUp (mouseAt (env1, envIn, envIn));
+    check (model.inputOf (e1) == std::optional (o1), "and dropping it back plugs it in again");
+    check (! model.connect (e1, e2) && model.inputOf (e2) == std::nullopt, "an envelope can't be patched into another");
 
-    osc1.mouseDown (mouseAt (osc1, jack));
-    osc1.mouseUp (mouseAt (osc1, inJack, jack));
-    auto& osc4 = bench.getOscillator (3);
-    const auto jack4 = osc4.jackBounds().getCentre();
-    osc4.mouseDown (mouseAt (osc4, jack4));
-    osc4.mouseUp (mouseAt (osc4, osc4.getLocalPoint (editor, editor->outputJackBounds().getCentre()), jack4));
-    check (model.isPatchedToOutput (o1) && model.isPatchedToOutput (o4), "more than one oscillator can be patched to the output");
-
-    const auto in = editor->outputJackBounds().getCentre();
-    editor->mouseDown (mouseAt (*editor, in));
-    check (editor->isPatching() && ! model.isPatchedToOutput (o4) && model.isPatchedToOutput (o1),
-           "grabbing the IN jack picks up the last cable patched to it");
-    editor->mouseUp (mouseAt (*editor, in + juce::Point<float> (-300.0f, -200.0f), in));
-    check (! editor->isPatching() && ! model.isPatchedToOutput (o4), "and dropping it away unplugs it");
+    editor->mouseDown (mouseAt (*editor, outputIn));
+    check (editor->isPatching() && ! model.isPatchedToOutput (o2) && model.isPatchedToOutput (e1),
+           "grabbing the output's IN jack picks up the last cable patched to it");
+    editor->mouseUp (mouseAt (*editor, outputIn + juce::Point<float> (-300.0f, -200.0f), outputIn));
+    check (! editor->isPatching() && ! model.isPatchedToOutput (o2), "and dropping it away unplugs it");
 
     osc1.mouseDown (mouseAt (osc1, osc1.closeBounds().getCentre()));
-    check (! model.isPatchedToOutput (o1) && param (p, ParamID::osc1On) < 0.5f, "taking an oscillator off the bench unplugs its cable");
+    check (! model.inputOf (e1).has_value() && param (p, ParamID::osc1On) < 0.5f, "taking an oscillator off the bench unplugs its cable");
+    env1.mouseDown (mouseAt (env1, env1.closeBounds().getCentre()));
+    check (! model.isPatchedToOutput (e1) && param (p, ParamID::env1On) < 0.5f, "and taking an envelope off unplugs its own");
     releaseAll (p);
 
     // Back to a fixed order: no jacks, nothing greyed out.
+    auto& osc4 = bench.getOscillator (3);
     setParam (p, ParamID::signalFlow, 0.0f);
-    check (pumpUntil ([&] { return ! osc4.isJackShown() && ! osc4.isDimmed(); }), "a host change of the flow shows too");
+    check (pumpUntil ([&] { return ! osc4.isJackShown() && ! osc4.isDimmed() && bench.getEnvelope (3).getTag() == "> OSC 4"; }),
+           "a host change of the flow shows too");
 
     // A session restored while the editor is open moves the cards there.
     juce::MemoryBlock layoutSaved;
     p.getStateInformation (layoutSaved);
-    model.move (o4, { 756.0f, 0.0f });
-    check (pumpUntil ([&] { return osc4.getPosition() == juce::Point<int> (756, 0); }),
+    model.move (o4, { 252.0f, 0.0f });
+    check (pumpUntil ([&] { return osc4.getPosition() == juce::Point<int> (252, 0); }),
            "a module moved on the bench (by undo, say) moves on screen");
     p.setStateInformation (layoutSaved.getData(), (int) layoutSaved.getSize());
-    check (pumpUntil ([&] { return osc4.getPosition() == juce::Point<int> (756, 256); }) && osc4.getBounds() == bench.boundsFor (o4),
+    check (pumpUntil ([&] { return osc4.getPosition() == juce::Point<int> (756, 0); }) && osc4.getBounds() == bench.boundsFor (o4),
            "and restoring a session puts the cards back where it had them");
 
     // Scaled up: the same face at 2x.
-    editor->setSize (2080, 1480);
-    check (osc4.getWidth() == 472 && approx ((float) osc4.getDial (0).getWidth(), 104.0f, 1.0f), "at 2x every module and dial doubles");
+    editor->setSize (2080, 1832);
+    check (osc4.getWidth() == 472 && osc4.getHeight() == 672 && approx ((float) osc4.getDial (0).getWidth(), 104.0f, 1.0f),
+           "at 2x every module and dial doubles");
     check (osc4.getPosition() == (model.positionOf (o4) * 2.0f).toInt(), "and the modules keep their places");
     check (hasDetail (render (*editor)), "renders at 2x");
 
@@ -774,7 +935,7 @@ void testEditor()
     if (auto* constrainer = editor->getConstrainer())
         constrainer->setBoundsForComponent (editor, { 0, 0, 1300, 800 }, false, false, true, true);
     const float aspect = (float) editor->getWidth() / (float) editor->getHeight();
-    check (approx (aspect, 1040.0f / 740.0f, 0.02f), "resizing keeps the design's proportions");
+    check (approx (aspect, 1040.0f / 916.0f, 0.02f), "resizing keeps the design's proportions");
 }
 // ---- Presets ----------------------------------------------------------------------
 
@@ -809,8 +970,9 @@ void testPresets()
         names.addIfNotAlreadyThere (p.getProgramName (i));
     check (names.size() == Presets::numPresets && ! names.contains ({}), "each has a name of its own");
 
-    // Every preset loads its modules, set out without overlapping, and plays a
-    // big chord at full velocity loud enough, and without clipping.
+    // Every preset loads its modules, set out without overlapping, each
+    // envelope shaping its own oscillator, and plays a big chord at full
+    // velocity loud enough, and without clipping.
     for (int i = 1; i < Presets::numPresets; ++i)
     {
         const auto& preset = Presets::factory[(size_t) i];
@@ -818,39 +980,53 @@ void testPresets()
         q.prepareToPlay (48000.0, 512);
         q.setCurrentProgram (i);
         const Bench::Model bench (q.getState());
+        const auto settings = q.currentSettings();
 
-        bool modulesMatch = bench.isPresent ({ Bench::Kind::unison, 0 }) == preset.unison.has_value()
-                         && bench.isPresent ({ Bench::Kind::envelope, 0 }) == preset.envelope.has_value();
+        bool modulesMatch = true;
+        bool shapedByOwn  = true;
+        float attack = 0.0f;
         for (int slot = 0; slot < Bench::numOscillators; ++slot)
-            modulesMatch = modulesMatch && bench.isPresent ({ Bench::Kind::oscillator, slot }) == preset.oscillators[(size_t) slot].has_value();
+        {
+            const auto& osc = preset.oscillators[(size_t) slot];
+            const bool shaped = osc.has_value() && osc->envelope.has_value();
+            modulesMatch = modulesMatch && bench.isPresent ({ Bench::Kind::oscillator, slot }) == osc.has_value()
+                                        && bench.isPresent ({ Bench::Kind::envelope, slot }) == shaped;
+            shapedByOwn  = shapedByOwn && settings.oscillators[(size_t) slot].envelope == (shaped ? slot : -1);
+            if (shaped)
+                attack = juce::jmax (attack, osc->envelope->attackSeconds);
+        }
 
         bool apart = true;
         const auto present = bench.present();
         for (size_t a = 0; a < present.size(); ++a)
             for (size_t b = a + 1; b < present.size(); ++b)
-                apart = apart && ! Bench::boundsAt (bench.positionOf (present[a])).intersects (Bench::boundsAt (bench.positionOf (present[b])));
+                apart = apart && ! bench.boundsOf (present[a]).intersects (bench.boundsOf (present[b]));
 
-        const float attack = preset.envelope.has_value() ? preset.envelope->attackSeconds : 0.0f;
-        const float peak   = holdChordPeak (q, juce::roundToInt ((attack + 0.5f) * 48000.0f / 512.0f));
+        const float peak = holdChordPeak (q, juce::roundToInt ((attack + 0.5f) * 48000.0f / 512.0f));
         const std::string name = preset.name;
         check (q.getCurrentProgram() == i && modulesMatch && apart, name + ": its modules are on the bench, apart");
+        check (shapedByOwn, name + ": each envelope shapes its own oscillator");
         check (peak > 0.2f && peak < 1.0f, name + ": a chord sounds without clipping (peak " + std::to_string (peak) + ")");
     }
 
     // Loading one resets what it doesn't set, and lays the bench out afresh.
     setParam (p, ParamID::voices, 9.0f);
+    setParam (p, ParamID::osc3Voices, 5.0f);
     setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::cables);
     Bench::Model bench (p.getState());
     bench.add (Bench::Kind::oscillator, { 700.0f, 200.0f });
-    bench.connect ({ Bench::Kind::oscillator, 0 });
+    bench.add (Bench::Kind::envelope, { 0.0f, 400.0f });
+    bench.connect ({ Bench::Kind::oscillator, 0 }, Bench::ModuleId { Bench::Kind::envelope, 0 });
+    bench.connect ({ Bench::Kind::envelope, 0 });
     const int sub = names.indexOf ("Sub Bass");
     p.setCurrentProgram (sub);
-    check (approx (param (p, ParamID::voices), 1.0f, 1e-6f) && approx (param (p, ParamID::signalFlow), 0.0f, 1e-6f),
-           "a preset puts back what it doesn't set (VOICES, the flow)");
-    check (bench.patchedToOutput().empty() && bench.positionOf ({ Bench::Kind::oscillator, 0 }) == juce::Point<float> (0.0f, 0.0f)
+    check (approx (param (p, ParamID::voices), 1.0f, 1e-6f) && approx (param (p, ParamID::osc3Voices), 1.0f, 1e-6f)
+               && approx (param (p, ParamID::signalFlow), 0.0f, 1e-6f),
+           "a preset puts back what it doesn't set (each stack's VOICES, the flow)");
+    check (bench.cables().empty() && bench.positionOf ({ Bench::Kind::oscillator, 0 }) == juce::Point<float> (0.0f, 0.0f)
                && bench.positionOf ({ Bench::Kind::oscillator, 1 }) == juce::Point<float> (Bench::moduleWidth + Bench::gap, 0.0f)
-               && bench.positionOf ({ Bench::Kind::envelope, 0 }) == juce::Point<float> (0.0f, Bench::moduleHeight + Bench::gap),
-           "unplugs the cables and sets the modules out in rows");
+               && bench.positionOf ({ Bench::Kind::envelope, 1 }) == Bench::defaultPosition ({ Bench::Kind::envelope, 1 }),
+           "unplugs the cables and sets each envelope under its oscillator");
 
     // A host setting the loaded program again changes nothing; picking it on
     // the face loads it afresh.

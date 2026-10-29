@@ -3,12 +3,12 @@
 A simple polyphonic synth plugin for DAWs (VST3 / AU / Standalone), built with
 [JUCE](https://juce.com), laid out as a workbench: it opens empty, and you put
 on it the modules you want, where you want them. Add up to four oscillators,
-each with one of the four basic wave shapes, stack up to 16 copies on every
-note, detune and spread them, and play chords: the classic wide, detuned
-"supersaw" pad in a few turns.
+each with one of the four basic wave shapes and its own stack of up to 16
+detuned, spread copies on every note, give each its own envelope, and play
+chords: the classic wide, detuned "supersaw" pad in a few turns.
 
 ```
-note -> VOICES x (OSC 1 + ... + OSC 4) -> DETUNE + WIDTH -> ATTACK / RELEASE -> OUTPUT
+note -> OSC n (VOICES x shape, DETUNE + WIDTH) -> ENV n (ATTACK / RELEASE) -> + -> OUTPUT
 ```
 
 ## The workbench
@@ -18,16 +18,17 @@ and a tray offers what can go there:
 
 | Module         | What it holds                                                             |
 |----------------|---------------------------------------------------------------------------|
-| **Oscillator** | One shape at its own pitch and level: WAVE, PITCH, FINE, LEVEL. Up to four (OSC 1 to OSC 4). |
-| **Unison**     | The stack every note plays: VOICES, DETUNE, WIDTH. Without it, each note is one plain, centred voice. |
-| **Envelope**   | How each note fades in and out: ATTACK, RELEASE. Without it, notes start and stop with a short click-free fade. |
+| **Oscillator** | One shape at its own pitch and level, WAVE, PITCH, FINE, LEVEL, over its own unison stack, VOICES, DETUNE, WIDTH. Up to four (OSC 1 to OSC 4). |
+| **Envelope**   | How one oscillator's notes fade in and out: ATTACK, RELEASE. Up to four (ENV 1 to ENV 4). An oscillator without one starts and stops with the key, with a short click-free fade. |
 
 The module lands where you clicked. Drag a module by its header to move it anywhere
 on the bench; drop it on another and it slides off to the nearest free spot, so
 modules never stack. The cross in its header takes it off the bench (its settings are
 kept for when it comes back). What is on the bench, where, and any cables are saved
-with your set; a set saved before the bench existed opens with OSC 1 (and OSC 2, if it
-was on) along the top and unison and the envelope below, sounding as it did.
+with your set. A set saved before the bench existed opens with OSC 1 (and OSC 2, if it
+was on) along the top and an envelope under each, sounding as it did: the unison stack
+and the envelope they used to share are copied into each. A set from the first bench,
+with its single Unison and Envelope modules, is brought over the same way.
 
 The keyboard and the OUTPUT dial stay in a strip along the bottom.
 
@@ -36,22 +37,22 @@ The keyboard and the OUTPUT dial stay in a strip along the bottom.
 The pill in the middle of the header holds the factory presets: its arrows step to the
 previous and next one, and a click on its name opens a tray of them all. Your DAW lists
 the same presets as the plugin's programs. Loading one puts its modules on the bench
-(oscillators along the top, unison and the envelope below, in a fixed order with no
-cables) and sets everything it doesn't use back to its default; picking it again undoes
-your edits. Which preset you loaded is saved with your set.
+(oscillators along the top, each with its own unison stack, and each envelope under the
+oscillator it shapes, in a fixed order with no cables) and sets everything it doesn't
+use back to its default; picking it again undoes your edits. Which preset you loaded is saved with your set.
 
 | Preset            | What it is                                     |
 |-------------------|------------------------------------------------|
 | **Empty Bench**   | Nothing on it: where a new instance starts     |
 | **Supersaw Pad**  | Nine wide saws with an octave on top           |
 | **Warm Strings**  | A soft saw section with a low triangle         |
-| **Slow Swell**    | A shimmering four-oscillator stack, 3 s attack |
+| **Slow Swell**    | A shimmering stack, its layers arriving in turn |
 | **Trance Lead**   | A bright detuned saw and square                |
 | **8-Bit Lead**    | Bare squares, no unison                        |
 | **Hollow Flute**  | A breathy triangle with a soft octave          |
 | **Drawbar Organ** | Sines at 16', 8', 4' and 2 2/3'                |
-| **Glass Keys**    | Clear sines with a long ring                   |
-| **Brass Section** | Two saws and a square an octave below          |
+| **Glass Keys**    | Clear sines, the overtones ringing longest     |
+| **Brass Section** | Two saws, and a square below that swells in    |
 | **Fifth Stack**   | Root, fifth and sub, for big chords            |
 | **Reese Bass**    | Two beating saws an octave down                |
 | **Sub Bass**      | A clean sine sub with a little edge            |
@@ -60,19 +61,24 @@ your edits. Which preset you loaded is saved with your set.
 
 The gear at the top right picks how sound flows between the modules:
 
-- **Fixed order** (the default): by kind, wherever the modules sit: the oscillators,
-  then unison, then the envelope.
+- **Fixed order** (the default): by number, wherever the modules sit: ENV 1 shapes
+  OSC 1, ENV 2 OSC 2, and so on. Each envelope shows the oscillator it shapes in its
+  header ("> OSC 1"); one whose oscillator isn't on the bench is greyed out.
 - **Follow layout**: in reading order, row by row and left to right. Each module shows
-  its place in the order in its header, and moving it renumbers them.
-- **Patch cables**: each oscillator gets an **OUT** jack in its header and OUTPUT an
-  **IN** jack. Drag from an OUT jack to the IN jack to patch a cable; only patched
-  oscillators are heard, and the others are greyed out. Drag a cable off either end,
-  or drop it anywhere else, to unplug it. Unison and the envelope shape every
-  oscillator, so they need no cables.
+  its place in the order in its header, and each envelope shapes the first oscillator
+  before it that has no envelope yet, so an envelope placed after (or under) an
+  oscillator shapes it. Moving a module renumbers them and can hand an envelope to
+  another oscillator.
+- **Patch cables**: each oscillator gets an **OUT** jack in its header, each envelope
+  an **IN** and an **OUT**, and OUTPUT an **IN**. Drag from an OUT jack to an IN jack
+  to patch a cable: an oscillator to the output (heard on/off with the key) or into an
+  envelope, and an envelope to the output. An envelope takes one oscillator. Only what
+  reaches the output is heard, and the rest is greyed out. Grab a cable by either end,
+  or drop it anywhere else, to unplug it.
 
-Today the only modules that make sound are oscillators, which are summed, so Fixed
-order and Follow layout sound the same; the order starts to matter as effects (a
-filter, a reverb) join the bench.
+The oscillators, each under its own envelope, are summed, so Fixed order and Follow
+layout differ only in which envelope shapes which oscillator; the order will matter
+more as effects (a filter, a reverb) join the bench.
 
 ## Controls
 
@@ -85,8 +91,8 @@ filter, a reverb) join the bench.
 | **Voices**  | How many copies of the oscillator play each note, 1 to 16. One voice is a plain, centred oscillator. |
 | **Detune**  | How far apart the voices are tuned: the outer two sit this many cents flat and sharp (up to ±50 ct) and the rest fall evenly between. Detuned voices beat against each other, which is what makes the sound thick. |
 | **Width**   | How far the voices spread across the stereo field. 0% keeps them in the centre (mono); 100% puts the outer ones hard left and right. |
-| **Attack**  | How long a note takes to fade in, 1 ms to 5 s.                       |
-| **Release** | How long a note rings on after its key goes up, 5 ms to 10 s.        |
+| **Attack**  | How long the envelope's oscillator takes to fade in, 1 ms to 5 s.    |
+| **Release** | How long it rings on after its key goes up, 5 ms to 10 s. A note lasts until the slowest of its oscillators has faded. |
 | **Output**  | Output level, -24 to +6 dB.                                          |
 
 Every control is a parameter, so it's saved with your set and can be automated.
@@ -96,10 +102,11 @@ Which modules are on the bench, and the signal flow, are saved too but not autom
 
 Each oscillator comes set up for layering: OSC 1 a saw at the note, OSC 2 a square an
 octave below at 70%, OSC 3 a saw a fifth up at 50%, and OSC 4 a triangle an octave up
-at 40%. Each has its own shape, PITCH, FINE and LEVEL; all share the unison stack
-(every copy plays all of them, so DETUNE and WIDTH spread them all) and the envelope.
-Adding, removing or unpatching an oscillator, and moving its LEVEL, fades rather than
-clicks, and an oscillator that isn't heard costs nothing.
+at 40%. Each has its own shape, PITCH, FINE and LEVEL, its own unison stack (VOICES,
+DETUNE and WIDTH spread only its copies, so a thick detuned saw can sit over a single
+clean sub-octave square) and its own envelope. Adding, removing or unpatching an
+oscillator, and moving its LEVEL, fades rather than clicks, and an oscillator that
+isn't heard costs nothing.
 
 ### Picking the wave
 
@@ -117,21 +124,19 @@ shape to the new one rather than jumping.
 
 Each module has a display right above its dials, drawn in the dials' colours:
 
-- **OSC 1** to **OSC 4** (above their PITCH / FINE / LEVEL): the oscillator's shape,
-  with a faint copy for every unison voice, shifted by its detune. PITCH squeezes or
+- **OSC 1** to **OSC 4** (above their dials): the oscillator's shape, with a faint copy
+  for every one of its unison voices, shifted by its detune. PITCH squeezes or
   stretches it (two cycles at 0, four an octave up, one an octave down), LEVEL sets its
   height.
-- **UNISON** (above VOICES / DETUNE / WIDTH): a glowing dot per voice, placed left to
-  right by its detune (on a fixed -50..+50 cent scale) and top to bottom by its place in
-  the stereo field. DETUNE fans the dots out sideways, WIDTH up and down.
-- **AMP**, in the envelope (above ATTACK / RELEASE): the envelope every note follows: the rise
-  (ATTACK), the top while the key is down (its height is OUTPUT, against a dashed 0 dB
-  line) and the fall (RELEASE). Every note you play is a dot riding it: up the attack,
-  resting on the top while held, down the release once you let go.
+- **AMP**, in each envelope (above ATTACK / RELEASE): the envelope its oscillator's notes
+  follow: the rise (ATTACK), the top while the key is down (its height is OUTPUT, against
+  a dashed 0 dB line) and the fall (RELEASE). Every note you play is a dot riding it: up
+  the attack, resting on the top while held, down the release once you let go.
 
 ### How the voices spread
 
-With more than one voice, the copies sit evenly across the DETUNE range. WIDTH pans
+Each oscillator spreads its own stack. With more than one voice, its copies sit evenly
+across its DETUNE range. WIDTH pans
 them in an interleaved order (the flattest hard left, the next hard right, then the
 next pair a step in), so each side gets a mix of flat and sharp voices and the stack
 stays balanced. The stack is scaled by 1 / sqrt(VOICES), so going from 1 voice to 16
@@ -181,7 +186,8 @@ ctest --test-dir build --output-on-failure
 ```
 
 Set `SYNTH2_SNAPSHOTS` to a folder to have the editor tests save PNGs of the faces they
-render (the empty bench, the trays, a full bench, the flow modes) for a look by eye.
+render (the empty bench, the trays, a full bench of four oscillators and four envelopes,
+the flow modes, the cables) for a look by eye.
 
 ## Layout
 
@@ -191,22 +197,22 @@ Source/
   ParamIDs.h                 the parameter IDs
   Presets.h                  the factory presets, and loading one onto the bench
   Synth2Engine.h             host-agnostic DSP core: 16 voices, up to four oscillators, MIDI, smoothing, output
-  SynthVoice.h               one note: up to 16 unison copies of its oscillators under the envelope
+  SynthVoice.h               one note: each oscillator's unison copies, under that oscillator's envelope
   Oscillator.h               the four wave shapes, and the PolyBLEP oscillator that plays them
   Unison.h                   where each unison voice sits: its detune, its pan, the stack's level
-  Bench.h                    the workbench model: modules, where they sit, cables, overlap and reading order
+  Bench.h                    the workbench model: modules, where they sit, cables, which envelope shapes which oscillator, older sessions
   BenchView.h                the bench itself: the dotted area the modules sit and are dragged on
-  BenchModules.h             the oscillator, unison and envelope modules, and the add / settings trays
+  BenchModules.h             the oscillator and envelope modules, and the add / settings trays
   PluginEditor.{h,cpp}       the Neon Plugins editor: header and gear, bench, cables, keyboard, OUTPUT
   Synth2LookAndFeel.{h,cpp}  the dials (design-system Dial: arc + glowing core)
   WavePicker.h               an oscillator well's picker (pill, arrows, wheel) and its tray of shapes
-  VoiceDisplays.h            the OSC, UNISON and AMP wells
+  VoiceDisplays.h            the OSC and AMP wells
   NeonKeyboard.h             the on-screen keyboard
   Synth2Theme.h              shared palette, fonts, colour + value formatting
   Synth2VisualModel.h        pure wave / unison / envelope -> display math (uses the engine's own), the morph and its ease
   RtSafety.h                 the RealtimeSanitizer annotation
 Tests/
-  Synth2EngineTests.cpp         framework-free DSP tests: pitch, envelope, unison, the oscillators, polyphony, pedal
+  Synth2EngineTests.cpp         framework-free DSP tests: pitch, envelopes, unison, the oscillators, polyphony, pedal
   Synth2VisualModelTests.cpp    framework-free tests for the shapes, the spread and the displays' model
   PluginTests.cpp               processor + editor: params, buses, MIDI, state, the bench, offscreen renders
   rt_check.cpp                  RealtimeSanitizer driver
@@ -219,12 +225,12 @@ The editor follows the **Neon Plugins** design system natively in JUCE (no WebVi
 the dark radial panel, the `Zanders` + product wordmark (Synth2 in violet) with its
 mode badge and the settings gear, then the bench: a dark, faintly dotted area where
 the modules sit as cards, each with a header (its name, its place or OUT jack, a
-cross) over its display and its Dials, coloured along the cyan → violet → pink →
-amber spectrum. The oscillators show their shape in the spectrum gradient with a faint
-copy per unison voice, with a picker pill and a drop-open tray of glowing shape
-tiles; UNISON a glowing dot per voice, by detune and pan; the envelope's AMP well the
-envelope in its dials' colours, with a live dot per sounding note. Patch cables hang
-between the jacks in the oscillator's colour. Along the bottom, an ivory keyboard
+cross, and on an envelope the oscillator it shapes) over its display and its Dials,
+coloured along the cyan → violet → pink → amber spectrum. The oscillators show their
+shape in the spectrum gradient with a faint copy per unison voice, with a picker pill
+and a drop-open tray of glowing shape tiles; each envelope's AMP well the envelope in
+its dials' colours, with a live dot per sounding note. Patch cables hang between the
+jacks in the colour of the module they come from. Along the bottom, an ivory keyboard
 whose pressed keys glow violet, and OUTPUT. The displays draw on the engine's own
 wave, unison and envelope maths (`Synth2VisualModel`), so what they show never drifts
 from what you hear. The face is authored at 1040 px and scales proportionally

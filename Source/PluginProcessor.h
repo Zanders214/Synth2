@@ -7,6 +7,7 @@
 #include <bitset>
 #include <cstdint>
 
+#include "Bench.h"
 #include "Synth2Engine.h"
 
 /**
@@ -23,18 +24,13 @@
 class Synth2AudioProcessor : public juce::AudioProcessor,
                              private juce::MidiKeyboardState::Listener,
                              private juce::ValueTree::Listener,
+                             private juce::AudioProcessorValueTreeState::Listener,
                              private juce::AsyncUpdater
 {
 public:
-    /** How sound flows between the modules on the bench: in a fixed order by
-        kind, in the order they are laid out, or along the cables patched
-        between them. */
-    enum class SignalFlow
-    {
-        fixed,
-        layout,
-        cables
-    };
+    /** How sound flows between the modules on the bench: by number, in the
+        order they are laid out, or along the cables patched between them. */
+    using SignalFlow = Bench::Flow;
 
     Synth2AudioProcessor();
     ~Synth2AudioProcessor() override;
@@ -77,9 +73,9 @@ public:
     /** How many notes are sounding, for the tests and the editor. */
     int getNumActiveNotes() const noexcept { return activeNotes.load(); }
 
-    /** Where each voice was in its envelope at the end of the last block, for
-        the AMP display. Any thread. */
-    std::array<NoteActivity, Synth2Engine::maxNotes> getNoteActivity() const noexcept;
+    /** Where each voice was in oscillator `osc`'s envelope at the end of the
+        last block, for the envelopes' AMP displays. Any thread. */
+    std::array<NoteActivity, Synth2Engine::maxNotes> getNoteActivity (int osc) const noexcept;
 
     /** The engine's settings, from the parameters. */
     Synth2Engine::Settings currentSettings() const noexcept;
@@ -100,13 +96,19 @@ private:
     void handleNoteOff (juce::MidiKeyboardState*, int midiChannel, int midiNoteNumber, float velocity) override;
     void playOnScreenKeys() noexcept;
 
-    // ValueTree::Listener: the bench's cables changed (or a whole new state arrived).
-    void followCables();
+    // What the bench decides for the sound (which envelope shapes each
+    // oscillator, and which reach the output along the cables), worked out
+    // again whenever the bench changes: a module added, removed, moved or
+    // patched, or a whole new state. Message thread.
+    void followBench();
     void valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTree& child) override;
     void valueTreeChildRemoved (juce::ValueTree& parent, juce::ValueTree& child, int index) override;
+    void valueTreePropertyChanged (juce::ValueTree& tree, const juce::Identifier& property) override;
     void valueTreeRedirected (juce::ValueTree& tree) override;
+    void parameterChanged (const juce::String& parameterID, float newValue) override;
 
-    // A host's program change from off the message thread, loaded on it.
+    // The bench followed, or a host's program change loaded, on the message
+    // thread when either came from off it.
     void handleAsyncUpdate() override;
 
     juce::AudioProcessorValueTreeState apvts;
@@ -114,20 +116,25 @@ private:
     std::atomic<int> activeNotes { 0 };
     std::array<std::atomic<bool>, Synth2Engine::numOscillators> routedToOutput { true, true, true, true };
 
+    // Which envelope shapes each oscillator (-1 for none), for each way sound
+    // can flow, so the audio thread just picks the row for the flow in use.
+    using Assignment = std::array<std::atomic<int>, Synth2Engine::numOscillators>;
+    std::array<Assignment, 3> envelopeFor {};
+
     // The factory preset last loaded (kept in the state too, so a host that
     // sets the saved program again after restoring a session changes nothing),
     // and one a host asked for off the message thread.
     std::atomic<int> currentPreset { 0 };
     std::atomic<int> pendingPreset { -1 };
 
-    // Each voice's envelope, published by the audio thread every block.
+    // Each voice's envelope for each oscillator, published by the audio thread every block.
     struct PublishedActivity
     {
         std::atomic<int>   stage       { 0 };
         std::atomic<float> level       { 0.0f };
         std::atomic<float> releaseFrom { 1.0f };
     };
-    std::array<PublishedActivity, Synth2Engine::maxNotes> noteActivity;
+    std::array<std::array<PublishedActivity, Synth2Engine::maxNotes>, Synth2Engine::numOscillators> noteActivity;
 
     // The on-screen keyboard. Key presses go to the audio thread through
     // keyFifo (velocity 0 = key up); the keys the host holds come back as

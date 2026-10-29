@@ -5,11 +5,13 @@
 // becomes a hard failure. It
 // plays the worst case: sixteen-note chords of sixteen detuned voices, both
 // oscillators on, with notes stolen, the sustain pedal, the on-screen
-// keyboard's notes, and the settings moving underneath (VOICES, both WAVEs,
-// OSC 2 switching on and off, the tuning, the envelope) while they sound.
+// keyboard's notes, and the settings moving underneath (each oscillator's
+// VOICES, both WAVEs, OSC 2 switching on and off, the tuning, the envelopes
+// and which oscillator each shapes) while they sound.
 
 #include <juce_audio_utils/juce_audio_utils.h>
 #include "PluginProcessor.h"
+#include "Bench.h"
 #include "ParamIDs.h"
 #include <cstdio>
 
@@ -40,6 +42,9 @@ int main()
     set (ParamID::width, 1.0f);
     set (ParamID::osc1On, 1.0f);   // a new instance opens on an empty bench
     set (ParamID::osc2On, 1.0f);
+    set (ParamID::osc2Voices, 16.0f);
+    set (ParamID::env1On, 1.0f);
+    Bench::Model bench (proc.getState());
 
     juce::AudioBuffer<float> buffer (2, bs);
     const int blocks = (int) (sr / bs) * 2;          // ~2 s of callbacks
@@ -70,6 +75,7 @@ int main()
             set (ParamID::voices,  (float) (1 + (b / 12) % 16));
             set (ParamID::attack,  0.001f + 0.01f * (float) ((b / 12) % 5));
             set (ParamID::release, 0.05f + 0.1f * (float) ((b / 12) % 5));
+            set (ParamID::osc2Voices, (float) (16 - (b / 12) % 16));
             set (ParamID::osc2Wave,  (float) ((b / 12 + 1) % 4));
             set (ParamID::osc2Pitch, (float) ((b / 12) % 25 - 12));
             set (ParamID::osc1Fine,  (float) ((b / 12) % 11) * 5.0f - 25.0f);
@@ -85,9 +91,19 @@ int main()
             set (ParamID::osc3On,     (float) ((b / 24) % 2));
             set (ParamID::osc4On,     (float) ((b / 48) % 2));
             set (ParamID::osc4Wave,   (float) ((b / 24) % 4));
-            set (ParamID::unisonOn,   (float) ((b / 24 + 1) % 2));
-            set (ParamID::envelopeOn, (float) ((b / 72 + 1) % 2));
+            set (ParamID::osc4Voices, (float) (1 + (b / 24) % 16));
+            set (ParamID::env2On,     (float) ((b / 24 + 1) % 2));
+            set (ParamID::env4On,     (float) ((b / 72 + 1) % 2));
             set (ParamID::signalFlow, (float) ((b / 24) % 3));
+            if ((b / 24) % 2 == 0)
+            {
+                bench.connect ({ Bench::Kind::oscillator, 1 }, Bench::ModuleId { Bench::Kind::envelope, 1 });
+                bench.connect ({ Bench::Kind::envelope, 1 });
+            }
+            else
+            {
+                bench.disconnect ({ Bench::Kind::oscillator, 1 });
+            }
             proc.setRoutedToOutput ((b / 24) % 4, (b / 24) % 3 != 0);
         }
 
@@ -95,7 +111,7 @@ int main()
     }
 
     std::printf ("PASS: %d blocks of 16-voice unison chords on up to four oscillators (stolen notes,\n"
-                 "      sustain pedal, on-screen keys, settings, modules and routing changing mid-note),\n"
+                 "      sustain pedal, on-screen keys, settings, modules, envelopes and routing changing mid-note),\n"
                  "      no RT-safety violations\n", blocks);
     return 0;
 }

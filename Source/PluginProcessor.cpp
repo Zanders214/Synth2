@@ -21,11 +21,16 @@ Synth2AudioProcessor::Synth2AudioProcessor()
     keyboardState.addListener (this);
     Bench::Model (apvts).ensureBench();
     apvts.state.addListener (this);
-    followCables();
+    for (const auto& id : Bench::allModules)
+        apvts.addParameterListener (Bench::parameterFor (id), this);
+    followBench();
 }
 
 Synth2AudioProcessor::~Synth2AudioProcessor()
 {
+    cancelPendingUpdate();
+    for (const auto& id : Bench::allModules)
+        apvts.removeParameterListener (Bench::parameterFor (id), this);
     apvts.state.removeListener (this);
     keyboardState.removeListener (this);
 }
@@ -48,9 +53,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
     const auto centsFromValue     = [] (float value, int) { return (value > 0.0f ? "+" : "") + String (value, 1) + " ct"; };
 
     // The four oscillators: each on the bench or not, a shape, a transposition,
-    // a fine tune and a level. The bench starts empty, so all four start off.
-    // (OSC 1's shape keeps its original "wave" ID, and OSC 2 its version 2
-    // IDs, so older sessions load as they were.)
+    // a fine tune, a level and its own unison stack: how many copies play each
+    // note, how far apart they are tuned and how wide they spread (see
+    // Unison.h). The bench starts empty, so all four start off. (OSC 1's shape
+    // and stack keep their original IDs, and OSC 2 its version 2 IDs, so
+    // older sessions load as they were.)
     const auto onOff = [] (bool automatable) { return AudioParameterBoolAttributes().withAutomatable (automatable); };
     const auto addOscillator = [&] (int index, int version)
     {
@@ -76,6 +83,20 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
             ParameterID { ids.level, version }, name + "Level",
             NormalisableRange<float> (0.0f, 1.0f), defaults.level,
             AudioParameterFloatAttributes().withStringFromValueFunction (percentFromValue)));
+
+        const int    stackVersion = index == 0 ? 1 : 4;
+        const String stackName    = index == 0 ? String() : name;
+        layout.add (std::make_unique<AudioParameterInt> (
+            ParameterID { ids.voices, stackVersion }, stackName + "Voices", 1, Unison::maxVoices, defaults.voices));
+        layout.add (std::make_unique<AudioParameterFloat> (
+            ParameterID { ids.detune, stackVersion }, stackName + "Detune",
+            NormalisableRange<float> (0.0f, Unison::maxDetuneCents), defaults.detuneCents,
+            AudioParameterFloatAttributes()
+                .withStringFromValueFunction ([] (float value, int) { return String (value, 1) + " ct"; })));
+        layout.add (std::make_unique<AudioParameterFloat> (
+            ParameterID { ids.width, stackVersion }, stackName + "Width",
+            NormalisableRange<float> (0.0f, 1.0f), defaults.width,
+            AudioParameterFloatAttributes().withStringFromValueFunction (percentFromValue)));
     };
 
     addOscillator (0, 2);
@@ -83,43 +104,39 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
     addOscillator (2, 3);
     addOscillator (3, 3);
 
-    // Whether the unison stack and the envelope are on the bench (not until
-    // they are added), and how sound flows between the modules.
-    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::unisonOn, 3 },   "Unison On",   false, onOff (false)));
-    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::envelopeOn, 3 }, "Envelope On", false, onOff (false)));
+    // The four envelopes: each on the bench or not, and its attack and release
+    // in seconds, skewed so the short times, where the ear is fussiest, get
+    // most of the knob. (ENV 1's times keep their original IDs.)
+    const auto addEnvelope = [&] (int index)
+    {
+        const auto& ids      = ParamID::envelopes[index];
+        const auto  defaults = Synth2Engine::Settings {}.envelopes[(size_t) index];
+        const String name    = index == 0 ? String() : "Env " + String (index + 1) + " ";
+        const int    version = index == 0 ? 1 : 4;
+
+        layout.add (std::make_unique<AudioParameterBool> (
+            ParameterID { ids.on, 4 }, "Env " + String (index + 1) + " On", false, onOff (false)));
+
+        NormalisableRange attackRange (0.001f, 5.0f);
+        attackRange.setSkewForCentre (0.2f);
+        layout.add (std::make_unique<AudioParameterFloat> (
+            ParameterID { ids.attack, version }, name + "Attack", attackRange, defaults.attackSeconds,
+            AudioParameterFloatAttributes().withStringFromValueFunction (timeFromValue)));
+
+        NormalisableRange releaseRange (0.005f, 10.0f);
+        releaseRange.setSkewForCentre (0.5f);
+        layout.add (std::make_unique<AudioParameterFloat> (
+            ParameterID { ids.release, version }, name + "Release", releaseRange, defaults.releaseSeconds,
+            AudioParameterFloatAttributes().withStringFromValueFunction (timeFromValue)));
+    };
+
+    for (int index = 0; index < Synth2Engine::numEnvelopes; ++index)
+        addEnvelope (index);
+
+    // How sound flows between the modules.
     layout.add (std::make_unique<AudioParameterChoice> (
         ParameterID { ParamID::signalFlow, 3 }, "Signal Flow", StringArray { "Fixed order", "Follow layout", "Patch cables" },
         (int) SignalFlow::fixed, AudioParameterChoiceAttributes().withAutomatable (false)));
-
-    // Unison: how many copies play each note, how far apart they are tuned and
-    // how wide they spread (see Unison.h).
-    layout.add (std::make_unique<AudioParameterInt> (
-        ParameterID { ParamID::voices, 1 }, "Voices", 1, Unison::maxVoices, 1));
-
-    layout.add (std::make_unique<AudioParameterFloat> (
-        ParameterID { ParamID::detune, 1 }, "Detune",
-        NormalisableRange<float> (0.0f, Unison::maxDetuneCents), 15.0f,
-        AudioParameterFloatAttributes()
-            .withStringFromValueFunction ([] (float value, int) { return String (value, 1) + " ct"; })));
-
-    layout.add (std::make_unique<AudioParameterFloat> (
-        ParameterID { ParamID::width, 1 }, "Width",
-        NormalisableRange<float> (0.0f, 1.0f), 0.5f,
-        AudioParameterFloatAttributes().withStringFromValueFunction (percentFromValue)));
-
-    // The amp envelope, in seconds. Skewed so the short times, where the ear
-    // is fussiest, get most of the knob.
-    NormalisableRange attackRange (0.001f, 5.0f);
-    attackRange.setSkewForCentre (0.2f);
-    layout.add (std::make_unique<AudioParameterFloat> (
-        ParameterID { ParamID::attack, 1 }, "Attack", attackRange, 0.005f,
-        AudioParameterFloatAttributes().withStringFromValueFunction (timeFromValue)));
-
-    NormalisableRange releaseRange (0.005f, 10.0f);
-    releaseRange.setSkewForCentre (0.5f);
-    layout.add (std::make_unique<AudioParameterFloat> (
-        ParameterID { ParamID::release, 1 }, "Release", releaseRange, 0.3f,
-        AudioParameterFloatAttributes().withStringFromValueFunction (timeFromValue)));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { ParamID::output, 1 }, "Output",
@@ -129,14 +146,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
     return layout;
 }
 
-std::array<NoteActivity, Synth2Engine::maxNotes> Synth2AudioProcessor::getNoteActivity() const noexcept
+std::array<NoteActivity, Synth2Engine::maxNotes> Synth2AudioProcessor::getNoteActivity (int osc) const noexcept
 {
+    const auto& published = noteActivity[(size_t) juce::jlimit (0, Synth2Engine::numOscillators - 1, osc)];
     std::array<NoteActivity, Synth2Engine::maxNotes> activity {};
     for (size_t i = 0; i < activity.size(); ++i)
     {
-        activity[i].stage       = (NoteActivity::Stage) noteActivity[i].stage.load();
-        activity[i].level       = noteActivity[i].level.load();
-        activity[i].releaseFrom = noteActivity[i].releaseFrom.load();
+        activity[i].stage       = (NoteActivity::Stage) published[i].stage.load();
+        activity[i].level       = published[i].level.load();
+        activity[i].releaseFrom = published[i].releaseFrom.load();
     }
     return activity;
 }
@@ -146,26 +164,29 @@ Synth2Engine::Settings Synth2AudioProcessor::currentSettings() const noexcept
     const auto param = [this] (const char* id) { return apvts.getRawParameterValue (id)->load(); };
 
     Synth2Engine::Settings settings;
-    const bool cables = juce::roundToInt (param (ParamID::signalFlow)) == (int) SignalFlow::cables;
+    const int  flow   = juce::jlimit (0, 2, juce::roundToInt (param (ParamID::signalFlow)));
+    const bool cables = flow == (int) SignalFlow::cables;
     for (size_t k = 0; k < settings.oscillators.size(); ++k)
     {
         const auto& ids  = ParamID::oscillators[k];
         auto& oscillator = settings.oscillators[k];
-        oscillator.on        = param (ids.on) >= 0.5f;
-        oscillator.routed    = ! cables || routedToOutput[k].load (std::memory_order_relaxed);
-        oscillator.wave      = (Waveform) juce::jlimit (0, 3, juce::roundToInt (param (ids.wave)));
-        oscillator.semitones = juce::roundToInt (param (ids.pitch));
-        oscillator.fineCents = param (ids.fine);
-        oscillator.level     = param (ids.level);
+        oscillator.on          = param (ids.on) >= 0.5f;
+        oscillator.routed      = ! cables || routedToOutput[k].load (std::memory_order_relaxed);
+        oscillator.wave        = (Waveform) juce::jlimit (0, 3, juce::roundToInt (param (ids.wave)));
+        oscillator.semitones   = juce::roundToInt (param (ids.pitch));
+        oscillator.fineCents   = param (ids.fine);
+        oscillator.level       = param (ids.level);
+        oscillator.voices      = juce::roundToInt (param (ids.voices));
+        oscillator.detuneCents = param (ids.detune);
+        oscillator.width       = param (ids.width);
+        oscillator.envelope    = envelopeFor[(size_t) flow][k].load (std::memory_order_relaxed);
     }
-    settings.unisonOn       = param (ParamID::unisonOn) >= 0.5f;
-    settings.voices         = juce::roundToInt (param (ParamID::voices));
-    settings.detuneCents    = param (ParamID::detune);
-    settings.width          = param (ParamID::width);
-    settings.envelopeOn     = param (ParamID::envelopeOn) >= 0.5f;
-    settings.attackSeconds  = param (ParamID::attack);
-    settings.releaseSeconds = param (ParamID::release);
-    settings.outputDb       = param (ParamID::output);
+    for (size_t e = 0; e < settings.envelopes.size(); ++e)
+    {
+        settings.envelopes[e].attackSeconds  = param (ParamID::envelopes[e].attack);
+        settings.envelopes[e].releaseSeconds = param (ParamID::envelopes[e].release);
+    }
+    settings.outputDb = param (ParamID::output);
     return settings;
 }
 
@@ -197,12 +218,15 @@ void Synth2AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     engine.process (buffer, midi);
     activeNotes.store (engine.getNumActiveNotes());
 
-    const auto activity = engine.getActivity();
-    for (size_t i = 0; i < activity.size(); ++i)
+    for (size_t k = 0; k < noteActivity.size(); ++k)
     {
-        noteActivity[i].stage      .store ((int) activity[i].stage);
-        noteActivity[i].level      .store (activity[i].level);
-        noteActivity[i].releaseFrom.store (activity[i].releaseFrom);
+        const auto activity = engine.getActivity ((int) k);
+        for (size_t i = 0; i < activity.size(); ++i)
+        {
+            noteActivity[k][i].stage      .store ((int) activity[i].stage);
+            noteActivity[k][i].level      .store (activity[i].level);
+            noteActivity[k][i].releaseFrom.store (activity[i].releaseFrom);
+        }
     }
 
     const auto held = engine.getHeldNotes();
@@ -289,12 +313,16 @@ bool Synth2AudioProcessor::acceptsMidi() const          { return true; }
 bool Synth2AudioProcessor::producesMidi() const         { return false; }
 bool Synth2AudioProcessor::isMidiEffect() const         { return false; }
 
-// Once the last key goes up, the notes ring on for the release time.
+// Once the last key goes up, the notes ring on for the longest release of the
+// envelopes shaping the oscillators on the bench (or a moment, with none).
 double Synth2AudioProcessor::getTailLengthSeconds() const
 {
-    if (apvts.getRawParameterValue (ParamID::envelopeOn)->load() < 0.5f)
-        return Synth2Engine::gateReleaseSeconds;
-    return apvts.getRawParameterValue (ParamID::release)->load();
+    const auto settings = currentSettings();
+    double tail = Synth2Engine::gateReleaseSeconds;
+    for (const auto& oscillator : settings.oscillators)
+        if (oscillator.on && oscillator.envelope >= 0)
+            tail = juce::jmax (tail, (double) settings.envelopes[(size_t) oscillator.envelope].releaseSeconds);
+    return tail;
 }
 
 void Synth2AudioProcessor::setRoutedToOutput (int oscillator, bool routed) noexcept
@@ -333,15 +361,10 @@ void Synth2AudioProcessor::loadPreset (int index)
     Presets::apply (apvts, Presets::factory[(size_t) index]);
     currentPreset.store (index);
     apvts.state.setProperty (presetProperty, index, nullptr);
-    followCables();
+    followBench();
     updateHostDisplay (ChangeDetails().withProgramChanged (true));
 }
 
-void Synth2AudioProcessor::handleAsyncUpdate()
-{
-    if (const int index = pendingPreset.exchange (-1); index >= 0)
-        loadPreset (index);
-}
 
 void Synth2AudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
@@ -355,46 +378,70 @@ void Synth2AudioProcessor::setStateInformation (const void* data, int sizeInByte
     if (xml == nullptr || ! xml->hasTagName (apvts.state.getType()))
         return;
 
-    // A session from before the bench had OSC 1, unison and the envelope
-    // always there: set them out on the bench as they looked then.
+    // An older session is brought up to date (see Bench::Model::migrate).
     // (replaceState shares the tree and fills in the parameters it lacks,
     // so what was saved is read from a copy.)
     const auto restored = juce::ValueTree::fromXml (*xml);
     const auto saved    = restored.createCopy();
     apvts.replaceState (restored);
-
-    Bench::Model bench (apvts);
-    if (! Bench::Model::hasBench (saved))
-        bench.adoptClassicLayout (saved);
-    bench.ensureBench();
+    Bench::Model (apvts).migrate (saved);
     currentPreset.store (juce::jlimit (0, Presets::numPresets - 1, (int) saved.getProperty (presetProperty, 0)));
-    followCables();
+    followBench();
 }
 
-// The cables patched to the output decide which oscillators reach it when the
-// sound follows them. Message thread, whenever the bench changes.
-void Synth2AudioProcessor::followCables()
+void Synth2AudioProcessor::followBench()
 {
     const Bench::Model bench (apvts);
-    for (int slot = 0; slot < Synth2Engine::numOscillators; ++slot)
-        setRoutedToOutput (slot, bench.isPatchedToOutput ({ Bench::Kind::oscillator, slot }));
+    for (const auto flow : { SignalFlow::fixed, SignalFlow::layout, SignalFlow::cables })
+    {
+        const auto assignment = bench.envelopeAssignment (flow);
+        for (size_t k = 0; k < assignment.size(); ++k)
+            envelopeFor[(size_t) flow][k].store (assignment[k], std::memory_order_relaxed);
+    }
+    const auto heard = bench.heardThroughCables();
+    for (size_t k = 0; k < heard.size(); ++k)
+        setRoutedToOutput ((int) k, heard[k]);
 }
 
 void Synth2AudioProcessor::valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTree&)
 {
     if (parent.hasType (Bench::benchType))
-        followCables();
+        followBench();
 }
 
 void Synth2AudioProcessor::valueTreeChildRemoved (juce::ValueTree& parent, juce::ValueTree&, int)
 {
     if (parent.hasType (Bench::benchType))
-        followCables();
+        followBench();
+}
+
+void Synth2AudioProcessor::valueTreePropertyChanged (juce::ValueTree& tree, const juce::Identifier&)
+{
+    if (tree.hasType (Bench::moduleType) || tree.hasType (Bench::cableType))
+        followBench();
 }
 
 void Synth2AudioProcessor::valueTreeRedirected (juce::ValueTree&)
 {
-    followCables();
+    followBench();
+}
+
+// A module came onto the bench or left it. That usually happens on the
+// message thread (the editor, a restored session); from anywhere else, the
+// bench is followed there shortly after.
+void Synth2AudioProcessor::parameterChanged (const juce::String&, float)
+{
+    if (juce::MessageManager::existsAndIsCurrentThread())
+        followBench();
+    else
+        triggerAsyncUpdate();
+}
+
+void Synth2AudioProcessor::handleAsyncUpdate()
+{
+    if (const int index = pendingPreset.exchange (-1); index >= 0)
+        loadPreset (index);
+    followBench();
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

@@ -7,7 +7,7 @@
     Unison
 
     How a note's stack of voices spreads out. Framework-free, so the engine and
-    the editor's UNISON display place every voice with the same maths.
+    the editor's WAVE wells place every voice with the same maths.
 
     VOICES copies of the oscillator play each note. They sit evenly across the
     DETUNE range, from -DETUNE to +DETUNE cents, so the outer two are DETUNE
