@@ -88,6 +88,7 @@ public:
             stackLevel = Unison::stackGain ((float) count);
             oscLevel1  = settings.level1;
             oscLevel2  = settings.level2;
+            layout     = {};
         }
 
         channel    = midiChannel;
@@ -186,38 +187,82 @@ public:
         oscLevel1 = settings.level1;
         oscLevel2 = settings.level2;
 
+        // The copies' detune and pans only need working out again when VOICES,
+        // DETUNE or WIDTH has moved since the last chunk.
+        const bool relayout = count != layout.count
+                           || ! juce::exactlyEqual (settings.detuneCents, layout.detuneCents)
+                           || ! juce::exactlyEqual (settings.width, layout.width);
+        layout = { count, settings.detuneCents, settings.width };
+
+        // First the copies' oscillators, all of them together, each copy into
+        // its own row...
+        std::array<std::array<float, maxChunk>, Unison::maxVoices> copies;
+        std::array<size_t, Unison::maxVoices>          playing {};
+        std::array<BlepOscillator*, Unison::maxVoices> playing1 {};
+        std::array<BlepOscillator*, Unison::maxVoices> playing2 {};
+        std::array<float*, Unison::maxVoices>          rows {};
+        int numPlaying = 0;
+
         for (size_t i = 0; i < oscillators.size(); ++i)
         {
             const float target = (int) i < count ? 1.0f : 0.0f;
             if (fades[i] <= 0.0f && target <= 0.0f)
                 continue;
 
+            if (target > 0.0f && relayout)
+            {
+                cents[i]  = Unison::detuneCents ((int) i, count, settings.detuneCents);
+                ratios[i] = Unison::ratio (cents[i]);
+            }
+
+            const double copyHz = noteHz * ratios[i];
+            oscillators[i].setIncrement (copyHz * settings.ratio1 / sampleRate);
+            if (second)
+                oscillators2[i].setIncrement (copyHz * settings.ratio2 / sampleRate);
+
+            const auto k = (size_t) numPlaying++;
+            playing[k]  = i;
+            playing1[k] = &oscillators[i];
+            playing2[k] = &oscillators2[i];
+            rows[k]     = copies[i].data();
+        }
+
+        BlepOscillator::renderAll (playing1.data(), rows.data(), numPlaying, settings.wave, levels1.data(), numSamples, false);
+        if (second)
+            BlepOscillator::renderAll (playing2.data(), rows.data(), numPlaying, settings.wave2, levels2.data(), numSamples, true);
+
+        // ...then each copy into the stack, in order, faded and panned.
+        for (size_t k = 0; k < (size_t) numPlaying; ++k)
+        {
+            const size_t i = playing[k];
+            const float target = (int) i < count ? 1.0f : 0.0f;
+            const auto& copy = copies[i];
+
             // A copy that is leaving keeps its last place. The others move to
             // theirs across this chunk, so a new VOICES count re-pans them
             // without a jump.
             const auto from = pans[i];
-            if (target > 0.0f)
-            {
-                cents[i] = Unison::detuneCents ((int) i, count, settings.detuneCents);
-                pans[i]  = Unison::panGains (Unison::pan ((int) i, count, settings.width));
-            }
-
-            const double copyHz = noteHz * Unison::ratio (cents[i]);
-            auto& osc  = oscillators[i];
-            auto& osc2 = oscillators2[i];
-            osc.setIncrement (copyHz * settings.ratio1 / sampleRate);
-            if (second)
-                osc2.setIncrement (copyHz * settings.ratio2 / sampleRate);
+            if (target > 0.0f && relayout)
+                pans[i] = Unison::panGains (Unison::pan ((int) i, count, settings.width));
 
             float fade = fades[i];
             const auto to = pans[i];
+            if (juce::exactlyEqual (fade, target) && juce::exactlyEqual (from.left, to.left) && juce::exactlyEqual (from.right, to.right))
+            {
+                // Settled: nothing to glide, so the copy goes straight in.
+                for (int n = 0; n < numSamples; ++n)
+                {
+                    const float value = copy[(size_t) n] * fade;
+                    stackL[(size_t) n] += value * to.left;
+                    stackR[(size_t) n] += value * to.right;
+                }
+                continue;
+            }
+
             for (int n = 0; n < numSamples; ++n)
             {
                 const float t = (float) (n + 1) * ramp;
-                float both = osc.next (settings.wave) * levels1[(size_t) n];
-                if (second)
-                    both += osc2.next (settings.wave2) * levels2[(size_t) n];
-                const float value = both * fade;
+                const float value = copy[(size_t) n] * fade;
                 stackL[(size_t) n] += value * (from.left  + (to.left  - from.left)  * t);
                 stackR[(size_t) n] += value * (from.right + (to.right - from.right) * t);
                 fade = target > fade ? juce::jmin (target, fade + fadeStep)
@@ -252,8 +297,25 @@ private:
     std::array<BlepOscillator, Unison::maxVoices>    oscillators2 {};   // OSC 2
     std::array<float, Unison::maxVoices>             fades {};
     std::array<float, Unison::maxVoices>             cents {};
+    std::array<double, Unison::maxVoices>            ratios = filled (1.0);   // Unison::ratio (cents)
     std::array<Unison::PanGains, Unison::maxVoices>  pans {};
     juce::ADSR envelope;
+
+    // What the copies' detune and pans were last worked out for.
+    struct Layout
+    {
+        int   count       = 0;   // none yet
+        float detuneCents = 0.0f;
+        float width       = 0.0f;
+    };
+    Layout layout;
+
+    static std::array<double, Unison::maxVoices> filled (double value) noexcept
+    {
+        std::array<double, Unison::maxVoices> values {};
+        values.fill (value);
+        return values;
+    }
 
     double sampleRate = 44100.0;
     double noteHz     = 440.0;
