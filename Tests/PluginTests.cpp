@@ -275,13 +275,13 @@ void testEditor()
     if (editor == nullptr)
         return;
 
-    check (editor->getWidth() == 480 && editor->getHeight() == 548, "opens at its 480 x 548 design size");
+    check (editor->getWidth() == 480 && editor->getHeight() == 522, "opens at its 480 x 522 design size");
     check (editor->isResizable(), "is resizable");
 
     const auto first = render (*editor);
     check (hasDetail (first), "renders its face");
 
-    // Big enough to grab: every dial, the chips and the keyboard.
+    // Big enough to grab: every dial and the keyboard.
     bool dialsFit = true;
     for (int i = 0; i < Synth2AudioProcessorEditor::numDials; ++i)
         dialsFit = dialsFit && editor->getDial (i).getWidth() >= 40 && editor->getLocalBounds().contains (editor->getDial (i).getBounds());
@@ -302,19 +302,88 @@ void testEditor()
     const auto spread = render (*editor);
     check (pixelsChanged (first, spread) > 200, "and redraws when the stack changes");
 
-    // Wave chips: clicking one picks it, and the WAVE well follows.
-    auto& chips = editor->getWaveSelector();
-    const auto sine = chips.chipBounds (0).getCentre();
-    juce::MouseEvent click (juce::Desktop::getInstance().getMainMouseSource(), sine, {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-                            &chips, &chips, juce::Time::getCurrentTime(), sine, juce::Time::getCurrentTime(), 1, false);
-    chips.mouseDown (click);
-    check (approx (param (p, ParamID::wave), (float) Waveform::sine, 1e-6f) && chips.getSelected() == 0,
-           "clicking the SINE chip picks the sine");
-    check (pumpUntil ([editor] { return editor->getWaveDisplay().getState().wave == Waveform::sine; }), "the WAVE well shows it");
+    // The wave picker, laid over the WAVE well: its arrows step through the
+    // shapes and wrap round, the wheel flips through them, a click opens the tray.
+    auto& picker = editor->getWavePicker();
+    auto& menu   = editor->getWaveMenu();
+    auto& well   = editor->getWaveDisplay();
+    check (picker.getBounds() == well.getBounds() && editor->getLocalBounds().contains (picker.getBounds()),
+           "the wave picker sits over the WAVE well");
+    check (picker.getSelected() == 2 && picker.pillBounds().getWidth() > 80.0f
+               && picker.getLocalBounds().toFloat().contains (picker.pillBounds()),
+           "its pill shows SAW, the default, in the well's corner");
 
-    // Host automation reaches the chips too.
+    const auto clickAt = [] (juce::Component& target, juce::Point<float> at)
+    {
+        return juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), at, {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                 &target, &target, juce::Time::getCurrentTime(), at, juce::Time::getCurrentTime(), 1, false);
+    };
+    picker.mouseDown (clickAt (picker, picker.nextArrow().getCentre()));
+    check (approx (param (p, ParamID::wave), (float) Waveform::square, 1e-6f) && picker.getSelected() == 3,
+           "the right arrow steps SAW to SQUARE");
+    picker.mouseDown (clickAt (picker, picker.nextArrow().getCentre()));
+    check (picker.getSelected() == 0, "and on round to SINE");
+    picker.mouseDown (clickAt (picker, picker.previousArrow().getCentre()));
+    check (picker.getSelected() == 3, "the left arrow steps back, round to SQUARE");
+    check (! menu.isOpen(), "the arrows don't open the tray");
+
+    juce::MouseWheelDetails wheel {};
+    wheel.deltaY = -0.25f;   // one notch down
+    picker.mouseWheelMove (clickAt (picker, { 40.0f, 60.0f }), wheel);
+    check (picker.getSelected() == 0, "scrolling down over the well flips to the next shape");
+    wheel.deltaY = 0.05f;
+    picker.mouseWheelMove (clickAt (picker, { 40.0f, 60.0f }), wheel);
+    check (picker.getSelected() == 0, "a nudge too small to count doesn't");
+    wheel.deltaY = 0.25f;
+    picker.mouseWheelMove (clickAt (picker, { 40.0f, 60.0f }), wheel);
+    check (picker.getSelected() == 3, "scrolling up flips back");
+
+    // A morph, not a jump, then the new shape.
+    check (pumpUntil ([&well] { return well.getState().wave == Waveform::square; }), "the WAVE well follows the pick");
+    check (well.getShownWave() == Waveform::square, "and shows the new shape");
+    check (pumpUntil ([&well] { return ! well.isMorphing(); }), "morphing into it, briefly");
+
+    picker.mouseDown (clickAt (picker, { 60.0f, 60.0f }));
+    check (menu.isOpen() && menu.getBounds() == editor->getLocalBounds(), "a click on the well opens the tray over the panel");
+    bool tilesFit = true;
+    for (int i = 0; i < WaveMenu::numWaves; ++i)
+        tilesFit = tilesFit && menu.tileBounds (i).getWidth() > 60.0f && menu.trayBounds().contains (menu.tileBounds (i))
+                && menu.tileBounds (i).getY() > (float) well.getBottom();
+    check (tilesFit, "its four tiles drop from under the well");
+    check (pumpUntil ([&menu] { return menu.getAlpha() >= 1.0f; }), "fading in");
+    const auto trayShown = render (*editor);
+
+    juce::MouseEvent hover (clickAt (menu, menu.tileBounds (1).getCentre()));
+    menu.mouseMove (hover);
+    check (menu.getHighlighted() == 1 && well.getShownWave() == Waveform::triangle, "hovering TRIANGLE previews it in the well");
+    check (approx (param (p, ParamID::wave), (float) Waveform::square, 1e-6f), "without changing WAVE");
+    check (pixelsChanged (trayShown, render (*editor)) > 50, "the hovered tile lights up");
+    menu.mouseExit (hover);
+    check (well.getShownWave() == Waveform::square, "leaving the tiles puts the chosen shape back");
+
+    menu.mouseDown (clickAt (menu, menu.tileBounds (0).getCentre()));
+    check (approx (param (p, ParamID::wave), (float) Waveform::sine, 1e-6f) && picker.getSelected() == 0,
+           "clicking the SINE tile picks the sine");
+    check (! menu.isOpen(), "and closes the tray");
+
+    picker.mouseDown (clickAt (picker, { 60.0f, 60.0f }));
+    menu.mouseDown (clickAt (menu, { 10.0f, (float) editor->getHeight() - 10.0f }));
+    check (! menu.isOpen() && picker.getSelected() == 0, "a click outside the tiles closes it, changing nothing");
+
+    picker.mouseDown (clickAt (picker, { 60.0f, 60.0f }));
+    menu.keyPressed (juce::KeyPress (juce::KeyPress::rightKey));
+    menu.keyPressed (juce::KeyPress (juce::KeyPress::rightKey));
+    check (menu.getHighlighted() == 2, "the arrow keys walk along the tiles");
+    menu.keyPressed (juce::KeyPress (juce::KeyPress::returnKey));
+    check (picker.getSelected() == 2 && ! menu.isOpen(), "and Return picks");
+    picker.mouseDown (clickAt (picker, { 60.0f, 60.0f }));
+    menu.keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
+    check (! menu.isOpen() && picker.getSelected() == 2, "Escape closes it");
+
+    // Host automation reaches the picker too.
     setParam (p, ParamID::wave, (float) Waveform::square);
-    check (pumpUntil ([&chips] { return chips.getSelected() == 3; }), "a host change of WAVE lights the SQUARE chip");
+    check (pumpUntil ([&picker] { return picker.getSelected() == 3; }), "a host change of WAVE shows SQUARE in the pill");
+    check (pumpUntil ([&well] { return well.getShownWave() == Waveform::square; }), "and in the well");
 
     // Keyboard: middle C is on it, and the keys the host plays light up on it
     // without being played a second time.
@@ -396,7 +465,7 @@ void testEditor()
     setParam (p, ParamID::output, 0.0f);
 
     // Scaled up: the same face at 2x.
-    editor->setSize (960, 1096);
+    editor->setSize (960, 1044);
     check (approx ((float) editor->getDial (0).getWidth() / 2.0f, 52.0f, 1.0f), "at 2x every control doubles");
     const auto doubled = render (*editor);
     check (hasDetail (doubled), "renders at 2x");
@@ -405,7 +474,7 @@ void testEditor()
     if (auto* constrainer = editor->getConstrainer())
         constrainer->setBoundsForComponent (editor, { 0, 0, 720, 600 }, false, false, true, true);
     const float aspect = (float) editor->getWidth() / (float) editor->getHeight();
-    check (approx (aspect, 480.0f / 548.0f, 0.02f), "resizing keeps the design's proportions");
+    check (approx (aspect, 480.0f / 522.0f, 0.02f), "resizing keeps the design's proportions");
 }
 } // namespace
 

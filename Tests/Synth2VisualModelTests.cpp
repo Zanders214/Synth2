@@ -209,6 +209,39 @@ void testEnvelope()
 }
 } // namespace
 
+void testWavePicking()
+{
+    std::printf ("Wave picking:\n");
+    using M = Synth2VisualModel;
+
+    check (M::stepWave (2, 1) == 3 && M::stepWave (2, -1) == 1, "the arrows step to the next and previous shape");
+    check (M::stepWave (3, 1) == 0 && M::stepWave (0, -1) == 3, "and wrap round at either end");
+    check (M::stepWave (1, 9) == 2 && M::stepWave (1, -9) == 0, "any number of steps lands on a shape");
+
+    check (approx (M::ease (0.0f), 0.0f, 1e-4f) && approx (M::ease (1.0f), 1.0f, 1e-4f), "the ease starts at 0 and ends at 1");
+    bool rising = true;
+    for (int i = 1; i <= 100; ++i)
+        rising = rising && M::ease ((float) i / 100.0f) >= M::ease ((float) (i - 1) / 100.0f);
+    check (rising, "and only ever moves forwards");
+    check (M::ease (0.5f) > 0.7f && M::ease (0.5f) < 0.85f, "half the time in, it is most of the way there (it settles, no bounce)");
+    check (approx (M::ease (-1.0f), 0.0f, 1e-4f) && approx (M::ease (2.0f), 1.0f, 1e-4f), "and holds still outside 0..1");
+
+    bool ends = true;
+    bool between = true;
+    for (int p = 0; p <= 64; ++p)
+    {
+        const float x = (float) p / 64.0f;
+        const float a = M::waveAt (Waveform::saw, x);
+        const float b = M::waveAt (Waveform::square, x);
+        ends = ends && approx (M::morphAt (Waveform::saw, Waveform::square, 0.0f, x), a, 1e-6f)
+                    && approx (M::morphAt (Waveform::saw, Waveform::square, 1.0f, x), b, 1e-6f);
+        const float mid = M::morphAt (Waveform::saw, Waveform::square, 0.5f, x);
+        between = between && mid >= std::min (a, b) - 1e-6f && mid <= std::max (a, b) + 1e-6f;
+    }
+    check (ends, "a morph starts on the old shape and ends on the new");
+    check (between, "and passes between them on the way");
+}
+
 int main()
 {
     std::printf ("Synth2VisualModel tests\n=======================\n");
@@ -218,6 +251,7 @@ int main()
     testUnisonSpread();
     testVisualModel();
     testEnvelope();
+    testWavePicking();
 
     std::printf ("\n%s\n", failures == 0 ? "ALL TESTS PASSED" : "SOME TESTS FAILED");
     return failures == 0 ? 0 : 1;

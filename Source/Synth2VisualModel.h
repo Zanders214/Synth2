@@ -34,6 +34,48 @@ struct Synth2VisualModel
         return Oscillator::naive (wave, (double) (x * cyclesShown + phaseOffset));
     }
 
+    /** The wave `delta` steps on from `index` (0..3), wrapping round: one
+        past SQUARE is SINE again. */
+    static int stepWave (int index, int delta) noexcept
+    {
+        constexpr int numWaves = 4;
+        return ((index + delta) % numWaves + numWaves) % numWaves;
+    }
+
+    /** How long the WAVE well takes to morph from one shape to the next (the
+        design system's --dur-base). */
+    static constexpr float morphSeconds = 0.15f;
+
+    /** The design system's ease, cubic-bezier(0.4, 0, 0.2, 1): quick out of
+        the start, settling into the end. t and the result run 0..1. */
+    static float ease (float t) noexcept
+    {
+        t = clamp01 (t);
+        // The curve's x(u) and y(u) for its control points; find the u whose
+        // x is t (x rises monotonically, so bisection is enough), then take y.
+        const auto bezier = [] (float u, float p1, float p2)
+        {
+            const float v = 1.0f - u;
+            return 3.0f * v * v * u * p1 + 3.0f * v * u * u * p2 + u * u * u;
+        };
+        float lo = 0.0f;
+        float hi = 1.0f;
+        for (int i = 0; i < 24; ++i)
+        {
+            const float mid = 0.5f * (lo + hi);
+            (bezier (mid, 0.4f, 0.2f) < t ? lo : hi) = mid;
+        }
+        return bezier (0.5f * (lo + hi), 0.0f, 1.0f);
+    }
+
+    /** The WAVE well's shape `amount` (0..1) of the way from `from` to `to`. */
+    static float morphAt (Waveform from, Waveform to, float amount, float x, float phaseOffset = 0.0f) noexcept
+    {
+        const float a = waveAt (from, x, phaseOffset);
+        const float b = waveAt (to, x, phaseOffset);
+        return a + (b - a) * clamp01 (amount);
+    }
+
     /** How far (in cycles) a unison voice's copy is drawn shifted: its detune
         as a share of the largest detune, up to an eighth of a cycle each way. */
     static float voicePhaseOffset (int index, int numVoices, float detuneCents) noexcept
