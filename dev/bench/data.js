@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793279978298,
+  "lastUpdate": 1793284627531,
   "repoUrl": "https://github.com/Zanders214/Synth2",
   "entries": {
     "ZandersSynth2 DSP": [
@@ -519,6 +519,70 @@ window.BENCHMARK_DATA = {
           {
             "name": "DSP load 16x16 4-osc @48k/512",
             "value": 13.349,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "152227414+Zanders214@users.noreply.github.com",
+            "name": "Dennis Zanders",
+            "username": "Zanders214"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4e2a31dacfbea4b210de9d64758ed4be91db07cd",
+          "message": "Merge pull request #11 from Zanders214/claude/osc-unison-envelopes\n\nGive each oscillator its own unison stack and its own envelope",
+          "timestamp": "2026-10-29T15:34:50+01:00",
+          "tree_id": "fd83071278ba56a2a16b371bb7779a989a3c6d15",
+          "url": "https://github.com/Zanders214/Synth2/commit/4e2a31dacfbea4b210de9d64758ed4be91db07cd"
+        },
+        "date": 1793284627001,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "processBlock 8x7",
+            "value": 112044.394,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 8x7 @48k/512",
+            "value": 1.05,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16",
+            "value": 413277.511,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 @48k/512",
+            "value": 3.874,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 2-osc",
+            "value": 822487.184,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 2-osc @48k/512",
+            "value": 7.711,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 4-osc",
+            "value": 1549335.059,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 4-osc @48k/512",
+            "value": 14.525,
             "unit": "%"
           }
         ]
