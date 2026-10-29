@@ -26,13 +26,20 @@ double benchChord (const char* name, int notes, int voices, ankerl::nanobench::B
 
     Synth2AudioProcessor proc;
     proc.prepareToPlay (sr, bs);
-    Bench::Model (proc.getState()).adoptClassicLayout();   // OSC 1, unison and the envelope, as before the bench
-    auto* v = proc.getState().getParameter (ParamID::voices);
-    v->setValueNotifyingHost (v->convertTo0to1 ((float) voices));
-    auto* r = proc.getState().getParameter (ParamID::release);
-    r->setValueNotifyingHost (r->convertTo0to1 (10.0f));
-    for (int k = 1; k < 4; ++k)
-        proc.getState().getParameter (ParamID::oscillators[k].on)->setValueNotifyingHost (k < numOscillators ? 1.0f : 0.0f);
+    Bench::Model (proc.getState()).adoptClassicLayout();   // OSC 1 and ENV 1, as before the bench
+    const auto set = [&proc] (const char* id, float value)
+    {
+        auto* p = proc.getState().getParameter (id);
+        p->setValueNotifyingHost (p->convertTo0to1 (value));
+    };
+    // Each oscillator in use plays the whole stack under its own envelope.
+    for (int k = 0; k < 4; ++k)
+    {
+        set (ParamID::oscillators[k].on, k < numOscillators ? 1.0f : 0.0f);
+        set (ParamID::oscillators[k].voices, (float) voices);
+        set (ParamID::envelopes[k].on, k < numOscillators ? 1.0f : 0.0f);
+        set (ParamID::envelopes[k].release, 10.0f);
+    }
 
     juce::AudioBuffer<float> buffer (2, bs);
     juce::MidiBuffer chord;

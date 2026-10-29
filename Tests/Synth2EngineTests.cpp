@@ -37,7 +37,7 @@ Synth2Engine::Settings defaults (Waveform wave = Waveform::saw, int voices = 1)
 {
     Synth2Engine::Settings s;
     s.oscillators[0].wave = wave;
-    s.voices = voices;
+    s.oscillators[0].voices = voices;
     return s;
 }
 
@@ -152,8 +152,8 @@ void testEnvelope()
     std::printf ("Envelope:\n");
 
     auto settings = defaults();
-    settings.attackSeconds  = 0.1f;
-    settings.releaseSeconds = 0.1f;
+    settings.envelopes[0].attackSeconds  = 0.1f;
+    settings.envelopes[0].releaseSeconds = 0.1f;
     auto engine = makeEngine (settings);
 
     const int second = (int) sampleRate;
@@ -179,8 +179,8 @@ void testUnison()
     const auto levelWith = [] (int voices, float detune, float width)
     {
         auto settings = defaults (Waveform::saw, voices);
-        settings.detuneCents = detune;
-        settings.width       = width;
+        settings.oscillators[0].detuneCents = detune;
+        settings.oscillators[0].width       = width;
         auto engine = makeEngine (settings);
         const auto out = run (*engine, (int) sampleRate, { { 0, on (57) } });
         return std::make_pair (0.5f * (rms (out, 0, 4800, out.getNumSamples()) + rms (out, 1, 4800, out.getNumSamples())), out);
@@ -239,8 +239,8 @@ void testUnison()
 
     // The beat comes at the voices' frequency difference.
     auto settings = defaults (Waveform::sine, 2);
-    settings.detuneCents = 25.0f;
-    settings.width       = 0.0f;
+    settings.oscillators[0].detuneCents = 25.0f;
+    settings.oscillators[0].width       = 0.0f;
     auto engine = makeEngine (settings);
     const auto out = run (*engine, (int) sampleRate * 2, { { 0, on (69) } });
     const double expectedBeat = 440.0 * (Unison::ratio (25.0f) - Unison::ratio (-25.0f));
@@ -272,7 +272,7 @@ void testVoicesChangeMidNote()
     float previous = out.getSample (0, out.getNumSamples() - 1);
     for (const int voices : { 16, 1, 8 })
     {
-        settings.voices = voices;
+        settings.oscillators[0].voices = voices;
         engine->setSettings (settings);
         const auto more = run (*engine, blockSize * 8);
         for (int i = 0; i < more.getNumSamples(); ++i)
@@ -340,19 +340,26 @@ void testOscillators()
     both.oscillators[0].level = 1.0f;
     check (steadyLevel (both) > 1.2f * steadyLevel (settings), "together they're louder than OSC 1 alone");
 
-    // OSC 2 shares the unison stack: with OSC 1 silent, sixteen copies still spread.
-    auto stacked = second;
-    stacked.voices      = 16;
-    stacked.detuneCents = 30.0f;
-    stacked.width       = 1.0f;
+    // Each oscillator has its own unison stack: OSC 1's sixteen wide copies
+    // leave OSC 2 a single centred voice, and OSC 2 spreads by its own.
+    const auto spreadOf = [] (const Synth2Engine::Settings& stack)
     {
-        auto engine = makeEngine (stacked);
+        auto engine = makeEngine (stack);
         const auto out = run (*engine, blockSize * 16, { { 0, on (60) } });
         double difference = 0.0;
         for (int i = blockSize * 4; i < out.getNumSamples(); ++i)
             difference += std::abs (out.getSample (0, i) - out.getSample (1, i));
-        check (difference > 1.0, "OSC 2 is spread by the unison stack too");
-    }
+        return difference;
+    };
+    auto stacked = second;
+    stacked.oscillators[0].voices      = 16;
+    stacked.oscillators[0].detuneCents = 30.0f;
+    stacked.oscillators[0].width       = 1.0f;
+    check (spreadOf (stacked) < 1e-3, "OSC 1's unison stack doesn't spread OSC 2");
+    stacked.oscillators[1].voices      = 16;
+    stacked.oscillators[1].detuneCents = 30.0f;
+    stacked.oscillators[1].width       = 1.0f;
+    check (spreadOf (stacked) > 1.0, "OSC 2's own does");
 
     // Switching OSC 2 on and off, and moving the levels, while a note plays.
     auto live = both;
@@ -422,37 +429,44 @@ void testModules()
     unrouted.oscillators[2].routed = true;
     check (approx (levelOf (unrouted), one, one * 0.02f), "an oscillator not routed to the output is silent");
 
-    // Unison off: one copy per note, whatever VOICES says, so it plays in
-    // tune and in the centre.
-    auto stack = defaults (Waveform::saw, 16);
-    stack.detuneCents = 50.0f;
-    stack.width       = 1.0f;
-    auto single = stack;
-    single.unisonOn = false;
-    {
-        auto engine = makeEngine (single);
-        const auto out = run (*engine, blockSize * 8, { { 0, on (60) } });
-        double difference = 0.0;
-        for (int i = blockSize * 2; i < out.getNumSamples(); ++i)
-            difference += std::abs (out.getSample (0, i) - out.getSample (1, i));
-        check (difference < 1e-3, "with unison off, VOICES plays a single centred copy");
-    }
-    check (approx (levelOf (single), levelOf (defaults (Waveform::saw, 1)), 1e-4f), "as loud as one voice");
-
-    // Envelope off: the note opens in a few milliseconds and stops soon after
-    // the key goes up, whatever ATTACK and RELEASE say.
+    // No envelope: the note opens in a few milliseconds and stops soon after
+    // the key goes up, whatever the envelopes say.
     auto gate = settings;
-    gate.attackSeconds  = 2.0f;
-    gate.releaseSeconds = 5.0f;
-    gate.envelopeOn     = false;
+    gate.envelopes[0].attackSeconds  = 2.0f;
+    gate.envelopes[0].releaseSeconds = 5.0f;
+    gate.oscillators[0].envelope     = -1;
     {
         auto engine = makeEngine (gate);
         const auto out = run (*engine, blockSize * 8, { { 0, on (60) }, { blockSize * 4, off (60) } });
         const int afterAttack  = (int) (0.01 * sampleRate);
         const int afterRelease = blockSize * 4 + (int) (0.05 * sampleRate);
-        check (rms (out, 0, afterAttack, afterAttack + 256) > 0.5f * one, "with the envelope off, a note opens at once");
+        check (rms (out, 0, afterAttack, afterAttack + 256) > 0.5f * one, "with no envelope, a note opens at once");
         check (rms (out, 0, afterRelease, out.getNumSamples()) < 1e-4f && engine->getNumActiveNotes() == 0,
                "and is gone a few milliseconds after the key goes up");
+    }
+
+    // Each oscillator follows its own envelope: OSC 1 under a 2 s attack is
+    // still near silent while OSC 2, with none, plays at once.
+    auto shaped = settings;
+    shaped.envelopes[0].attackSeconds = 2.0f;
+    shaped.envelopes[0].releaseSeconds = 2.0f;
+    shaped.oscillators[1] = shaped.oscillators[0];
+    shaped.oscillators[1].envelope = -1;
+    auto alone = shaped;
+    alone.oscillators[0].on = false;
+    {
+        auto engine = makeEngine (shaped);
+        auto reference = makeEngine (alone);
+        const std::vector<std::pair<int, juce::MidiMessage>> press { { 0, on (60) }, { blockSize * 8, off (60) } };
+        const auto out  = run (*engine, blockSize * 16, press);
+        const auto only = run (*reference, blockSize * 16, press);
+        const int early = (int) (0.02 * sampleRate);
+        check (approx (rms (out, 0, early, early + 512), rms (only, 0, early, early + 512), 0.05f * one),
+               "early on, only the oscillator without an envelope is heard");
+        check (engine->getActivity (0)[0].stage == NoteActivity::Stage::release && engine->getActivity (1)[0].stage == NoteActivity::Stage::release,
+               "after the key goes up, each envelope releases");
+        check (engine->getNumActiveNotes() == 1 && reference->getNumActiveNotes() == 0,
+               "and the note lasts until its slowest envelope has finished");
     }
 }
 
@@ -518,7 +532,7 @@ void testPedalAndPanic()
     std::printf ("Sustain pedal and All Notes Off:\n");
 
     auto settings = defaults();
-    settings.releaseSeconds = 0.05f;
+    settings.envelopes[0].releaseSeconds = 0.05f;
     auto engine = makeEngine (settings);
 
     run (*engine, blockSize, { { 0, pedal (true) }, { 10, on (60) }, { 20, on (64) }, { 100, off (60) }, { 110, off (64) } });
@@ -545,7 +559,7 @@ void testChannels()
     std::printf ("MIDI channels:\n");
 
     auto settings = defaults();
-    settings.releaseSeconds = 0.05f;
+    settings.envelopes[0].releaseSeconds = 0.05f;
     auto engine = makeEngine (settings);
     const auto onCh  = [] (int ch, int note) { return juce::MidiMessage::noteOn (ch, note, 1.0f); };
     const auto offCh = [] (int ch, int note) { return juce::MidiMessage::noteOff (ch, note); };

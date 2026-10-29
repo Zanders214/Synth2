@@ -3,15 +3,16 @@
 /** Synth2's parameter IDs, shared by the processor, the editor and the tests. */
 namespace ParamID
 {
-    inline constexpr const char* wave    = "wave";   // OSC 1's shape
-    inline constexpr const char* voices  = "voices";
+    inline constexpr const char* wave    = "wave";      // OSC 1's shape
+    inline constexpr const char* voices  = "voices";    // OSC 1's unison stack
     inline constexpr const char* detune  = "detune";
     inline constexpr const char* width   = "width";
-    inline constexpr const char* attack  = "attack";
+    inline constexpr const char* attack  = "attack";    // ENV 1
     inline constexpr const char* release = "release";
     inline constexpr const char* output  = "output";
 
-    // The four oscillators. OSC 1's shape is `wave` above.
+    // The four oscillators, each with its own unison stack. OSC 1's shape
+    // and stack are the IDs above.
     inline constexpr const char* osc1On    = "osc1On";
     inline constexpr const char* osc1Pitch = "osc1Pitch";
     inline constexpr const char* osc1Fine  = "osc1Fine";
@@ -31,6 +32,15 @@ namespace ParamID
     inline constexpr const char* osc4Pitch = "osc4Pitch";
     inline constexpr const char* osc4Fine  = "osc4Fine";
     inline constexpr const char* osc4Level = "osc4Level";
+    inline constexpr const char* osc2Voices = "osc2Voices";
+    inline constexpr const char* osc2Detune = "osc2Detune";
+    inline constexpr const char* osc2Width  = "osc2Width";
+    inline constexpr const char* osc3Voices = "osc3Voices";
+    inline constexpr const char* osc3Detune = "osc3Detune";
+    inline constexpr const char* osc3Width  = "osc3Width";
+    inline constexpr const char* osc4Voices = "osc4Voices";
+    inline constexpr const char* osc4Detune = "osc4Detune";
+    inline constexpr const char* osc4Width  = "osc4Width";
 
     /** Oscillator `index`'s (0..3) parameters, by role. */
     struct Oscillator
@@ -40,16 +50,46 @@ namespace ParamID
         const char* pitch;
         const char* fine;
         const char* level;
+        const char* voices;
+        const char* detune;
+        const char* width;
     };
     inline constexpr Oscillator oscillators[] {
-        { osc1On, wave,     osc1Pitch, osc1Fine, osc1Level },
-        { osc2On, osc2Wave, osc2Pitch, osc2Fine, osc2Level },
-        { osc3On, osc3Wave, osc3Pitch, osc3Fine, osc3Level },
-        { osc4On, osc4Wave, osc4Pitch, osc4Fine, osc4Level } };
+        { osc1On, wave,     osc1Pitch, osc1Fine, osc1Level, voices,     detune,     width },
+        { osc2On, osc2Wave, osc2Pitch, osc2Fine, osc2Level, osc2Voices, osc2Detune, osc2Width },
+        { osc3On, osc3Wave, osc3Pitch, osc3Fine, osc3Level, osc3Voices, osc3Detune, osc3Width },
+        { osc4On, osc4Wave, osc4Pitch, osc4Fine, osc4Level, osc4Voices, osc4Detune, osc4Width } };
 
-    // Whether the unison stack and the envelope are on the bench, and how
-    // sound flows between the modules there.
+    // The four envelopes. ENV 1's times are `attack` and `release` above.
+    inline constexpr const char* env1On      = "env1On";
+    inline constexpr const char* env2On      = "env2On";
+    inline constexpr const char* env2Attack  = "env2Attack";
+    inline constexpr const char* env2Release = "env2Release";
+    inline constexpr const char* env3On      = "env3On";
+    inline constexpr const char* env3Attack  = "env3Attack";
+    inline constexpr const char* env3Release = "env3Release";
+    inline constexpr const char* env4On      = "env4On";
+    inline constexpr const char* env4Attack  = "env4Attack";
+    inline constexpr const char* env4Release = "env4Release";
+
+    /** Envelope `index`'s (0..3) parameters, by role. */
+    struct Envelope
+    {
+        const char* on;
+        const char* attack;
+        const char* release;
+    };
+    inline constexpr Envelope envelopes[] {
+        { env1On, attack,     release },
+        { env2On, env2Attack, env2Release },
+        { env3On, env3Attack, env3Release },
+        { env4On, env4Attack, env4Release } };
+
+    // How sound flows between the modules on the bench.
+    inline constexpr const char* signalFlow = "signalFlow";
+
+    // Retired with the first bench's shared unison and envelope modules; only
+    // read from sessions saved with them, to carry them over.
     inline constexpr const char* unisonOn   = "unisonOn";
     inline constexpr const char* envelopeOn = "envelopeOn";
-    inline constexpr const char* signalFlow = "signalFlow";
 }
