@@ -316,6 +316,24 @@ namespace Bench
             return landed;
         }
 
+        /** Sets the modules on the bench out afresh, as a preset loads: the
+            oscillators packed along the top row, unison and the envelope
+            below, and every cable unplugged. */
+        void layOut()
+        {
+            ensureBench();
+            float oscillatorX = 0.0f;
+            float belowX      = 0.0f;
+            for (const auto& id : present())
+            {
+                auto& x = id.kind == Kind::oscillator ? oscillatorX : belowX;
+                setPosition (id, { x, id.kind == Kind::oscillator ? 0.0f : moduleHeight + gap });
+                x += moduleWidth + gap;
+            }
+            for (const auto& id : patchedToOutput())
+                disconnect (id);
+        }
+
         /** The modules on the bench in the order sound passes through them
             when it follows the layout. */
         std::vector<ModuleId> readingOrder() const

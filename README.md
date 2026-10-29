@@ -31,6 +31,31 @@ was on) along the top and unison and the envelope below, sounding as it did.
 
 The keyboard and the OUTPUT dial stay in a strip along the bottom.
 
+### Presets
+
+The pill in the middle of the header holds the factory presets: its arrows step to the
+previous and next one, and a click on its name opens a tray of them all. Your DAW lists
+the same presets as the plugin's programs. Loading one puts its modules on the bench
+(oscillators along the top, unison and the envelope below, in a fixed order with no
+cables) and sets everything it doesn't use back to its default; picking it again undoes
+your edits. Which preset you loaded is saved with your set.
+
+| Preset            | What it is                                     |
+|-------------------|------------------------------------------------|
+| **Empty Bench**   | Nothing on it: where a new instance starts     |
+| **Supersaw Pad**  | Nine wide saws with an octave on top           |
+| **Warm Strings**  | A soft saw section with a low triangle         |
+| **Slow Swell**    | A shimmering four-oscillator stack, 3 s attack |
+| **Trance Lead**   | A bright detuned saw and square                |
+| **8-Bit Lead**    | Bare squares, no unison                        |
+| **Hollow Flute**  | A breathy triangle with a soft octave          |
+| **Drawbar Organ** | Sines at 16', 8', 4' and 2 2/3'                |
+| **Glass Keys**    | Clear sines with a long ring                   |
+| **Brass Section** | Two saws and a square an octave below          |
+| **Fifth Stack**   | Root, fifth and sub, for big chords            |
+| **Reese Bass**    | Two beating saws an octave down                |
+| **Sub Bass**      | A clean sine sub with a little edge            |
+
 ### Signal flow
 
 The gear at the top right picks how sound flows between the modules:
@@ -164,6 +189,7 @@ render (the empty bench, the trays, a full bench, the flow modes) for a look by 
 Source/
   PluginProcessor.{h,cpp}    thin host wrapper + parameters (APVTS); the on-screen keyboard's lock-free hand-over; cables -> routing
   ParamIDs.h                 the parameter IDs
+  Presets.h                  the factory presets, and loading one onto the bench
   Synth2Engine.h             host-agnostic DSP core: 16 voices, up to four oscillators, MIDI, smoothing, output
   SynthVoice.h               one note: up to 16 unison copies of its oscillators under the envelope
   Oscillator.h               the four wave shapes, and the PolyBLEP oscillator that plays them

@@ -1,5 +1,6 @@
 #include "PluginEditor.h"
 #include "ParamIDs.h"
+#include "Presets.h"
 #include "Synth2Theme.h"
 
 #include <array>
@@ -19,6 +20,9 @@ namespace
         ChoiceTray::Choice { "Fixed order",   "By kind, wherever the modules sit" },
         ChoiceTray::Choice { "Follow layout", "Row by row, left to right" },
         ChoiceTray::Choice { "Patch cables",  "Along cables patched to the output" } };
+
+    // How much of each end of the preset picker steps to the previous / next.
+    constexpr float kPresetArrowWidth = 28.0f;
 }
 
 Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
@@ -84,6 +88,7 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
         flow->endChangeGesture();
         showFlow();
     });
+    presetTray.onChoose ([this] (int choice) { processorRef.loadPreset (choice); });
 
     setResizable (true, true);
     if (auto* constrainer = getConstrainer())
@@ -96,6 +101,7 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
         addChildComponent (menu);   // last, so the trays open over everything
     addChildComponent (addTray);
     addChildComponent (settingsTray);
+    addChildComponent (presetTray);
     resized();
     timerCallback();
     startTimerHz (30);
@@ -205,6 +211,11 @@ void Synth2AudioProcessorEditor::timerCallback()
         cables.repaint();
         repaint (layout.outputColumn);
     }
+    if (const int preset = processorRef.getCurrentProgram(); preset != lastPreset)
+    {
+        lastPreset = preset;
+        repaint (layout.preset);
+    }
     if (! juce::exactlyEqual (settings.outputDb, lastOutput))
     {
         lastOutput = settings.outputDb;
@@ -240,6 +251,24 @@ void Synth2AudioProcessorEditor::openSettings()
     settingsTray.open ("SIGNAL FLOW", std::move (choices),
                        { gear.getRight() - juce::roundToInt (260.0f * uiScale), gear.getBottom() + juce::roundToInt (8.0f * uiScale) });
     repaint (layout.gear);
+}
+
+void Synth2AudioProcessorEditor::openPresets()
+{
+    std::vector<ChoiceTray::Choice> choices;
+    for (const auto& preset : Presets::factory)
+        choices.push_back ({ preset.name, preset.detail });
+    choices[(size_t) processorRef.getCurrentProgram()].ticked = true;
+    presetTray.setBounds (getLocalBounds());
+    const auto picker = layout.preset;
+    presetTray.open ("PRESETS", std::move (choices),
+                     { picker.getCentreX() - juce::roundToInt (130.0f * uiScale), picker.getBottom() + juce::roundToInt (8.0f * uiScale) });
+    repaint (layout.preset);
+}
+
+void Synth2AudioProcessorEditor::stepPreset (int delta)
+{
+    processorRef.loadPreset ((processorRef.getCurrentProgram() + delta + Presets::numPresets) % Presets::numPresets);
 }
 
 // ---- Cables ----------------------------------------------------------------------------
@@ -287,6 +316,17 @@ void Synth2AudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
     if (layout.gear.toFloat().contains (e.position))
     {
         openSettings();
+        return;
+    }
+    if (layout.preset.toFloat().contains (e.position))
+    {
+        const float arrow = kPresetArrowWidth * uiScale;
+        if (e.position.x < (float) layout.preset.getX() + arrow)
+            stepPreset (-1);
+        else if (e.position.x > (float) layout.preset.getRight() - arrow)
+            stepPreset (1);
+        else
+            openPresets();
         return;
     }
 
@@ -429,6 +469,33 @@ void Synth2AudioProcessorEditor::paintHeader (juce::Graphics& g, float s) const
     g.drawText ("Synth2", area.withTrimmedLeft (Fonts::width (wordmarkFont, house)),
                 juce::Justification::centredLeft, false);
 
+    // The preset picker: the loaded preset's name in a pill, with arrows to
+    // step either way, lit while its tray is open.
+    const auto picker = layout.preset.toFloat();
+    g.setColour (presetTray.isOpen() ? Palette::idleFill.withMultipliedAlpha (1.6f) : Palette::idleFill);
+    g.fillRoundedRectangle (picker, picker.getHeight() * 0.5f);
+    g.setColour (presetTray.isOpen() ? Palette::strongLine : Palette::hairline);
+    g.drawRoundedRectangle (picker, picker.getHeight() * 0.5f, juce::jmax (1.0f, s));
+
+    const float arrowWidth = kPresetArrowWidth * s;
+    const auto  arrow = [&g, s] (juce::Rectangle<float> box, float direction)
+    {
+        const auto  c = box.getCentre();
+        const float h = 3.5f * s;
+        juce::Path chevron;
+        chevron.startNewSubPath (c.x + h * 0.5f * direction, c.y - h);
+        chevron.lineTo (c.x - h * 0.5f * direction, c.y);
+        chevron.lineTo (c.x + h * 0.5f * direction, c.y + h);
+        g.strokePath (chevron, juce::PathStrokeType (juce::jmax (1.0f, 1.6f * s), juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    };
+    g.setColour (Palette::textDim);
+    arrow (picker.withWidth (arrowWidth), 1.0f);
+    arrow (picker.withTrimmedLeft (picker.getWidth() - arrowWidth), -1.0f);
+    g.setFont (Fonts::sans (12.0f * s, true));
+    g.setColour (Palette::textStrong);
+    g.drawText (processorRef.getProgramName (processorRef.getCurrentProgram()), picker.reduced (arrowWidth, 0.0f),
+                juce::Justification::centred, true);
+
     // The mode badge: a small accent pill.
     const auto badge = layout.badge.toFloat();
     g.setColour (Palette::accentSoft);
@@ -485,7 +552,7 @@ void Synth2AudioProcessorEditor::resized()
     auto& animator = juce::Desktop::getInstance().getAnimator();
     for (auto& menu : waveMenus)
         animator.cancelAnimation (&menu, true);
-    for (auto* tray : { &addTray, &settingsTray })
+    for (auto* tray : { &addTray, &settingsTray, &presetTray })
         animator.cancelAnimation (tray, true);
 
     uiScale = (float) getWidth() / designWidth;
@@ -499,7 +566,7 @@ void Synth2AudioProcessorEditor::resized()
         menu.setUiScale (s);
         menu.setBounds (getLocalBounds());
     }
-    for (auto* tray : { &addTray, &settingsTray })
+    for (auto* tray : { &addTray, &settingsTray, &presetTray })
     {
         tray->setUiScale (s);
         tray->setBounds (getLocalBounds());
@@ -512,6 +579,7 @@ void Synth2AudioProcessorEditor::resized()
     layout.gear   = layout.header.withTrimmedLeft (layout.header.getWidth() - px (22.0f)).withSizeKeepingCentre (px (22.0f), px (22.0f));
     layout.badge  = layout.header.withTrimmedLeft (layout.header.getWidth() - px (22.0f + 12.0f + 54.0f))
                                  .withWidth (px (54.0f)).withSizeKeepingCentre (px (54.0f), px (20.0f));
+    layout.preset = layout.header.withSizeKeepingCentre (px (240.0f), px (26.0f));
 
     // The bench.
     bench.setUiScale (s);

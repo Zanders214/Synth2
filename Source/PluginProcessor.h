@@ -22,7 +22,8 @@
 */
 class Synth2AudioProcessor : public juce::AudioProcessor,
                              private juce::MidiKeyboardState::Listener,
-                             private juce::ValueTree::Listener
+                             private juce::ValueTree::Listener,
+                             private juce::AsyncUpdater
 {
 public:
     /** How sound flows between the modules on the bench: in a fixed order by
@@ -87,6 +88,10 @@ public:
         output, for when the signal flow follows the cables. Any thread. */
     void setRoutedToOutput (int oscillator, bool routed) noexcept;
 
+    /** Loads factory preset `index` (see Presets.h), even if it is the one
+        already loaded, so picking it again undoes any edits. Message thread. */
+    void loadPreset (int index);
+
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
@@ -101,10 +106,19 @@ private:
     void valueTreeChildRemoved (juce::ValueTree& parent, juce::ValueTree& child, int index) override;
     void valueTreeRedirected (juce::ValueTree& tree) override;
 
+    // A host's program change from off the message thread, loaded on it.
+    void handleAsyncUpdate() override;
+
     juce::AudioProcessorValueTreeState apvts;
     Synth2Engine engine;
     std::atomic<int> activeNotes { 0 };
     std::array<std::atomic<bool>, Synth2Engine::numOscillators> routedToOutput { true, true, true, true };
+
+    // The factory preset last loaded (kept in the state too, so a host that
+    // sets the saved program again after restoring a session changes nothing),
+    // and one a host asked for off the message thread.
+    std::atomic<int> currentPreset { 0 };
+    std::atomic<int> pendingPreset { -1 };
 
     // Each voice's envelope, published by the audio thread every block.
     struct PublishedActivity

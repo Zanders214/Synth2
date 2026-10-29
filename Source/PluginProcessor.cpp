@@ -2,11 +2,15 @@
 #include "PluginEditor.h"
 #include "ParamIDs.h"
 #include "Bench.h"
+#include "Presets.h"
 
 namespace
 {
     // The MIDI channel the on-screen keyboard plays on.
     constexpr int keyboardChannel = 1;
+
+    // Which factory preset is loaded, kept on the state tree.
+    const juce::Identifier presetProperty { "preset" };
 }
 
 Synth2AudioProcessor::Synth2AudioProcessor()
@@ -298,12 +302,46 @@ void Synth2AudioProcessor::setRoutedToOutput (int oscillator, bool routed) noexc
     routedToOutput[(size_t) juce::jlimit (0, Synth2Engine::numOscillators - 1, oscillator)].store (routed, std::memory_order_relaxed);
 }
 
-int Synth2AudioProcessor::getNumPrograms()              { return 1; }
-int Synth2AudioProcessor::getCurrentProgram()           { return 0; }
-// A single unnamed program: there are no presets to switch to or rename.
-void Synth2AudioProcessor::setCurrentProgram (int)      { /* only program 0 exists */ }
-const juce::String Synth2AudioProcessor::getProgramName (int) { return {}; }   // NOSONAR(cpp:S5951): signature fixed by juce::AudioProcessor
-void Synth2AudioProcessor::changeProgramName (int, const juce::String&) { /* the one program has no name */ }
+// The host's programs are the factory presets.
+int Synth2AudioProcessor::getNumPrograms()              { return Presets::numPresets; }
+int Synth2AudioProcessor::getCurrentProgram()           { return currentPreset.load(); }
+
+void Synth2AudioProcessor::setCurrentProgram (int index)
+{
+    if (index < 0 || index >= Presets::numPresets || index == currentPreset.load())
+        return;
+    if (juce::MessageManager::existsAndIsCurrentThread())
+    {
+        loadPreset (index);
+        return;
+    }
+    pendingPreset.store (index);
+    triggerAsyncUpdate();
+}
+
+const juce::String Synth2AudioProcessor::getProgramName (int index)   // NOSONAR(cpp:S5951): signature fixed by juce::AudioProcessor
+{
+    return juce::isPositiveAndBelow (index, Presets::numPresets) ? juce::String (Presets::factory[(size_t) index].name) : juce::String();
+}
+
+void Synth2AudioProcessor::changeProgramName (int, const juce::String&) { /* the factory presets keep their names */ }
+
+void Synth2AudioProcessor::loadPreset (int index)
+{
+    if (! juce::isPositiveAndBelow (index, Presets::numPresets))
+        return;
+    Presets::apply (apvts, Presets::factory[(size_t) index]);
+    currentPreset.store (index);
+    apvts.state.setProperty (presetProperty, index, nullptr);
+    followCables();
+    updateHostDisplay (ChangeDetails().withProgramChanged (true));
+}
+
+void Synth2AudioProcessor::handleAsyncUpdate()
+{
+    if (const int index = pendingPreset.exchange (-1); index >= 0)
+        loadPreset (index);
+}
 
 void Synth2AudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
@@ -329,6 +367,7 @@ void Synth2AudioProcessor::setStateInformation (const void* data, int sizeInByte
     if (! Bench::Model::hasBench (saved))
         bench.adoptClassicLayout (saved);
     bench.ensureBench();
+    currentPreset.store (juce::jlimit (0, Presets::numPresets - 1, (int) saved.getProperty (presetProperty, 0)));
     followCables();
 }
 

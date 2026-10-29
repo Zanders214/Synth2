@@ -17,6 +17,7 @@
 #include "PluginEditor.h"
 #include "Bench.h"
 #include "ParamIDs.h"
+#include "Presets.h"
 
 #include <algorithm>
 #include <cmath>
@@ -775,6 +776,131 @@ void testEditor()
     const float aspect = (float) editor->getWidth() / (float) editor->getHeight();
     check (approx (aspect, 1040.0f / 740.0f, 0.02f), "resizing keeps the design's proportions");
 }
+// ---- Presets ----------------------------------------------------------------------
+
+// The loudest sample over `blocks` blocks of a chord held from the first.
+float holdChordPeak (Synth2AudioProcessor& p, int blocks)
+{
+    juce::AudioBuffer<float> buffer (2, 512);
+    float peak = 0.0f;
+    for (int b = 0; b < blocks; ++b)
+    {
+        juce::MidiBuffer midi;
+        if (b == 0)
+            for (const int note : { 48, 60, 64, 67, 72 })
+                midi.addEvent (juce::MidiMessage::noteOn (1, note, 1.0f), 0);
+        p.processBlock (buffer, midi);
+        peak = juce::jmax (peak, buffer.getMagnitude (0, 512));
+    }
+    return peak;
+}
+
+void testPresets()
+{
+    std::printf ("Presets:\n");
+
+    Synth2AudioProcessor p;
+    check (p.getNumPrograms() == Presets::numPresets && Presets::numPresets > 10, "the host sees the factory presets as programs");
+    check (p.getCurrentProgram() == 0 && p.getProgramName (0) == "Empty Bench" && Bench::Model (p.getState()).isEmpty(),
+           "a new instance is on the first, the empty bench");
+
+    juce::StringArray names;
+    for (int i = 0; i < p.getNumPrograms(); ++i)
+        names.addIfNotAlreadyThere (p.getProgramName (i));
+    check (names.size() == Presets::numPresets && ! names.contains ({}), "each has a name of its own");
+
+    // Every preset loads its modules, set out without overlapping, and plays a
+    // big chord at full velocity loud enough, and without clipping.
+    for (int i = 1; i < Presets::numPresets; ++i)
+    {
+        const auto& preset = Presets::factory[(size_t) i];
+        Synth2AudioProcessor q;
+        q.prepareToPlay (48000.0, 512);
+        q.setCurrentProgram (i);
+        const Bench::Model bench (q.getState());
+
+        bool modulesMatch = bench.isPresent ({ Bench::Kind::unison, 0 }) == preset.unison.has_value()
+                         && bench.isPresent ({ Bench::Kind::envelope, 0 }) == preset.envelope.has_value();
+        for (int slot = 0; slot < Bench::numOscillators; ++slot)
+            modulesMatch = modulesMatch && bench.isPresent ({ Bench::Kind::oscillator, slot }) == preset.oscillators[(size_t) slot].has_value();
+
+        bool apart = true;
+        const auto present = bench.present();
+        for (size_t a = 0; a < present.size(); ++a)
+            for (size_t b = a + 1; b < present.size(); ++b)
+                apart = apart && ! Bench::boundsAt (bench.positionOf (present[a])).intersects (Bench::boundsAt (bench.positionOf (present[b])));
+
+        const float attack = preset.envelope.has_value() ? preset.envelope->attackSeconds : 0.0f;
+        const float peak   = holdChordPeak (q, juce::roundToInt ((attack + 0.5f) * 48000.0f / 512.0f));
+        const std::string name = preset.name;
+        check (q.getCurrentProgram() == i && modulesMatch && apart, name + ": its modules are on the bench, apart");
+        check (peak > 0.2f && peak < 1.0f, name + ": a chord sounds without clipping (peak " + std::to_string (peak) + ")");
+    }
+
+    // Loading one resets what it doesn't set, and lays the bench out afresh.
+    setParam (p, ParamID::voices, 9.0f);
+    setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::cables);
+    Bench::Model bench (p.getState());
+    bench.add (Bench::Kind::oscillator, { 700.0f, 200.0f });
+    bench.connect ({ Bench::Kind::oscillator, 0 });
+    const int sub = names.indexOf ("Sub Bass");
+    p.setCurrentProgram (sub);
+    check (approx (param (p, ParamID::voices), 1.0f, 1e-6f) && approx (param (p, ParamID::signalFlow), 0.0f, 1e-6f),
+           "a preset puts back what it doesn't set (VOICES, the flow)");
+    check (bench.patchedToOutput().empty() && bench.positionOf ({ Bench::Kind::oscillator, 0 }) == juce::Point<float> (0.0f, 0.0f)
+               && bench.positionOf ({ Bench::Kind::oscillator, 1 }) == juce::Point<float> (Bench::moduleWidth + Bench::gap, 0.0f)
+               && bench.positionOf ({ Bench::Kind::envelope, 0 }) == juce::Point<float> (0.0f, Bench::moduleHeight + Bench::gap),
+           "unplugs the cables and sets the modules out in rows");
+
+    // A host setting the loaded program again changes nothing; picking it on
+    // the face loads it afresh.
+    setParam (p, ParamID::osc1Level, 0.3f);
+    p.setCurrentProgram (sub);
+    check (approx (param (p, ParamID::osc1Level), 0.3f, 1e-4f), "a host setting the same program again keeps the edits");
+    p.loadPreset (sub);
+    check (approx (param (p, ParamID::osc1Level), 1.0f, 1e-4f), "loading it again puts it back");
+
+    // Which preset is loaded is saved with the session.
+    juce::MemoryBlock saved;
+    p.getStateInformation (saved);
+    Synth2AudioProcessor restored;
+    restored.setStateInformation (saved.getData(), (int) saved.getSize());
+    check (restored.getCurrentProgram() == sub, "the loaded preset comes back with the session");
+    p.setCurrentProgram (-1);
+    p.setCurrentProgram (Presets::numPresets);
+    check (p.getCurrentProgram() == sub, "a program out of range is ignored");
+    p.setCurrentProgram (0);
+    check (Bench::Model (p.getState()).isEmpty() && approx (param (p, ParamID::output), 0.0f, 1e-4f), "Empty Bench clears it");
+
+    // On the face: the picker's arrows step through them, its name opens them all.
+    std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
+    auto* editor = dynamic_cast<Synth2AudioProcessorEditor*> (base.get());
+    if (editor == nullptr)
+        return;
+    const auto picker = editor->presetBounds();
+    check (editor->getLocalBounds().toFloat().contains (picker) && picker.getBottom() < (float) editor->getBench().getY(),
+           "the preset picker sits in the header");
+    editor->mouseDown (mouseAt (*editor, { picker.getRight() - 6.0f, picker.getCentreY() }));
+    check (p.getCurrentProgram() == 1 && ! Bench::Model (p.getState()).isEmpty(), "its right arrow loads the next preset");
+    editor->mouseDown (mouseAt (*editor, { picker.getX() + 6.0f, picker.getCentreY() }));
+    editor->mouseDown (mouseAt (*editor, { picker.getX() + 6.0f, picker.getCentreY() }));
+    check (p.getCurrentProgram() == Presets::numPresets - 1, "its left arrow steps back, wrapping round");
+
+    auto& tray = editor->getPresetTray();
+    editor->mouseDown (mouseAt (*editor, picker.getCentre()));
+    check (tray.isOpen() && tray.getTitle() == "PRESETS" && tray.getNumChoices() == Presets::numPresets
+               && tray.getChoice (Presets::numPresets - 1).ticked && ! tray.getChoice (0).ticked,
+           "its name opens a tray of them all, the loaded one ticked");
+    check (editor->getLocalBounds().toFloat().contains (tray.trayBounds()), "which fits on the face");
+    pumpUntil ([&tray] { return tray.getAlpha() >= 1.0f; });
+    snapshot (render (*editor), "9-presets");
+    tray.mouseDown (mouseAt (tray, tray.choiceBounds (2).getCentre()));
+    check (! tray.isOpen() && p.getCurrentProgram() == 2, "picking one loads it");
+    auto& osc3 = editor->getBench().getModule ({ Bench::Kind::oscillator, 2 });
+    check (pumpUntil ([&] { return osc3.isVisible() && osc3.getAlpha() >= 1.0f; }), "and its modules appear on the bench");
+    snapshot (render (*editor), "10-preset-loaded");
+}
+
 } // namespace
 
 int main()
@@ -787,6 +913,7 @@ int main()
     testBusLayouts();
     testPlaying();
     testStateRoundTrip();
+    testPresets();
     testEditor();
 
     std::printf ("\n%s\n", failures == 0 ? "ALL TESTS PASSED" : "SOME TESTS FAILED");
