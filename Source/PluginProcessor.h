@@ -119,7 +119,7 @@ private:
     {
         std::atomic<int>   stage       { 0 };
         std::atomic<float> level       { 0.0f };
-        std::atomic<float> releaseFrom { 1.0f };
+        std::atomic<float> progress    { 0.0f };
     };
     std::array<std::array<PublishedActivity, Synth2Engine::maxNotes>, Synth2Engine::numOscillators> noteActivity;
 

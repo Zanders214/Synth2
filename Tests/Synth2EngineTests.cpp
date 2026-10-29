@@ -171,6 +171,80 @@ void testEnvelope()
     check (engine->getNumActiveNotes() == 0, "a finished note frees its voice");
 }
 
+// ---- Test 3b: the envelope's stages, on their own and in a note. -------------
+void testEnvelopeStages()
+{
+    std::printf ("Envelope stages:\n");
+
+    // The envelope itself, at 1 kHz so a millisecond is a sample.
+    using Stage = Envelope::Stage;
+    Envelope e;
+    e.setSampleRate (1000.0);
+    e.setParameters ({ 0.010f, 0.020f, 0.010f, 0.020f, 0.5f, 0.040f });
+    const auto step = [&e] (int samples) { for (int i = 0; i < samples; ++i) e.getNextSample(); };
+    check (! e.isActive() && approx (e.getLevel(), 0.0f, 1e-6f), "an envelope starts silent");
+    e.noteOn();
+    step (5);
+    check (e.getStage() == Stage::delay && approx (e.getLevel(), 0.0f, 1e-6f) && approx (e.getProgress(), 0.5f, 1e-6f),
+           "the key down, it waits out DELAY at silence");
+    step (15);
+    check (e.getStage() == Stage::attack && approx (e.getLevel(), 0.5f, 1e-4f), "then rises over ATTACK (halfway after half of it)");
+    step (10);
+    check (e.getStage() == Stage::hold && approx (e.getLevel(), 1.0f, 1e-6f), "stays at the top for HOLD");
+    step (20);
+    check (e.getStage() == Stage::decay && approx (e.getLevel(), 0.75f, 1e-4f), "falls over DECAY");
+    step (20);
+    check (e.getStage() == Stage::sustain && approx (e.getLevel(), 0.5f, 1e-4f), "to the SUSTAIN level, where it stays");
+    step (500);
+    check (e.getStage() == Stage::sustain && approx (e.getLevel(), 0.5f, 1e-6f), "for as long as the key is down");
+
+    auto lower = e.getParameters();
+    lower.sustain = 0.25f;
+    e.setParameters (lower);
+    e.getNextSample();
+    check (e.getLevel() < 0.5f && e.getLevel() > 0.4f, "turning SUSTAIN down glides there rather than stepping");
+    step (40);
+    check (approx (e.getLevel(), 0.25f, 1e-6f), "and settles on it");
+
+    e.noteOff();
+    step (20);
+    check (e.getStage() == Stage::release && approx (e.getLevel(), 0.125f, 1e-4f) && approx (e.getProgress(), 0.5f, 1e-3f),
+           "the key up, it falls from where it was over RELEASE");
+    step (21);
+    check (! e.isActive() && approx (e.getLevel(), 0.0f, 1e-6f), "to silence");
+
+    e.setParameters ({ 0.0f, 0.020f, 0.0f, 0.020f, 1.0f, 0.040f });
+    e.noteOn();
+    e.getNextSample();
+    check (e.getStage() == Stage::attack && e.getLevel() > 0.0f, "with no DELAY, it rises at once");
+    step (25);
+    check (e.getStage() == Stage::sustain && approx (e.getLevel(), 1.0f, 1e-6f), "and with no HOLD and full SUSTAIN, it stays at the top");
+    e.noteOff();
+    step (20);
+    const float caught = e.getLevel();
+    e.noteOn();
+    e.getNextSample();
+    check (e.getLevel() > caught, "played again mid-release, it climbs from where it was rather than from silence");
+
+    // In a note: DELAY holds it back, and a low SUSTAIN lets it fall after the hit.
+    auto settings = defaults();
+    auto& shape = settings.envelopes[0];
+    shape.delaySeconds  = 0.05f;
+    shape.attackSeconds = 0.005f;
+    shape.decaySeconds  = 0.05f;
+    shape.sustainLevel  = 0.25f;
+    auto engine = makeEngine (settings);
+    const auto out = run (*engine, (int) sampleRate / 2, { { 0, on (60) } });
+    const int ms = (int) (sampleRate / 1000.0);
+    const float waiting = peak (out, 0, 45 * ms);
+    const float hit     = peak (out, 54 * ms, 57 * ms);
+    const float settled = peak (out, 200 * ms, 300 * ms);
+    check (waiting == 0.0f, "a note waits out its DELAY in silence");
+    check (hit > 0.05f, "then sounds");
+    check (approx (settled / hit, 0.25f, 0.03f),
+           "and falls to a quarter of its peak with SUSTAIN at 25% (got " + std::to_string (settled / hit) + ")");
+}
+
 // ---- Test 4: the unison stack: level, detune, width. ---------------------------
 void testUnison()
 {
@@ -463,8 +537,8 @@ void testModules()
         const int early = (int) (0.02 * sampleRate);
         check (approx (rms (out, 0, early, early + 512), rms (only, 0, early, early + 512), 0.05f * one),
                "early on, only the oscillator without an envelope is heard");
-        check (engine->getActivity (0)[0].stage == NoteActivity::Stage::release && engine->getActivity (1)[0].stage == NoteActivity::Stage::release,
-               "after the key goes up, each envelope releases");
+        check (engine->getActivity (0)[0].stage == NoteActivity::Stage::release && engine->getActivity (1)[0].stage == NoteActivity::Stage::idle,
+               "after the key goes up, OSC 1's envelope releases, and OSC 2's short gate is already over");
         check (engine->getNumActiveNotes() == 1 && reference->getNumActiveNotes() == 0,
                "and the note lasts until its slowest envelope has finished");
     }
@@ -615,6 +689,7 @@ int main()
     testPitch();
     testSampleAccurate();
     testEnvelope();
+    testEnvelopeStages();
     testUnison();
     testVoicesChangeMidNote();
     testOscillators();

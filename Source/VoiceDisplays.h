@@ -252,24 +252,26 @@ private:
 /** What the AMP well shows: the envelope's settings and where each note is in it. */
 struct AmpDisplayState
 {
-    float attackPosition  = 0.0f;   // the ATTACK dial's position, 0..1
-    float releasePosition = 0.0f;   // the RELEASE dial's position, 0..1
-    float attackSeconds   = 0.0f;
-    float releaseSeconds  = 0.0f;
-    float outputDb        = 0.0f;
+    Synth2VisualModel::EnvelopeDials dials;   // the dials' positions (and SUSTAIN's level)
+    float attackSeconds  = 0.0f;
+    float releaseSeconds = 0.0f;
+    float outputDb       = 0.0f;
     std::array<NoteActivity, 16> notes {};
 
     friend bool operator== (const AmpDisplayState& a, const AmpDisplayState& b) noexcept
     {
         const auto same = [] (float x, float y) { return juce::exactlyEqual (x, y); };
-        if (! (same (a.attackPosition, b.attackPosition) && same (a.releasePosition, b.releasePosition)
+        const auto& x = a.dials;
+        const auto& y = b.dials;
+        if (! (same (x.delay, y.delay) && same (x.attack, y.attack) && same (x.hold, y.hold) && same (x.decay, y.decay)
+               && same (x.sustain, y.sustain) && same (x.release, y.release)
                && same (a.attackSeconds, b.attackSeconds) && same (a.releaseSeconds, b.releaseSeconds)
                && same (a.outputDb, b.outputDb)))
             return false;
 
         for (size_t i = 0; i < a.notes.size(); ++i)
             if (a.notes[i].stage != b.notes[i].stage || ! same (a.notes[i].level, b.notes[i].level)
-                || ! same (a.notes[i].releaseFrom, b.notes[i].releaseFrom))
+                || ! same (a.notes[i].progress, b.notes[i].progress))
                 return false;
         return true;
     }
@@ -285,24 +287,24 @@ struct AmpDisplayState
 };
 
 /**
-    AmpDisplay — the AMP well: the envelope every note follows, drawn in the
-    colours of the dials that shape it (the rise in ATTACK's, the top in
-    OUTPUT's, whose level sets its height, the fall in RELEASE's), over a
-    faint 0 dB line. Each note that sounds is a glowing dot riding it: up the
-    attack, resting on the top while its key (or the pedal) is down, then down
-    the release once it lets go.
+    AmpDisplay — the AMP well: the envelope its oscillator's notes follow,
+    each stage drawn in the colour of the dial that shapes it (the wait in
+    DELAY's, the rise in ATTACK's, the top in HOLD's, the fall in DECAY's, the
+    sustain in SUSTAIN's and the release in RELEASE's), its top at OUTPUT's
+    level over a faint 0 dB line. Each note that sounds is a glowing dot
+    riding it through the stages, resting on the sustain while its key (or
+    the pedal) is down.
 */
 class AmpDisplay final : public DisplayWell
 {
 public:
     AmpDisplay() { setInterceptsMouseClicks (false, false); }
 
-    /** The dials' colours, so each part of the envelope matches its dial. */
-    void setColours (juce::Colour attack, juce::Colour release, juce::Colour output)
+    /** The dials' colours (DELAY, ATTACK, HOLD, DECAY, SUSTAIN, RELEASE), so
+        each stage of the envelope matches its dial. */
+    void setColours (const std::array<juce::Colour, 6>& dialColours)
     {
-        attackColour  = attack;
-        releaseColour = release;
-        outputColour  = output;
+        colours = dialColours;
         repaint();
     }
 
@@ -324,13 +326,13 @@ public:
         // The times along the bottom: attack on the left, release on the right.
         auto times = plot.removeFromBottom (10.0f * s);
         g.setFont (Synth2::Fonts::mono (8.5f * s));
-        g.setColour (attackColour.withAlpha (0.85f));
+        g.setColour (colourFor (Stage::attack).withAlpha (0.85f));
         g.drawText ("A " + Synth2::Format::seconds (amp.attackSeconds), times, juce::Justification::centredLeft, false);
-        g.setColour (releaseColour.withAlpha (0.85f));
+        g.setColour (colourFor (Stage::release).withAlpha (0.85f));
         g.drawText ("R " + Synth2::Format::seconds (amp.releaseSeconds), times, juce::Justification::centredRight, false);
 
         plot = plot.reduced (2.0f * s, 4.0f * s);
-        const auto e  = Synth2VisualModel::envelope (amp.attackPosition, amp.releasePosition, amp.outputDb);
+        const auto e  = Synth2VisualModel::envelope (amp.dials, amp.outputDb);
         const auto at = [&plot] (float x, float y)
         {
             return juce::Point (plot.getX() + x * plot.getWidth(), plot.getBottom() - y * plot.getHeight());
@@ -346,33 +348,42 @@ public:
             g.fillRect (juce::Rectangle (plot.getX() + (float) i * 6.0f * s, zeroDb - line * 0.5f, 3.0f * s, line));
 
         // The shape, softly filled underneath.
-        juce::Path shape;
-        shape.startNewSubPath (at (0.0f, 0.0f));
-        shape.lineTo (at (e.attackEnd, e.peak));
-        shape.lineTo (at (e.holdEnd, e.peak));
-        shape.lineTo (at (e.releaseEnd, 0.0f));
-        juce::Path fill (shape);
-        fill.lineTo (at (0.0f, 0.0f));
+        const std::array<std::pair<juce::Point<float>, Stage>, 7> corners { {
+            { at (0.0f, 0.0f), Stage::idle },
+            { at (e.delayEnd, 0.0f), Stage::delay },
+            { at (e.attackEnd, e.peak), Stage::attack },
+            { at (e.holdEnd, e.peak), Stage::hold },
+            { at (e.decayEnd, e.sustain), Stage::decay },
+            { at (e.sustainEnd, e.sustain), Stage::sustain },
+            { at (e.releaseEnd, 0.0f), Stage::release } } };
+        juce::Path fill;
+        fill.startNewSubPath (corners.front().first);
+        for (const auto& corner : corners)
+            fill.lineTo (corner.first);
         fill.closeSubPath();
-        juce::ColourGradient wash (outputColour.withAlpha (0.18f), 0.0f, at (0.0f, e.peak).y,
-                                   outputColour.withAlpha (0.0f), 0.0f, plot.getBottom(), false);
+        const auto washColour = colourFor (Stage::sustain);
+        juce::ColourGradient wash (washColour.withAlpha (0.18f), 0.0f, at (0.0f, e.peak).y,
+                                   washColour.withAlpha (0.0f), 0.0f, plot.getBottom(), false);
         g.setGradientFill (wash);
         g.fillPath (fill);
 
-        // Each part in its dial's colour, with a glow under it.
-        const auto stroke = [&] (juce::Point<float> from, juce::Point<float> to, juce::Colour colour)
+        // Each stage in its dial's colour, with a glow under it (a stage with
+        // no length, a delay or hold of 0, isn't drawn).
+        for (size_t i = 1; i < corners.size(); ++i)
         {
+            const auto from = corners[i - 1].first;
+            const auto to   = corners[i].first;
+            if (from.getDistanceFrom (to) < 0.5f)
+                continue;
             juce::Path part;
             part.startNewSubPath (from);
             part.lineTo (to);
+            const auto colour = colourFor (corners[i].second);
             g.setColour (colour.withAlpha (0.25f));
             g.strokePath (part, juce::PathStrokeType (6.0f * s, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             g.setColour (colour);
             g.strokePath (part, juce::PathStrokeType (2.0f * s, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-        };
-        stroke (at (0.0f, 0.0f),           at (e.attackEnd, e.peak),   attackColour);
-        stroke (at (e.attackEnd, e.peak),  at (e.holdEnd, e.peak),     outputColour);
-        stroke (at (e.holdEnd, e.peak),    at (e.releaseEnd, 0.0f),    releaseColour);
+        }
 
         // A dot per sounding note, in the colour of the part it is on.
         const float dot = 3.5f * s;
@@ -381,7 +392,7 @@ public:
             if (note.stage == NoteActivity::Stage::idle)
                 continue;
 
-            const auto d = Synth2VisualModel::noteDot (e, (int) note.stage, note.level, note.releaseFrom);
+            const auto d = Synth2VisualModel::noteDot (e, note.stage, note.level, note.progress);
             const auto colour = colourFor (note.stage);
             juce::Path body;
             body.addEllipse (juce::Rectangle<float> (dot * 2.0f, dot * 2.0f).withCentre (at (d.x, d.y)));
@@ -392,21 +403,15 @@ public:
     }
 
 private:
-    /** The colour of the part of the envelope a note in `stage` is on. */
-    juce::Colour colourFor (NoteActivity::Stage stage) const noexcept
+    using Stage = NoteActivity::Stage;
+
+    /** The colour of the stage of the envelope a note in `stage` is on. */
+    juce::Colour colourFor (Stage stage) const noexcept
     {
-        switch (stage)
-        {
-            case NoteActivity::Stage::attack:  return attackColour;
-            case NoteActivity::Stage::release: return releaseColour;
-            case NoteActivity::Stage::idle:
-            case NoteActivity::Stage::hold:    break;
-        }
-        return outputColour;
+        return stage == Stage::idle ? colours[4] : colours[(size_t) stage - 1];
     }
 
     AmpDisplayState amp;
-    juce::Colour attackColour  { Synth2::Palette::pink };
-    juce::Colour releaseColour { Synth2::Palette::pink };
-    juce::Colour outputColour  { Synth2::Palette::amber };
+    std::array<juce::Colour, 6> colours { Synth2::Palette::pink, Synth2::Palette::pink, Synth2::Palette::amber,
+                                          Synth2::Palette::pink, Synth2::Palette::amber, Synth2::Palette::pink };
 };
