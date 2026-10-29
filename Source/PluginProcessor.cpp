@@ -38,35 +38,49 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
     const auto semitonesFromValue = [] (int value, int) { return (value > 0 ? "+" : "") + String (value) + " st"; };
     const auto centsFromValue     = [] (float value, int) { return (value > 0.0f ? "+" : "") + String (value, 1) + " ct"; };
 
-    // The two oscillators: each a shape, a transposition, a fine tune and a
-    // level. OSC 2 is off until it is switched on. (OSC 1's shape keeps its
-    // original "wave" ID, so older sessions load as they were.)
-    layout.add (std::make_unique<AudioParameterChoice> (
-        ParameterID { ParamID::wave, 1 }, "Osc 1 Wave", waves, (int) Waveform::saw));
-
-    const auto addOscillator = [&] (int number, const char* pitch, const char* fine, const char* level, float defaultLevel, int defaultPitch)
+    // The four oscillators: each switched on or off, a shape, a transposition,
+    // a fine tune and a level. OSC 1 plays from the start, the others are off
+    // until they are switched on. (OSC 1's shape keeps its original "wave"
+    // ID, and OSC 2 its version 2 IDs, so older sessions load as they were.)
+    const auto onOff = [] (bool automatable) { return AudioParameterBoolAttributes().withAutomatable (automatable); };
+    const auto addOscillator = [&] (int index, int version)
     {
-        const String name = "Osc " + String (number) + " ";
+        const auto& ids      = ParamID::oscillators[index];
+        const auto  defaults = Synth2Engine::Settings {}.oscillators[(size_t) index];
+        const String name    = "Osc " + String (index + 1) + " ";
+
+        // Whether an oscillator is on decides whether it is on the bench, so
+        // it is part of the patch rather than something to automate (OSC 2's
+        // switch was automatable before the bench, and stays so).
+        layout.add (std::make_unique<AudioParameterBool> (
+            ParameterID { ids.on, index == 1 ? 2 : 3 }, name + "On", defaults.on, onOff (index == 1)));
+        layout.add (std::make_unique<AudioParameterChoice> (
+            ParameterID { ids.wave, index == 0 ? 1 : version }, name + "Wave", waves, (int) defaults.wave));
         layout.add (std::make_unique<AudioParameterInt> (
-            ParameterID { pitch, 2 }, name + "Pitch", -Synth2Engine::maxSemitones, Synth2Engine::maxSemitones, defaultPitch,
+            ParameterID { ids.pitch, version }, name + "Pitch", -Synth2Engine::maxSemitones, Synth2Engine::maxSemitones, defaults.semitones,
             AudioParameterIntAttributes().withStringFromValueFunction (semitonesFromValue)));
         layout.add (std::make_unique<AudioParameterFloat> (
-            ParameterID { fine, 2 }, name + "Fine",
-            NormalisableRange<float> (-Synth2Engine::maxFineCents, Synth2Engine::maxFineCents, 0.1f), 0.0f,
+            ParameterID { ids.fine, version }, name + "Fine",
+            NormalisableRange<float> (-Synth2Engine::maxFineCents, Synth2Engine::maxFineCents, 0.1f), defaults.fineCents,
             AudioParameterFloatAttributes().withStringFromValueFunction (centsFromValue)));
         layout.add (std::make_unique<AudioParameterFloat> (
-            ParameterID { level, 2 }, name + "Level",
-            NormalisableRange<float> (0.0f, 1.0f), defaultLevel,
+            ParameterID { ids.level, version }, name + "Level",
+            NormalisableRange<float> (0.0f, 1.0f), defaults.level,
             AudioParameterFloatAttributes().withStringFromValueFunction (percentFromValue)));
     };
 
-    const Synth2Engine::Settings defaults;
-    addOscillator (1, ParamID::osc1Pitch, ParamID::osc1Fine, ParamID::osc1Level, defaults.osc1Level, defaults.osc1Semitones);
+    addOscillator (0, 2);
+    addOscillator (1, 2);
+    addOscillator (2, 3);
+    addOscillator (3, 3);
 
-    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::osc2On, 2 }, "Osc 2 On", defaults.osc2On));
+    // Which modules are on the bench, and how sound flows between them.
+    const Synth2Engine::Settings defaults;
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::unisonOn, 3 },   "Unison On",   defaults.unisonOn,   onOff (false)));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::envelopeOn, 3 }, "Envelope On", defaults.envelopeOn, onOff (false)));
     layout.add (std::make_unique<AudioParameterChoice> (
-        ParameterID { ParamID::osc2Wave, 2 }, "Osc 2 Wave", waves, (int) defaults.osc2Wave));
-    addOscillator (2, ParamID::osc2Pitch, ParamID::osc2Fine, ParamID::osc2Level, defaults.osc2Level, defaults.osc2Semitones);
+        ParameterID { ParamID::signalFlow, 3 }, "Signal Flow", StringArray { "Fixed order", "Follow layout", "Patch cables" },
+        (int) SignalFlow::fixed, AudioParameterChoiceAttributes().withAutomatable (false)));
 
     // Unison: how many copies play each note, how far apart they are tuned and
     // how wide they spread (see Unison.h).
@@ -123,21 +137,26 @@ Synth2Engine::Settings Synth2AudioProcessor::currentSettings() const noexcept
     const auto param = [this] (const char* id) { return apvts.getRawParameterValue (id)->load(); };
 
     Synth2Engine::Settings settings;
-    settings.wave           = (Waveform) juce::jlimit (0, 3, juce::roundToInt (param (ParamID::wave)));
+    const bool cables = juce::roundToInt (param (ParamID::signalFlow)) == (int) SignalFlow::cables;
+    for (size_t k = 0; k < settings.oscillators.size(); ++k)
+    {
+        const auto& ids  = ParamID::oscillators[k];
+        auto& oscillator = settings.oscillators[k];
+        oscillator.on        = param (ids.on) >= 0.5f;
+        oscillator.routed    = ! cables || routedToOutput[k].load (std::memory_order_relaxed);
+        oscillator.wave      = (Waveform) juce::jlimit (0, 3, juce::roundToInt (param (ids.wave)));
+        oscillator.semitones = juce::roundToInt (param (ids.pitch));
+        oscillator.fineCents = param (ids.fine);
+        oscillator.level     = param (ids.level);
+    }
+    settings.unisonOn       = param (ParamID::unisonOn) >= 0.5f;
     settings.voices         = juce::roundToInt (param (ParamID::voices));
     settings.detuneCents    = param (ParamID::detune);
     settings.width          = param (ParamID::width);
+    settings.envelopeOn     = param (ParamID::envelopeOn) >= 0.5f;
     settings.attackSeconds  = param (ParamID::attack);
     settings.releaseSeconds = param (ParamID::release);
     settings.outputDb       = param (ParamID::output);
-    settings.osc1Semitones  = juce::roundToInt (param (ParamID::osc1Pitch));
-    settings.osc1FineCents  = param (ParamID::osc1Fine);
-    settings.osc1Level      = param (ParamID::osc1Level);
-    settings.osc2On         = param (ParamID::osc2On) >= 0.5f;
-    settings.osc2Wave       = (Waveform) juce::jlimit (0, 3, juce::roundToInt (param (ParamID::osc2Wave)));
-    settings.osc2Semitones  = juce::roundToInt (param (ParamID::osc2Pitch));
-    settings.osc2FineCents  = param (ParamID::osc2Fine);
-    settings.osc2Level      = param (ParamID::osc2Level);
     return settings;
 }
 
@@ -264,7 +283,14 @@ bool Synth2AudioProcessor::isMidiEffect() const         { return false; }
 // Once the last key goes up, the notes ring on for the release time.
 double Synth2AudioProcessor::getTailLengthSeconds() const
 {
+    if (apvts.getRawParameterValue (ParamID::envelopeOn)->load() < 0.5f)
+        return Synth2Engine::gateReleaseSeconds;
     return apvts.getRawParameterValue (ParamID::release)->load();
+}
+
+void Synth2AudioProcessor::setRoutedToOutput (int oscillator, bool routed) noexcept
+{
+    routedToOutput[(size_t) juce::jlimit (0, Synth2Engine::numOscillators - 1, oscillator)].store (routed, std::memory_order_relaxed);
 }
 
 int Synth2AudioProcessor::getNumPrograms()              { return 1; }

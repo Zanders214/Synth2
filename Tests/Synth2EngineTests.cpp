@@ -36,7 +36,7 @@ constexpr int    blockSize  = 512;
 Synth2Engine::Settings defaults (Waveform wave = Waveform::saw, int voices = 1)
 {
     Synth2Engine::Settings s;
-    s.wave   = wave;
+    s.oscillators[0].wave = wave;
     s.voices = voices;
     return s;
 }
@@ -307,37 +307,37 @@ void testOscillators()
     };
 
     auto settings = defaults (Waveform::sine);
-    check (! settings.osc2On, "OSC 2 starts switched off");
+    check (! settings.oscillators[1].on && ! settings.oscillators[2].on && ! settings.oscillators[3].on, "only OSC 1 starts switched on");
     check (approx (steadyPitch (settings), c4, 1.0f), "OSC 1 alone plays the note");
 
     auto up = settings;
-    up.osc1Semitones = 12;
+    up.oscillators[0].semitones = 12;
     check (approx (steadyPitch (up), 2.0f * c4, 2.0f), "OSC 1's PITCH +12 plays an octave up");
-    up.osc1Semitones = -7;
+    up.oscillators[0].semitones = -7;
     check (approx (steadyPitch (up), c4 * std::exp2 (-7.0f / 12.0f), 1.0f), "and -7 a fifth down");
-    up.osc1Semitones = 0;
-    up.osc1FineCents = 50.0f;
+    up.oscillators[0].semitones = 0;
+    up.oscillators[0].fineCents = 50.0f;
     check (approx (steadyPitch (up), c4 * std::exp2 (0.5f / 12.0f), 1.0f), "FINE +50 tunes it a quarter tone sharp");
 
     auto half = settings;
-    half.osc1Level = 0.5f;
+    half.oscillators[0].level = 0.5f;
     check (approx (steadyLevel (half) / steadyLevel (settings), 0.5f, 0.02f), "OSC 1 at 50% LEVEL is half as loud");
 
     // OSC 2 on its own: OSC 1 turned all the way down.
     auto second = settings;
-    second.osc1Level     = 0.0f;
-    second.osc2Wave      = Waveform::sine;
-    second.osc2Semitones = 12;
-    second.osc2Level     = 1.0f;
+    second.oscillators[0].level = 0.0f;
+    second.oscillators[1].wave = Waveform::sine;
+    second.oscillators[1].semitones = 12;
+    second.oscillators[1].level = 1.0f;
     check (steadyLevel (second) < 1e-6f, "switched off, OSC 2 makes no sound");
-    second.osc2On = true;
+    second.oscillators[1].on = true;
     check (approx (steadyPitch (second), 2.0f * c4, 2.0f), "switched on, it plays at its own PITCH");
     check (approx (steadyLevel (second), steadyLevel (settings), steadyLevel (settings) * 0.02f),
            "at the same LEVEL, as loud as OSC 1");
 
     // Both, an octave apart: the octave shows up alongside the note.
     auto both = second;
-    both.osc1Level = 1.0f;
+    both.oscillators[0].level = 1.0f;
     check (steadyLevel (both) > 1.2f * steadyLevel (settings), "together they're louder than OSC 1 alone");
 
     // OSC 2 shares the unison stack: with OSC 1 silent, sixteen copies still spread.
@@ -356,15 +356,15 @@ void testOscillators()
 
     // Switching OSC 2 on and off, and moving the levels, while a note plays.
     auto live = both;
-    live.osc2On = false;
+    live.oscillators[1].on = false;
     auto engine = makeEngine (live);
     auto out = run (*engine, blockSize * 8, { { 0, on (60) } });
     float largestStep = 0.0f;
     float previous = out.getSample (0, out.getNumSamples() - 1);
     for (int change = 0; change < 6; ++change)
     {
-        live.osc2On    = change % 2 == 0;
-        live.osc1Level = change == 4 ? 0.0f : 1.0f;
+        live.oscillators[1].on = change % 2 == 0;
+        live.oscillators[0].level = change == 4 ? 0.0f : 1.0f;
         engine->setSettings (live);
         const auto more = run (*engine, blockSize * 4);
         for (int i = 0; i < more.getNumSamples(); ++i)
@@ -377,6 +377,83 @@ void testOscillators()
     // an oscillator in or out unfaded would jump by up to its full level, ~0.25.
     check (largestStep < 0.05f, "OSC 2 fades in and out, and the levels glide, without a click (largest step "
                                     + std::to_string (largestStep) + ")");
+}
+
+// ---- Test 5b: the bench's modules: four oscillators, routing, unison and envelope off.
+void testModules()
+{
+    std::printf ("Modules:\n");
+
+    const auto levelOf = [] (const Synth2Engine::Settings& settings, int start = blockSize * 4, int length = blockSize * 16)
+    {
+        auto engine = makeEngine (settings);
+        const auto out = run (*engine, length, { { 0, on (60) } });
+        return rms (out, 0, start, out.getNumSamples());
+    };
+
+    auto settings = defaults (Waveform::sine);
+    const float one = levelOf (settings);
+
+    auto none = settings;
+    none.oscillators[0].on = false;
+    check (levelOf (none) < 1e-6f, "with every oscillator off, a note makes no sound");
+
+    // Each of OSC 2..4 alone, as a sine an octave apart from the others, at
+    // full level, plays as loud as OSC 1 did.
+    bool eachPlays = true;
+    for (size_t k = 1; k < (size_t) Synth2Engine::numOscillators; ++k)
+    {
+        auto alone = none;
+        alone.oscillators[k] = { true, true, Waveform::sine, 0, 0.0f, 1.0f };
+        eachPlays = eachPlays && approx (levelOf (alone), one, one * 0.02f);
+    }
+    check (eachPlays, "OSC 2, 3 and 4 each play on their own");
+
+    // Four sines at different octaves add like independent signals: about
+    // twice OSC 1's level.
+    auto four = settings;
+    for (size_t k = 0; k < (size_t) Synth2Engine::numOscillators; ++k)
+        four.oscillators[k] = { true, true, Waveform::sine, (int) k * 12 - 12, 0.0f, 1.0f };
+    check (approx (levelOf (four), 2.0f * one, 0.1f * one), "all four play together");
+
+    auto unrouted = four;
+    for (auto& oscillator : unrouted.oscillators)
+        oscillator.routed = false;
+    unrouted.oscillators[2].routed = true;
+    check (approx (levelOf (unrouted), one, one * 0.02f), "an oscillator not routed to the output is silent");
+
+    // Unison off: one copy per note, whatever VOICES says, so it plays in
+    // tune and in the centre.
+    auto stack = defaults (Waveform::saw, 16);
+    stack.detuneCents = 50.0f;
+    stack.width       = 1.0f;
+    auto single = stack;
+    single.unisonOn = false;
+    {
+        auto engine = makeEngine (single);
+        const auto out = run (*engine, blockSize * 8, { { 0, on (60) } });
+        double difference = 0.0;
+        for (int i = blockSize * 2; i < out.getNumSamples(); ++i)
+            difference += std::abs (out.getSample (0, i) - out.getSample (1, i));
+        check (difference < 1e-3, "with unison off, VOICES plays a single centred copy");
+    }
+    check (approx (levelOf (single), levelOf (defaults (Waveform::saw, 1)), 1e-4f), "as loud as one voice");
+
+    // Envelope off: the note opens in a few milliseconds and stops soon after
+    // the key goes up, whatever ATTACK and RELEASE say.
+    auto gate = settings;
+    gate.attackSeconds  = 2.0f;
+    gate.releaseSeconds = 5.0f;
+    gate.envelopeOn     = false;
+    {
+        auto engine = makeEngine (gate);
+        const auto out = run (*engine, blockSize * 8, { { 0, on (60) }, { blockSize * 4, off (60) } });
+        const int afterAttack  = (int) (0.01 * sampleRate);
+        const int afterRelease = blockSize * 4 + (int) (0.05 * sampleRate);
+        check (rms (out, 0, afterAttack, afterAttack + 256) > 0.5f * one, "with the envelope off, a note opens at once");
+        check (rms (out, 0, afterRelease, out.getNumSamples()) < 1e-4f && engine->getNumActiveNotes() == 0,
+               "and is gone a few milliseconds after the key goes up");
+    }
 }
 
 // ---- Test 6: polyphony, stealing, retriggering. --------------------------------
@@ -527,6 +604,7 @@ int main()
     testUnison();
     testVoicesChangeMidNote();
     testOscillators();
+    testModules();
     testPolyphony();
     testPedalAndPanic();
     testChannels();

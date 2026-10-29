@@ -140,7 +140,7 @@ void testProcessorBasics()
     check (approx ((float) p.getTailLengthSeconds(), 2.0f, 0.01f), "the tail is the release time");
 
     const auto settings = p.currentSettings();
-    check (approx (settings.releaseSeconds, 2.0f, 0.01f) && settings.wave == Waveform::saw,
+    check (approx (settings.releaseSeconds, 2.0f, 0.01f) && settings.oscillators[0].wave == Waveform::saw,
            "the engine's settings come from the parameters");
 
     auto* detune = p.getState().getParameter (ParamID::detune);
@@ -169,8 +169,26 @@ void testProcessorBasics()
     setParam (p, ParamID::osc2Pitch, 7.0f);
     setParam (p, ParamID::osc1Level, 0.5f);
     const auto oscillators = p.currentSettings();
-    check (oscillators.osc2On && oscillators.osc2Semitones == 7 && approx (oscillators.osc1Level, 0.5f, 1e-6f),
+    check (oscillators.oscillators[1].on && oscillators.oscillators[1].semitones == 7 && approx (oscillators.oscillators[0].level, 0.5f, 1e-6f),
            "the oscillators' settings reach the engine");
+
+    setParam (p, ParamID::osc4On, 1.0f);
+    setParam (p, ParamID::osc4Wave, (float) Waveform::sine);
+    setParam (p, ParamID::unisonOn, 0.0f);
+    const auto modules = p.currentSettings();
+    check (modules.oscillators[3].on && modules.oscillators[3].wave == Waveform::sine && ! modules.unisonOn && modules.envelopeOn,
+           "OSC 4 and the modules' switches reach the engine");
+
+    // Following the cables, only an oscillator patched to the output reaches it.
+    setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::cables);
+    p.setRoutedToOutput (1, false);
+    const auto patched = p.currentSettings();
+    check (! patched.oscillators[1].routed && patched.oscillators[0].routed, "with patch cables, an unpatched oscillator isn't routed");
+    setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::fixed);
+    check (p.currentSettings().oscillators[1].routed, "in a fixed order, every oscillator is");
+    p.setRoutedToOutput (1, true);
+    setParam (p, ParamID::osc4On, 0.0f);
+    setParam (p, ParamID::unisonOn, 1.0f);
 }
 
 void testBusLayouts()

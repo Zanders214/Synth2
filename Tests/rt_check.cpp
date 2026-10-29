@@ -78,10 +78,23 @@ int main()
         if (b % 40 == 30)
             set (ParamID::osc2On, 1.0f);
 
+        // Modules come and go from the bench, and the patch is rewired.
+        if (b % 24 == 4)
+        {
+            set (ParamID::osc3On,     (float) ((b / 24) % 2));
+            set (ParamID::osc4On,     (float) ((b / 48) % 2));
+            set (ParamID::osc4Wave,   (float) ((b / 24) % 4));
+            set (ParamID::unisonOn,   (float) ((b / 24 + 1) % 2));
+            set (ParamID::envelopeOn, (float) ((b / 72 + 1) % 2));
+            set (ParamID::signalFlow, (float) ((b / 24) % 3));
+            proc.setRoutedToOutput ((b / 24) % 4, (b / 24) % 3 != 0);
+        }
+
         audioCallback (proc, buffer, midi);         // the full callback, under RTSan
     }
 
-    std::printf ("PASS: %d blocks of 16-voice, two-oscillator unison chords (stolen notes, sustain\n"
-                 "      pedal, on-screen keys, settings changing mid-note), no RT-safety violations\n", blocks);
+    std::printf ("PASS: %d blocks of 16-voice unison chords on up to four oscillators (stolen notes,\n"
+                 "      sustain pedal, on-screen keys, settings, modules and routing changing mid-note),\n"
+                 "      no RT-safety violations\n", blocks);
     return 0;
 }

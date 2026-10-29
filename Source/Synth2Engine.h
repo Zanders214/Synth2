@@ -20,11 +20,17 @@
 
     Sixteen notes of polyphony, each a stack of VOICES unison copies, DETUNEd
     and spread across the stereo field by WIDTH (see Unison.h), under an
-    ATTACK / RELEASE envelope. Every copy plays OSC 1 and, when it is switched
-    on, OSC 2: each oscillator in one of the four basic shapes, at its own
+    ATTACK / RELEASE envelope. Every copy plays the oscillators that are
+    switched on (up to four), each in one of the four basic shapes, at its own
     PITCH (semitones) and FINE tune (cents), at its own LEVEL:
 
-        note  ->  VOICES x (OSC 1 + OSC 2)  ->  detune + pan  ->  envelope  ->  OUTPUT
+        note  ->  VOICES x (OSC 1 + ... + OSC 4)  ->  detune + pan  ->  envelope  ->  OUTPUT
+
+    The unison stack and the envelope can be switched off too: without the
+    stack each note plays a single copy, and without the envelope a note
+    simply opens and closes over a few milliseconds, so it never clicks. An
+    oscillator that is on but not routed to the output (see Settings::routed)
+    is silent, as if it were off.
 
     MIDI is read sample-accurately: the block is rendered up to each event,
     then the event applied. A seventeenth note takes over the voice that has
@@ -35,7 +41,8 @@
 
     DETUNE, WIDTH, OUTPUT and each oscillator's FINE and LEVEL glide to new
     values over 20 ms, so turning them while a chord plays doesn't zipper;
-    switching OSC 2 on or off fades it in or out the same way.
+    switching an oscillator on or off, or routing it to the output or away,
+    fades it in or out the same way.
 */
 class Synth2Engine
 {
@@ -43,25 +50,43 @@ public:
     static constexpr int   maxNotes     = 16;
     static constexpr int   maxSemitones = 24;      // each oscillator's PITCH, either way
     static constexpr float maxFineCents = 50.0f;   // and its FINE tune
+    static constexpr int   numOscillators = SynthVoice::numOscillators;
+
+    // A note with the envelope switched off still opens and closes this fast,
+    // so it never clicks.
+    static constexpr float gateAttackSeconds  = 0.005f;
+    static constexpr float gateReleaseSeconds = 0.03f;
+
+    /** One oscillator: whether it is switched on, and routed to the output,
+        its shape, its tuning against the note and its level. */
+    struct OscillatorSettings
+    {
+        bool     on        = false;
+        bool     routed    = true;
+        Waveform wave      = Waveform::saw;
+        int      semitones = 0;
+        float    fineCents = 0.0f;
+        float    level     = 1.0f;
+    };
 
     struct Settings
     {
-        Waveform wave           = Waveform::saw;   // OSC 1's shape
+        // OSC 1 plays from the start; the others each have their own sound
+        // ready for when they are switched on.
+        std::array<OscillatorSettings, numOscillators> oscillators {
+            OscillatorSettings { true,  true, Waveform::saw,      0,  0.0f, 1.0f },
+            OscillatorSettings { false, true, Waveform::square, -12,  0.0f, 0.7f },
+            OscillatorSettings { false, true, Waveform::saw,      7,  0.0f, 0.5f },
+            OscillatorSettings { false, true, Waveform::triangle, 12, 0.0f, 0.4f } };
+
+        bool     unisonOn       = true;
         int      voices         = 1;
         float    detuneCents    = 15.0f;
         float    width          = 0.5f;
+        bool     envelopeOn     = true;
         float    attackSeconds  = 0.005f;
         float    releaseSeconds = 0.3f;
         float    outputDb       = 0.0f;
-
-        int      osc1Semitones  = 0;
-        float    osc1FineCents  = 0.0f;
-        float    osc1Level      = 1.0f;
-        bool     osc2On         = false;
-        Waveform osc2Wave       = Waveform::square;
-        int      osc2Semitones  = -12;
-        float    osc2FineCents  = 0.0f;
-        float    osc2Level      = 0.7f;
     };
 
     void prepare (double sampleRate)
@@ -76,12 +101,13 @@ public:
         smoothed.detune.setCurrentAndTargetValue (settings.detuneCents);
         smoothed.width .setCurrentAndTargetValue (settings.width);
         smoothed.gain  .setCurrentAndTargetValue (juce::Decibels::decibelsToGain (settings.outputDb));
-        for (auto* value : { &smoothed.fine1, &smoothed.level1, &smoothed.fine2, &smoothed.level2 })
-            value->reset (sampleRate, glide);
-        smoothed.fine1 .setCurrentAndTargetValue (settings.osc1FineCents);
-        smoothed.level1.setCurrentAndTargetValue (settings.osc1Level);
-        smoothed.fine2 .setCurrentAndTargetValue (settings.osc2FineCents);
-        smoothed.level2.setCurrentAndTargetValue (osc2Target());
+        for (size_t k = 0; k < (size_t) numOscillators; ++k)
+        {
+            smoothed.fine[k] .reset (sampleRate, glide);
+            smoothed.level[k].reset (sampleRate, glide);
+            smoothed.fine[k] .setCurrentAndTargetValue (settings.oscillators[k].fineCents);
+            smoothed.level[k].setCurrentAndTargetValue (levelTarget (settings.oscillators[k]));
+        }
 
         appliedEnvelope.attack = -1.0f;   // hand every voice the envelope afresh
         applyEnvelope();
@@ -94,17 +120,15 @@ public:
         settings.voices      = Unison::clampVoices (settings.voices);
         settings.detuneCents = juce::jlimit (0.0f, Unison::maxDetuneCents, settings.detuneCents);
         settings.width       = juce::jlimit (0.0f, 1.0f, settings.width);
-        for (auto* semitones : { &settings.osc1Semitones, &settings.osc2Semitones })
-            *semitones = juce::jlimit (-maxSemitones, maxSemitones, *semitones);
-        for (auto* cents : { &settings.osc1FineCents, &settings.osc2FineCents })
-            *cents = juce::jlimit (-maxFineCents, maxFineCents, *cents);
-        for (auto* level : { &settings.osc1Level, &settings.osc2Level })
-            *level = juce::jlimit (0.0f, 1.0f, *level);
-
-        smoothed.fine1 .setTargetValue (settings.osc1FineCents);
-        smoothed.level1.setTargetValue (settings.osc1Level);
-        smoothed.fine2 .setTargetValue (settings.osc2FineCents);
-        smoothed.level2.setTargetValue (osc2Target());
+        for (size_t k = 0; k < (size_t) numOscillators; ++k)
+        {
+            auto& oscillator = settings.oscillators[k];
+            oscillator.semitones = juce::jlimit (-maxSemitones, maxSemitones, oscillator.semitones);
+            oscillator.fineCents = juce::jlimit (-maxFineCents, maxFineCents, oscillator.fineCents);
+            oscillator.level     = juce::jlimit (0.0f, 1.0f, oscillator.level);
+            smoothed.fine[k] .setTargetValue (oscillator.fineCents);
+            smoothed.level[k].setTargetValue (levelTarget (oscillator));
+        }
         smoothed.detune.setTargetValue (settings.detuneCents);
         smoothed.width .setTargetValue (settings.width);
         smoothed.gain  .setTargetValue (juce::Decibels::decibelsToGain (settings.outputDb, -100.0f));
@@ -298,8 +322,13 @@ private:
             // per chunk (at most 32 samples; the voices glide the levels across
             // it), which is fine-grained enough for pitch and pan; the output
             // gain moves every sample.
-            for (auto* value : { &smoothed.detune, &smoothed.width, &smoothed.fine1, &smoothed.level1, &smoothed.fine2, &smoothed.level2 })
-                value->skip (length);
+            smoothed.detune.skip (length);
+            smoothed.width .skip (length);
+            for (size_t k = 0; k < (size_t) numOscillators; ++k)
+            {
+                smoothed.fine[k] .skip (length);
+                smoothed.level[k].skip (length);
+            }
             const auto chunkSettings = currentVoiceSettings();
 
             std::array<float, SynthVoice::maxChunk> mixL {};
@@ -331,15 +360,16 @@ private:
     VoiceSettings currentVoiceSettings() const noexcept
     {
         VoiceSettings voice;
-        voice.wave        = settings.wave;
-        voice.voices      = settings.voices;
+        voice.voices      = settings.unisonOn ? settings.voices : 1;
         voice.detuneCents = smoothed.detune.getCurrentValue();
         voice.width       = smoothed.width.getCurrentValue();
-        voice.ratio1      = tuning (settings.osc1Semitones, smoothed.fine1.getCurrentValue());
-        voice.level1      = smoothed.level1.getCurrentValue();
-        voice.wave2       = settings.osc2Wave;
-        voice.ratio2      = tuning (settings.osc2Semitones, smoothed.fine2.getCurrentValue());
-        voice.level2      = smoothed.level2.getCurrentValue();
+        for (size_t k = 0; k < (size_t) numOscillators; ++k)
+        {
+            auto& oscillator = voice.oscillators[k];
+            oscillator.wave  = settings.oscillators[k].wave;
+            oscillator.ratio = tuning (settings.oscillators[k].semitones, smoothed.fine[k].getCurrentValue());
+            oscillator.level = smoothed.level[k].getCurrentValue();
+        }
         return voice;
     }
 
@@ -349,8 +379,12 @@ private:
         return std::exp2 (((float) semitones + fineCents / 100.0f) / 12.0f);
     }
 
-    /** Where OSC 2's level heads: its LEVEL while it is on, silence while off. */
-    float osc2Target() const noexcept { return settings.osc2On ? settings.osc2Level : 0.0f; }
+    /** Where an oscillator's level heads: its LEVEL while it is on and routed
+        to the output, silence otherwise. */
+    static float levelTarget (const OscillatorSettings& oscillator) noexcept
+    {
+        return oscillator.on && oscillator.routed ? oscillator.level : 0.0f;
+    }
 
     // The voice that has been releasing longest, or failing that the oldest.
     SynthVoice& voiceToSteal() noexcept
@@ -370,10 +404,10 @@ private:
     void applyEnvelope() noexcept
     {
         juce::ADSR::Parameters envelope;
-        envelope.attack  = juce::jmax (0.001f, settings.attackSeconds);
+        envelope.attack  = settings.envelopeOn ? juce::jmax (0.001f, settings.attackSeconds) : gateAttackSeconds;
         envelope.decay   = 0.0f;
         envelope.sustain = 1.0f;
-        envelope.release = juce::jmax (0.005f, settings.releaseSeconds);
+        envelope.release = settings.envelopeOn ? juce::jmax (0.005f, settings.releaseSeconds) : gateReleaseSeconds;
 
         if (juce::exactlyEqual (envelope.attack, appliedEnvelope.attack)
             && juce::exactlyEqual (envelope.release, appliedEnvelope.release))
@@ -392,10 +426,8 @@ private:
         juce::SmoothedValue<float> detune;
         juce::SmoothedValue<float> width;
         juce::SmoothedValue<float> gain;
-        juce::SmoothedValue<float> fine1;
-        juce::SmoothedValue<float> level1;
-        juce::SmoothedValue<float> fine2;
-        juce::SmoothedValue<float> level2;
+        std::array<juce::SmoothedValue<float>, numOscillators> fine;
+        std::array<juce::SmoothedValue<float>, numOscillators> level;
     };
     Smoothed smoothed;
 
