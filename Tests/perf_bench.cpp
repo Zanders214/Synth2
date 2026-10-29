@@ -13,6 +13,7 @@
 
 #include <juce_audio_utils/juce_audio_utils.h>
 #include "PluginProcessor.h"
+#include "Bench.h"
 #include "ParamIDs.h"
 #include <cstdio>
 
@@ -25,6 +26,7 @@ double benchChord (const char* name, int notes, int voices, ankerl::nanobench::B
 
     Synth2AudioProcessor proc;
     proc.prepareToPlay (sr, bs);
+    Bench::Model (proc.getState()).adoptClassicLayout();   // OSC 1, unison and the envelope, as before the bench
     auto* v = proc.getState().getParameter (ParamID::voices);
     v->setValueNotifyingHost (v->convertTo0to1 ((float) voices));
     auto* r = proc.getState().getParameter (ParamID::release);

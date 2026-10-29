@@ -9,127 +9,93 @@ using namespace Synth2;
 
 namespace
 {
-    constexpr float kDesignWidth  = 480.0f;
-    constexpr float kDesignHeight = 612.0f;
-    constexpr float kPanelPad     = 24.0f;
-
-    // The dials, in display order: three for each oscillator, three for the
-    // unison stack, three for the amp.
-    constexpr std::array<const char*, Synth2AudioProcessorEditor::numDials> dialParamIds
-        { ParamID::osc1Pitch, ParamID::osc1Fine, ParamID::osc1Level,
-          ParamID::osc2Pitch, ParamID::osc2Fine, ParamID::osc2Level,
-          ParamID::voices, ParamID::detune, ParamID::width,
-          ParamID::attack, ParamID::release, ParamID::output };
-    constexpr std::array<const char*, Synth2AudioProcessorEditor::numDials> dialNames
-        { "PITCH", "FINE", "LEVEL", "PITCH", "FINE", "LEVEL",
-          "VOICES", "DETUNE", "WIDTH", "ATTACK", "RELEASE", "OUTPUT" };
-
-    constexpr size_t firstOsc2Dial = 3;
-    constexpr size_t dialsPerRow   = 6;
-
-    // Each row runs the spectrum left to right, cyan to amber.
-    juce::Colour dialColour (size_t i)
-    {
-        return ColourMath::spectrum ((float) (i % dialsPerRow) / (float) (dialsPerRow - 1));
-    }
-
-    bool isOsc2Dial (size_t i) { return i >= firstOsc2Dial && i < firstOsc2Dial + 3; }
+    constexpr float kPanelPad = 24.0f;
+    constexpr float kBenchTop = 60.0f;   // the bench sits under the header
 
     float paramValue (const Synth2AudioProcessor& p, const char* id) { return p.getState().getRawParameterValue (id)->load(); }
 
-    juce::String dialValueText (const Synth2AudioProcessor& p, size_t index)
-    {
-        const juce::String id (dialParamIds[index]);
-        const float value = paramValue (p, dialParamIds[index]);
-
-        if (id == ParamID::osc1Pitch || id == ParamID::osc2Pitch) return Format::semitones (juce::roundToInt (value));
-        if (id == ParamID::osc1Fine  || id == ParamID::osc2Fine)  return Format::fineCents (value);
-        if (id == ParamID::voices)                                return juce::String (juce::roundToInt (value));
-        if (id == ParamID::detune)                                return Format::cents (value);
-        if (id == ParamID::attack    || id == ParamID::release)   return Format::seconds (value);
-        if (id == ParamID::output)                                return Format::decibels (value);
-        return Format::percent (value);   // the levels and WIDTH
-    }
+    // The signal-flow choices, in the parameter's order.
+    const std::array<ChoiceTray::Choice, 3> flowChoices {
+        ChoiceTray::Choice { "Fixed order",   "By kind, wherever the modules sit" },
+        ChoiceTray::Choice { "Follow layout", "Row by row, left to right" },
+        ChoiceTray::Choice { "Patch cables",  "Along cables patched to the output" } };
 }
 
 Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
     : AudioProcessorEditor (&p),
       processorRef (p),
-      osc1Picker (*p.getState().getParameter (ParamID::wave)),
-      osc2Picker (*p.getState().getParameter (ParamID::osc2Wave), p.getState().getParameter (ParamID::osc2On), "OSC 2"),
+      model (p.getState()),
+      bench (p.getState(), looks),
       keyboard (p.getKeyboardState())
 {
-    waveDisplays[1].setCaption ({});   // OSC 2's power chip names it
-    for (int osc = 0; osc < numOscillators; ++osc)
-    {
-        auto& display = waveDisplays[(size_t) osc];
-        auto& picker  = getWavePicker (osc);
-        auto& menu    = waveMenus[(size_t) osc];
-        addAndMakeVisible (display);
-        addAndMakeVisible (picker);
+    addAndMakeVisible (bench);
+    addAndMakeVisible (keyboard);
 
-        // Each well opens its tray of shapes; hovering one previews it in the
-        // well, picking one sets that oscillator's shape.
-        picker.onOpenMenu ([&menu, &picker]
+    BenchStyle::setUpDial (outputDial, BenchStyle::dialColour (1.0f), looks, p.getState(), ParamID::output);
+    outputDial.onValueChange = [this] { repaint (layout.outputColumn); };
+    addAndMakeVisible (outputDial);
+    outputAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (p.getState(), ParamID::output, outputDial);
+
+    addAndMakeVisible (cables);
+
+    // A click on an empty spot offers modules to add there.
+    bench.onEmptyClick ([this] (juce::Point<float> benchAt, juce::Point<int> viewAt)
+    {
+        openAddTray (benchAt, viewAt + bench.getPosition());
+    });
+
+    for (int slot = 0; slot < Bench::numOscillators; ++slot)
+    {
+        auto& module = bench.getOscillator (slot);
+        auto& menu   = waveMenus[(size_t) slot];
+        auto& picker = module.getPicker();
+        auto& well   = module.getDisplay();
+
+        // Each well opens its tray of shapes under it; hovering one previews
+        // it in the well, picking one sets that oscillator's shape.
+        picker.onOpenMenu ([this, &menu, &picker, &well]
         {
+            const auto wellBounds = getLocalArea (&well, well.getLocalBounds());
+            const auto row = wellBounds.withSizeKeepingCentre (juce::jmax (wellBounds.getWidth(), juce::roundToInt (440.0f * uiScale)),
+                                                               wellBounds.getHeight())
+                                       .constrainedWithin (getLocalBounds().reduced (juce::roundToInt (kPanelPad * uiScale)));
+            menu.setAnchor (wellBounds, row);
             menu.open (picker.getSelected());
             picker.setMenuOpen (true);
         });
-        menu.onChoose ([&picker]  (int wave) { picker.choose (wave); });
-        menu.onHover  ([&display] (int wave) { display.setPreview (wave); });
+        menu.onChoose ([&picker] (int wave) { picker.choose (wave); });
+        menu.onHover  ([&well]   (int wave) { well.setPreview (wave); });
         menu.onClose  ([&picker] { picker.setMenuOpen (false); });
+
+        module.onJack ([this, id = module.getId()] (const juce::MouseEvent& e, int phase) { patch (id, e, phase); });
     }
 
-    addAndMakeVisible (unisonDisplay);
-    addAndMakeVisible (ampDisplay);
-    ampDisplay.setColours (dialColour (9), dialColour (10), dialColour (11));   // ATTACK, RELEASE, OUTPUT
-    addAndMakeVisible (keyboard);
-
-    // OSC 2 is out of sight until it is added.
-    addChildComponent (addOsc2);
-    addOsc2.onClick ([this]
+    addTray.onChoose ([this] (int choice)
     {
-        osc2Picker.setOn (true);
-        showOsc2 (true, true);
+        constexpr std::array<Bench::Kind, 3> kinds { Bench::Kind::oscillator, Bench::Kind::unison, Bench::Kind::envelope };
+        bench.add (kinds[(size_t) choice], addAt);
+        lastCables.clear();
     });
-
-    for (size_t i = 0; i < dials.size(); ++i)
+    settingsTray.onChoose ([this] (int choice)
     {
-        auto& dial = dials[i];
-        dial.setSliderStyle (juce::Slider::RotaryVerticalDrag);
-        // 270 degree sweep from 7:30 to 4:30. JUCE wants non-negative angles, so
-        // -135..135 degrees is written as the identical 225..495.
-        dial.setRotaryParameters (juce::degreesToRadians (225.0f),
-                                  juce::degreesToRadians (495.0f), true);
-        dial.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-        dial.setMouseDragSensitivity (200);
-        dial.setColour (juce::Slider::rotarySliderFillColourId, dialColour (i));
-        dial.setLookAndFeel (&looks);
-        dial.setComponentID (dialParamIds[i]);
-        dial.setPaintingIsUnclipped (true);   // the arc's glow reaches past the dial
-
-        const auto* parameter = p.getState().getParameter (dialParamIds[i]);
-        dial.setDoubleClickReturnValue (true, p.getState().getParameterRange (dialParamIds[i])
-                                                  .convertFrom0to1 (parameter->getDefaultValue()));
-        dial.setTooltip (parameter->getName (64));
-
-        // The names and values are painted under the dials, so keep them in
-        // step during a drag rather than trailing by a timer tick.
-        dial.onValueChange = [this] { repaint(); };
-        addAndMakeVisible (dial);
-        attachments[i] = std::make_unique<SliderAttachment> (p.getState(), dialParamIds[i], dial);
-    }
+        auto* flow = processorRef.getState().getParameter (ParamID::signalFlow);
+        flow->beginChangeGesture();
+        flow->setValueNotifyingHost (flow->convertTo0to1 ((float) choice));
+        flow->endChangeGesture();
+        showFlow();
+    });
 
     setResizable (true, true);
     if (auto* constrainer = getConstrainer())
-        constrainer->setFixedAspectRatio ((double) kDesignWidth / (double) kDesignHeight);
-    setResizeLimits ((int) kDesignWidth, (int) kDesignHeight,
-                     (int) (kDesignWidth * 2.0f), (int) (kDesignHeight * 2.0f));
+        constrainer->setFixedAspectRatio ((double) designWidth / (double) designHeight);
+    setResizeLimits ((int) (designWidth * 0.75f), (int) (designHeight * 0.75f),
+                     (int) (designWidth * 2.0f), (int) (designHeight * 2.0f));
 
-    showOsc2 (p.currentSettings().oscillators[1].on, false);
-    setSize ((int) kDesignWidth, (int) kDesignHeight);
+    setSize ((int) designWidth, (int) designHeight);
     for (auto& menu : waveMenus)
-        addChildComponent (menu);   // last, so they open over everything
+        addChildComponent (menu);   // last, so the trays open over everything
+    addChildComponent (addTray);
+    addChildComponent (settingsTray);
     resized();
     timerCallback();
     startTimerHz (30);
@@ -138,55 +104,32 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
 Synth2AudioProcessorEditor::~Synth2AudioProcessorEditor()
 {
     stopTimer();
-    for (auto& dial : dials)
-        dial.setLookAndFeel (nullptr);
+    outputDial.setLookAndFeel (nullptr);
 }
 
-VoiceDisplayState Synth2AudioProcessorEditor::displayState (Waveform wave) const
+// ---- What the modules show --------------------------------------------------------
+
+VoiceDisplayState Synth2AudioProcessorEditor::voiceState (const Synth2Engine::Settings& settings) const
 {
-    const auto settings = processorRef.currentSettings();
+    // The stack as it plays: one plain voice while unison is off the bench,
+    // drawn in the shape of the first oscillator on it.
     VoiceDisplayState state;
-    state.wave   = wave;
-    state.voices = Unison::clampVoices (settings.voices);
+    state.wave = Waveform::saw;
+    for (const auto& osc : settings.oscillators)
+        if (osc.on)
+        {
+            state.wave = osc.wave;
+            break;
+        }
+    state.voices = settings.unisonOn ? Unison::clampVoices (settings.voices) : 1;
     state.detune = settings.detuneCents;
     state.width  = settings.width;
     return state;
 }
 
-WaveDisplay::Osc Synth2AudioProcessorEditor::oscView (int oscillator) const
-{
-    const auto settings = processorRef.currentSettings();
-    const auto& osc = settings.oscillators[(size_t) oscillator];
-    WaveDisplay::Osc view;
-    view.cycles = Synth2VisualModel::cyclesFor (osc.semitones, osc.fineCents);
-    view.level  = osc.level;
-    return view;
-}
-
-void Synth2AudioProcessorEditor::showOsc2 (bool shown, bool fadeIn)
-{
-    osc2Shown = shown;
-    if (! shown)
-        waveMenus[1].close();
-
-    // OSC 2's well (with its picker) and its three dials come and go together;
-    // OSC 1 takes the whole row while they're away.
-    const std::array<juce::Component*, 5> parts { &waveDisplays[1], &osc2Picker, &dials[3], &dials[4], &dials[5] };
-    for (auto* part : parts)
-        part->setVisible (shown && ! fadeIn);
-    addOsc2.setVisible (! shown);
-
-    resized();
-    if (shown && fadeIn)
-        for (auto* part : parts)
-            juce::Desktop::getInstance().getAnimator().fadeIn (part, 150);   // --dur-base
-    repaint();
-}
-
-AmpDisplayState Synth2AudioProcessorEditor::ampState() const
+AmpDisplayState Synth2AudioProcessorEditor::ampState (const Synth2Engine::Settings& settings) const
 {
     const auto& parameters = processorRef.getState();
-    const auto  settings   = processorRef.currentSettings();
 
     AmpDisplayState state;
     state.attackPosition  = parameters.getParameter (ParamID::attack)->getValue();
@@ -200,27 +143,234 @@ AmpDisplayState Synth2AudioProcessorEditor::ampState() const
     return state;
 }
 
+Synth2AudioProcessor::SignalFlow Synth2AudioProcessorEditor::signalFlow() const
+{
+    return (Synth2AudioProcessor::SignalFlow) juce::jlimit (0, 2, juce::roundToInt (paramValue (processorRef, ParamID::signalFlow)));
+}
+
+// The modules' headers follow the signal flow: their place in the order when
+// sound follows the layout, OUT jacks (and greyed out until patched) when it
+// follows the cables.
+void Synth2AudioProcessorEditor::showFlow()
+{
+    const auto flow = signalFlow();
+    const bool followLayout = flow == Synth2AudioProcessor::SignalFlow::layout;
+    const bool followCables = flow == Synth2AudioProcessor::SignalFlow::cables;
+
+    std::array<int, Bench::allModules.size()> places {};
+    if (followLayout)
+    {
+        int place = 0;
+        for (const auto& id : model.readingOrder())
+            for (size_t i = 0; i < Bench::allModules.size(); ++i)
+                if (Bench::allModules[i] == id)
+                    places[i] = ++place;
+    }
+    for (size_t i = 0; i < Bench::allModules.size(); ++i)
+        bench.getModule (Bench::allModules[i]).setOrder (places[i]);
+
+    for (int slot = 0; slot < Bench::numOscillators; ++slot)
+    {
+        auto& module = bench.getOscillator (slot);
+        const bool patched = model.isPatchedToOutput (module.getId());
+        module.setJackShown (followCables);
+        module.setPlugged (followCables && patched);
+        module.setDimmed (followCables && ! patched);
+    }
+
+    if ((int) flow != lastFlow)
+    {
+        lastFlow = (int) flow;
+        repaint();
+    }
+}
+
 void Synth2AudioProcessorEditor::timerCallback()
 {
-    // The displays follow the parameters, however they change (dials, host
-    // automation, a restored set), and the AMP well the notes as they play;
-    // each repaints only when its state moved.
+    // The modules follow the parameters, however they change (dials, host
+    // automation, a restored session), and the envelope the notes as they
+    // play; each display repaints only when its state moved.
+    bench.sync();
     const auto settings = processorRef.currentSettings();
-    waveDisplays[0].setState (displayState (settings.oscillators[0].wave));
-    waveDisplays[1].setState (displayState (settings.oscillators[1].wave));
-    for (int osc = 0; osc < numOscillators; ++osc)
-        waveDisplays[(size_t) osc].setOsc (oscView (osc));
-    unisonDisplay.setState (displayState (settings.oscillators[0].wave));
-    ampDisplay.setAmpState (ampState());
+    const auto voice    = voiceState (settings);
+    for (int slot = 0; slot < Bench::numOscillators; ++slot)
+        bench.getOscillator (slot).refresh (settings.oscillators[(size_t) slot], voice);
+    bench.getUnison().refresh (voice);
+    bench.getEnvelope().refresh (ampState (settings));
+    showFlow();
 
-    // OSC 2 appears when it is added and goes when it is switched off, from
-    // its chips or from the host.
-    if (settings.oscillators[1].on != osc2Shown)
-        showOsc2 (settings.oscillators[1].on, settings.oscillators[1].on);
+    if (const auto signature = cableSignature(); signature != lastCables)
+    {
+        lastCables = signature;
+        cables.repaint();
+        repaint (layout.outputColumn);
+    }
+    if (! juce::exactlyEqual (settings.outputDb, lastOutput))
+    {
+        lastOutput = settings.outputDb;
+        repaint (layout.outputColumn);
+    }
 
-    // Light the keys the host is playing.
     processorRef.showHostNotesOnKeyboard();
 }
+
+// ---- Trays ---------------------------------------------------------------------------
+
+void Synth2AudioProcessorEditor::openAddTray (juce::Point<float> benchAt, juce::Point<int> editorAt)
+{
+    addAt = benchAt;
+    const int  left      = model.oscillatorsLeft();
+    const bool unisonFree   = model.canAdd (Bench::Kind::unison);
+    const bool envelopeFree = model.canAdd (Bench::Kind::envelope);
+    std::vector<ChoiceTray::Choice> choices {
+        { "Oscillator", left > 0 ? juce::String (left) + " of 4 left: a shape at its own pitch and level"
+                                 : juce::String ("All four are on the bench"), left > 0 },
+        { "Unison",   unisonFree   ? "Stack, detune and spread every note" : "Already on the bench", unisonFree },
+        { "Envelope", envelopeFree ? "Shape each note's attack and release" : "Already on the bench", envelopeFree } };
+    addTray.setBounds (getLocalBounds());
+    addTray.open ("ADD TO THE BENCH", std::move (choices), editorAt);
+}
+
+void Synth2AudioProcessorEditor::openSettings()
+{
+    std::vector<ChoiceTray::Choice> choices (flowChoices.begin(), flowChoices.end());
+    choices[(size_t) signalFlow()].ticked = true;
+    settingsTray.setBounds (getLocalBounds());
+    const auto gear = layout.gear;
+    settingsTray.open ("SIGNAL FLOW", std::move (choices),
+                       { gear.getRight() - juce::roundToInt (260.0f * uiScale), gear.getBottom() + juce::roundToInt (8.0f * uiScale) });
+    repaint (layout.gear);
+}
+
+// ---- Cables ----------------------------------------------------------------------------
+
+juce::Rectangle<float> Synth2AudioProcessorEditor::outputJackBounds() const noexcept
+{
+    const float s = uiScale;
+    const auto column = layout.outputColumn.toFloat();
+    return { column.getX() + 4.0f * s, column.getY() + 17.0f * s, 18.0f * s, 18.0f * s };
+}
+
+juce::Point<float> Synth2AudioProcessorEditor::jackCentre (const Bench::ModuleId& id)
+{
+    auto& module = bench.getModule (id);
+    return getLocalPoint (&module, module.jackBounds().getCentre());
+}
+
+void Synth2AudioProcessorEditor::patch (const Bench::ModuleId& from, const juce::MouseEvent& e, int phase)
+{
+    const auto at = e.getEventRelativeTo (this).position;
+    if (phase == BenchModule::jackDown)
+    {
+        // Picking up a patched jack unplugs its cable, to drop elsewhere.
+        model.disconnect (from);
+        patchingFrom = from;
+        patchingTo   = at;
+    }
+    else if (phase == BenchModule::jackDrag)
+    {
+        patchingTo = at;
+    }
+    else
+    {
+        if (outputJackBounds().expanded (10.0f * uiScale).contains (at))
+            model.connect (from);
+        patchingFrom.reset();
+    }
+    showFlow();
+    cables.repaint();
+    repaint (layout.outputColumn);
+}
+
+void Synth2AudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
+{
+    if (layout.gear.toFloat().contains (e.position))
+    {
+        openSettings();
+        return;
+    }
+
+    // Grabbing the output's IN jack takes the last cable patched into it.
+    if (signalFlow() == Synth2AudioProcessor::SignalFlow::cables && outputJackBounds().expanded (4.0f * uiScale).contains (e.position))
+    {
+        const auto patched = model.patchedToOutput();
+        if (! patched.empty())
+        {
+            const auto from = patched.back();
+            model.disconnect (from);
+            patchingFrom = from;
+            patchingTo   = e.position;
+            showFlow();
+            cables.repaint();
+        }
+    }
+}
+
+void Synth2AudioProcessorEditor::mouseDrag (const juce::MouseEvent& e)
+{
+    if (! patchingFrom.has_value())
+        return;
+    patchingTo = e.position;
+    cables.repaint();
+}
+
+void Synth2AudioProcessorEditor::mouseUp (const juce::MouseEvent& e)
+{
+    if (! patchingFrom.has_value())
+        return;
+    if (outputJackBounds().expanded (10.0f * uiScale).contains (e.position))
+        model.connect (*patchingFrom);
+    patchingFrom.reset();
+    showFlow();
+    cables.repaint();
+    repaint (layout.outputColumn);
+}
+
+juce::String Synth2AudioProcessorEditor::cableSignature()
+{
+    juce::String signature (signalFlow() == Synth2AudioProcessor::SignalFlow::cables ? "cables" : "none");
+    for (const auto& id : model.patchedToOutput())
+        if (bench.getModule (id).isVisible())
+            signature << " " << id.toString() << "@" << jackCentre (id).toString();
+    return signature;
+}
+
+void Synth2AudioProcessorEditor::paintCable (juce::Graphics& g, juce::Point<float> from, juce::Point<float> to, juce::Colour colour) const
+{
+    // A cable hangs: a curve that sags below both ends, more the longer it is.
+    const float s   = uiScale;
+    const float sag = 40.0f * s + 0.25f * from.getDistanceFrom (to);
+    juce::Path cable;
+    cable.startNewSubPath (from);
+    cable.cubicTo (from.translated (0.0f, sag), to.translated (0.0f, sag), to);
+
+    const juce::PathStrokeType::JointStyle curved = juce::PathStrokeType::curved;
+    const juce::PathStrokeType::EndCapStyle round = juce::PathStrokeType::rounded;
+    g.setColour (juce::Colours::black.withAlpha (0.35f));
+    g.strokePath (cable, juce::PathStrokeType (6.0f * s, curved, round), juce::AffineTransform::translation (0.0f, 3.0f * s));
+    g.setColour (colour.withAlpha (0.25f));
+    g.strokePath (cable, juce::PathStrokeType (7.0f * s, curved, round));
+    g.setColour (colour);
+    g.strokePath (cable, juce::PathStrokeType (3.0f * s, curved, round));
+    g.fillEllipse (juce::Rectangle<float> (7.0f * s, 7.0f * s).withCentre (from));
+    g.fillEllipse (juce::Rectangle<float> (7.0f * s, 7.0f * s).withCentre (to));
+}
+
+void Synth2AudioProcessorEditor::paintCables (juce::Graphics& g)
+{
+    if (signalFlow() != Synth2AudioProcessor::SignalFlow::cables)
+        return;
+
+    const auto in = outputJackBounds().getCentre();
+    for (const auto& id : model.patchedToOutput())
+        if (bench.getModule (id).isVisible())
+            paintCable (g, jackCentre (id), in, BenchStyle::dialColour (0.25f * (float) id.slot));
+
+    if (patchingFrom.has_value())
+        paintCable (g, jackCentre (*patchingFrom), patchingTo, BenchStyle::dialColour (0.25f * (float) patchingFrom->slot).withAlpha (0.8f));
+}
+
+// ---- Painting ---------------------------------------------------------------------------
 
 void Synth2AudioProcessorEditor::paint (juce::Graphics& g)
 {
@@ -255,12 +405,11 @@ void Synth2AudioProcessorEditor::paint (juce::Graphics& g)
 
     paintHeader (g, s);
 
-    // Hairlines above the dials and above the keyboard.
+    // Hairline above the keyboard and OUTPUT.
     g.setColour (Palette::hairline);
-    for (const int y : { layout.groupsSeparatorY, layout.keyboardSeparatorY })
-        g.fillRect (juce::Rectangle (kPanelPad * s, (float) y, w - 2.0f * kPanelPad * s, juce::jmax (1.0f, s)));
+    g.fillRect (juce::Rectangle (kPanelPad * s, (float) layout.stripSeparatorY, w - 2.0f * kPanelPad * s, juce::jmax (1.0f, s)));
 
-    paintDialLabels (g, s);
+    paintOutput (g, s);
 }
 
 void Synth2AudioProcessorEditor::paintHeader (juce::Graphics& g, float s) const
@@ -287,133 +436,97 @@ void Synth2AudioProcessorEditor::paintHeader (juce::Graphics& g, float s) const
     g.setFont (Fonts::sans (10.0f * s, true, 0.14f));   // --tracking-label
     g.setColour (Palette::accent);
     g.drawText ("POLY", badge, juce::Justification::centred, false);
+
+    // The gear: eight teeth round a ring, lit while its settings are open.
+    const auto  gear   = layout.gear.toFloat();
+    const float outer  = gear.getWidth() * 0.46f;
+    const float inner  = gear.getWidth() * 0.30f;
+    juce::Path teeth;
+    for (int tooth = 0; tooth < 8; ++tooth)
+    {
+        teeth.addRectangle (-1.7f * s, -outer, 3.4f * s, outer - inner + 1.0f * s);
+        teeth.applyTransform (juce::AffineTransform::rotation (juce::MathConstants<float>::twoPi / 8.0f));
+    }
+    teeth.applyTransform (juce::AffineTransform::translation (gear.getCentre()));
+    g.setColour (settingsTray.isOpen() ? Palette::textStrong : Palette::textDim);
+    g.fillPath (teeth);
+    g.drawEllipse (juce::Rectangle<float> (inner * 2.0f, inner * 2.0f).withCentre (gear.getCentre()), juce::jmax (1.0f, 2.2f * s));
 }
 
-void Synth2AudioProcessorEditor::paintDialLabels (juce::Graphics& g, float s) const
+void Synth2AudioProcessorEditor::paintOutput (juce::Graphics& g, float s) const
 {
-    // Dial convention: name + mono value stacked *beneath* the arc — the name in
-    // grey (--text-2), the value in the dial's own colour.
-    const auto nameFont  = Fonts::sans (10.0f * s, true, 0.10f);   // --tracking-data
-    const auto valueFont = Fonts::mono (10.0f * s);
+    // OUTPUT's name and value under its dial, and, when sound follows the
+    // cables, the output's IN jack beside it.
+    const auto column = outputDial.getBounds().toFloat().withSizeKeepingCentre (72.0f * s, (float) outputDial.getHeight());
+    const float textTop = column.getBottom() + 6.0f * s;
 
-    for (size_t i = 0; i < dials.size(); ++i)
+    g.setFont (Fonts::sans (10.0f * s, true, 0.10f));
+    g.setColour (Palette::textMid);
+    g.drawText ("OUTPUT", juce::Rectangle (column.getX(), textTop, column.getWidth(), 12.0f * s), juce::Justification::centredTop, false);
+    g.setFont (Fonts::mono (10.0f * s));
+    g.setColour (BenchStyle::dialColour (1.0f));
+    g.drawText (BenchStyle::dialText (ParamID::output, paramValue (processorRef, ParamID::output)),
+                juce::Rectangle (column.getX(), textTop + 13.0f * s, column.getWidth(), 13.0f * s), juce::Justification::centredTop, false);
+
+    if (signalFlow() == Synth2AudioProcessor::SignalFlow::cables)
     {
-        const auto  column  = layout.dialColumns[i].toFloat();
-        const float textTop = dials[i].getBounds().toFloat().getBottom() + 6.0f * s;
-        if (isOsc2Dial (i) && ! osc2Shown)
-            continue;
-
-        g.setFont (nameFont);
-        g.setColour (Palette::textMid);
-        g.drawText (dialNames[i], juce::Rectangle (column.getX(), textTop, column.getWidth(), 12.0f * s),
-                    juce::Justification::centredTop, false);
-
-        g.setFont (valueFont);
-        g.setColour (dialColour (i));
-        g.drawText (dialValueText (processorRef, i),
-                    juce::Rectangle (column.getX(), textTop + 13.0f * s, column.getWidth(), 13.0f * s),
-                    juce::Justification::centredTop, false);
+        const auto jack = outputJackBounds();
+        BenchStyle::paintJack (g, jack, Palette::accent, ! model.patchedToOutput().empty(), false, s);
+        g.setFont (Fonts::sans (8.0f * s, true, 0.22f));
+        g.setColour (Palette::textFaint);
+        g.drawText ("IN", jack.translated (0.0f, jack.getHeight() + 2.0f * s).withHeight (10.0f * s), juce::Justification::centredTop, false);
     }
 }
 
 void Synth2AudioProcessorEditor::resized()
 {
-    // A fade still running (OSC 2 coming in, a tray opening) would put its
-    // component back where it started: finish it before laying out afresh.
+    // A fade still running (a tray opening) would put its component back
+    // where it started: finish it before laying out afresh.
     auto& animator = juce::Desktop::getInstance().getAnimator();
-    for (auto* part : std::initializer_list<juce::Component*> { &waveDisplays[1], &osc2Picker, &dials[3], &dials[4], &dials[5],
-                                                                &waveMenus[0], &waveMenus[1] })
-        animator.cancelAnimation (part, true);
+    for (auto& menu : waveMenus)
+        animator.cancelAnimation (&menu, true);
+    for (auto* tray : { &addTray, &settingsTray })
+        animator.cancelAnimation (tray, true);
 
-    uiScale = (float) getWidth() / kDesignWidth;
+    uiScale = (float) getWidth() / designWidth;
     const float s = uiScale;
-    const auto px = [s] (float v) { return (int) std::round (v * s); };
+    const auto px = [s] (float v) { return juce::roundToInt (v * s); };
 
     looks.setUiScale (s);
-    for (int osc = 0; osc < numOscillators; ++osc)
-    {
-        waveDisplays[(size_t) osc].setUiScale (s);
-        getWavePicker (osc).setUiScale (s);
-        waveMenus[(size_t) osc].setUiScale (s);
-    }
-    unisonDisplay.setUiScale (s);
     keyboard.setUiScale (s);
-
-    ampDisplay.setUiScale (s);
+    for (auto& menu : waveMenus)
+    {
+        menu.setUiScale (s);
+        menu.setBounds (getLocalBounds());
+    }
+    for (auto* tray : { &addTray, &settingsTray })
+    {
+        tray->setUiScale (s);
+        tray->setBounds (getLocalBounds());
+    }
 
     auto area = getLocalBounds().reduced (px (kPanelPad));
 
-    // Header: wordmark on the left, the badge on the right.
+    // Header: wordmark on the left; the badge and the gear on the right.
     layout.header = area.removeFromTop (px (20.0f));
-    layout.badge  = layout.header.withTrimmedLeft (layout.header.getWidth() - px (54.0f))
-                                 .withSizeKeepingCentre (px (54.0f), px (20.0f));
+    layout.gear   = layout.header.withTrimmedLeft (layout.header.getWidth() - px (22.0f)).withSizeKeepingCentre (px (22.0f), px (22.0f));
+    layout.badge  = layout.header.withTrimmedLeft (layout.header.getWidth() - px (22.0f + 12.0f + 54.0f))
+                                 .withWidth (px (54.0f)).withSizeKeepingCentre (px (54.0f), px (20.0f));
 
-    // Two rows of two groups, each group a display over its three dials.
-    const int groupGap = px (12.0f);
-    const auto layDials = [&] (juce::Rectangle<int> row, size_t first)
-    {
-        const int columnWidth = row.getWidth() / 3;
-        for (size_t i = first; i < first + 3; ++i)
-        {
-            auto column = i + 1 == first + 3 ? row : row.removeFromLeft (columnWidth);
-            layout.dialColumns[i] = column;
-            dials[i].setBounds (column.withHeight (px (52.0f)).withSizeKeepingCentre (px (52.0f), px (52.0f)));
-        }
-    };
-    const auto layRow = [&] (juce::Rectangle<int> row, juce::Component& leftDisplay, juce::Component& rightDisplay, size_t firstDial)
-    {
-        auto left  = row.removeFromLeft ((row.getWidth() - groupGap) / 2);
-        auto right = row.withTrimmedLeft (groupGap);
-        leftDisplay .setBounds (left .removeFromTop (px (96.0f)));
-        rightDisplay.setBounds (right.removeFromTop (px (96.0f)));
-        left .removeFromTop (px (12.0f));
-        right.removeFromTop (px (12.0f));
+    // The bench.
+    bench.setUiScale (s);
+    bench.setBounds (px (kPanelPad), px (kBenchTop), px (Bench::areaWidth), px (Bench::areaHeight));
 
-        layDials (left, firstDial);
-        layDials (right, firstDial + 3);
-    };
-
-    // The oscillators: OSC 1 and OSC 2 side by side, or OSC 1 across the whole
-    // row until OSC 2 is added. Each well has its picker laid over it; their
-    // trays cover the editor and drop across the row.
-    area.removeFromTop (px (16.0f));
-    auto oscillators = area.removeFromTop (px (190.0f));
-    if (osc2Shown)
-    {
-        layRow (oscillators, waveDisplays[0], waveDisplays[1], 0);
-    }
-    else
-    {
-        waveDisplays[0].setBounds (oscillators.removeFromTop (px (96.0f)));
-        oscillators.removeFromTop (px (12.0f));
-        layDials (oscillators, 0);
-    }
-    const auto wells = osc2Shown ? waveDisplays[0].getBounds().getUnion (waveDisplays[1].getBounds())
-                                 : waveDisplays[0].getBounds();
-
-    for (int osc = 0; osc < numOscillators; ++osc)
-    {
-        getWavePicker (osc).setBounds (waveDisplays[(size_t) osc].getBounds());
-        waveMenus[(size_t) osc].setBounds (getLocalBounds());
-        waveMenus[(size_t) osc].setAnchor (waveDisplays[(size_t) osc].getBounds(), wells);
-    }
-
-    // "+ OSC 2" sits in OSC 1's well, just left of its pill.
-    const auto osc1Well = waveDisplays[0].getBounds();
-    const auto pill     = osc1Picker.pillBounds();
-    addOsc2.setUiScale (s);
-    addOsc2.setBounds (osc1Well.getX() + (int) pill.getX() - px (6.0f + 72.0f), osc1Well.getY() + (int) pill.getY(),
-                       px (72.0f), (int) pill.getHeight());
-
-    // Hairline, then the voice: UNISON on the left, AMP on the right.
-    area.removeFromTop (px (12.0f));
-    layout.groupsSeparatorY = area.getY();
+    // Hairline, then the keyboard with OUTPUT (and, patching, its IN jack) at its right.
+    area.setTop (bench.getBottom() + px (12.0f));
+    layout.stripSeparatorY = area.getY();
     area.removeFromTop (px (14.0f));
-    layRow (area.removeFromTop (px (190.0f)), unisonDisplay, ampDisplay, 6);
-
-    // Hairline, then the keyboard fills the rest.
-    area.removeFromTop (px (12.0f));
-    layout.keyboardSeparatorY = area.getY();
-    area.removeFromTop (px (14.0f));
+    layout.outputColumn = area.removeFromRight (px (108.0f));
+    outputDial.setBounds (layout.outputColumn.withTrimmedLeft (px (28.0f)).withHeight (px (52.0f))
+                                             .withSizeKeepingCentre (px (52.0f), px (52.0f)));
+    area.removeFromRight (px (12.0f));
     keyboard.setBounds (area);
+
+    cables.setBounds (getLocalBounds());
+    lastCables.clear();
 }

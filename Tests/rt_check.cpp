@@ -38,6 +38,7 @@ int main()
     set (ParamID::voices, 16.0f);
     set (ParamID::detune, 30.0f);
     set (ParamID::width, 1.0f);
+    set (ParamID::osc1On, 1.0f);   // a new instance opens on an empty bench
     set (ParamID::osc2On, 1.0f);
 
     juce::AudioBuffer<float> buffer (2, bs);

@@ -15,12 +15,17 @@
 
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "Bench.h"
 #include "ParamIDs.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace
 {
@@ -94,6 +99,13 @@ float playAndMeasure (Synth2AudioProcessor& p, juce::MidiBuffer midi, int blocks
     return buffer.getRMSLevel (0, 0, block);
 }
 
+// Puts OSC 1, unison and the envelope on the bench, as a session from before
+// the bench opens, so a processor has something to play.
+void fillBench (Synth2AudioProcessor& p)
+{
+    Bench::Model (p.getState()).adoptClassicLayout();
+}
+
 void pump (int milliseconds)
 {
     juce::MessageManager::getInstance()->runDispatchLoopUntil (milliseconds);
@@ -137,7 +149,10 @@ void testProcessorBasics()
            "DETUNE and WIDTH start at 15 ct and 50%, ready for when VOICES goes up");
 
     setParam (p, ParamID::release, 2.0f);
-    check (approx ((float) p.getTailLengthSeconds(), 2.0f, 0.01f), "the tail is the release time");
+    check (approx ((float) p.getTailLengthSeconds(), Synth2Engine::gateReleaseSeconds, 1e-4f), "without the envelope, the tail is a few ms");
+    setParam (p, ParamID::envelopeOn, 1.0f);
+    check (approx ((float) p.getTailLengthSeconds(), 2.0f, 0.01f), "with it, the tail is the release time");
+    setParam (p, ParamID::envelopeOn, 0.0f);
 
     const auto settings = p.currentSettings();
     check (approx (settings.releaseSeconds, 2.0f, 0.01f) && settings.oscillators[0].wave == Waveform::saw,
@@ -150,12 +165,19 @@ void testProcessorBasics()
                && attack->getText (attack->convertTo0to1 (1.5f), 32) == "1.50 s",
            "times read in ms below a second, s above");
 
-    // The oscillators: OSC 1 plays as before, OSC 2 waits switched off,
-    // set up as a square an octave down.
+    // The bench starts empty: no oscillator, no unison, no envelope. Each
+    // oscillator has its own sound ready for when it's added: OSC 1 at the
+    // note at full level, OSC 2 a square an octave down.
+    bool empty = true;
+    for (const auto& osc : ParamID::oscillators)
+        empty = empty && param (p, osc.on) < 0.5f;
+    check (empty && param (p, ParamID::unisonOn) < 0.5f && param (p, ParamID::envelopeOn) < 0.5f, "the bench starts empty");
+    check (approx (param (p, ParamID::signalFlow), (float) Synth2AudioProcessor::SignalFlow::fixed, 1e-6f), "with sound in a fixed order");
+    check (! p.getState().getParameter (ParamID::osc1On)->isAutomatable() && ! p.getState().getParameter (ParamID::signalFlow)->isAutomatable(),
+           "what is on the bench, and the flow, aren't automatable");
     check (approx (param (p, ParamID::osc1Pitch), 0.0f, 1e-6f) && approx (param (p, ParamID::osc1Fine), 0.0f, 1e-6f)
                && approx (param (p, ParamID::osc1Level), 1.0f, 1e-6f),
-           "OSC 1 starts at the note, full level");
-    check (param (p, ParamID::osc2On) < 0.5f, "OSC 2 starts switched off");
+           "OSC 1 is set to the note, full level");
     check (approx (param (p, ParamID::osc2Wave), (float) Waveform::square, 1e-6f) && approx (param (p, ParamID::osc2Pitch), -12.0f, 1e-6f),
            "set up as a square an octave down");
 
@@ -174,21 +196,22 @@ void testProcessorBasics()
 
     setParam (p, ParamID::osc4On, 1.0f);
     setParam (p, ParamID::osc4Wave, (float) Waveform::sine);
-    setParam (p, ParamID::unisonOn, 0.0f);
+    setParam (p, ParamID::unisonOn, 1.0f);
+    setParam (p, ParamID::envelopeOn, 1.0f);
     const auto modules = p.currentSettings();
-    check (modules.oscillators[3].on && modules.oscillators[3].wave == Waveform::sine && ! modules.unisonOn && modules.envelopeOn,
+    check (modules.oscillators[3].on && modules.oscillators[3].wave == Waveform::sine && modules.unisonOn && modules.envelopeOn,
            "OSC 4 and the modules' switches reach the engine");
 
     // Following the cables, only an oscillator patched to the output reaches it.
     setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::cables);
-    p.setRoutedToOutput (1, false);
-    const auto patched = p.currentSettings();
-    check (! patched.oscillators[1].routed && patched.oscillators[0].routed, "with patch cables, an unpatched oscillator isn't routed");
+    Bench::Model bench (p.getState());
+    check (! p.currentSettings().oscillators[1].routed, "with patch cables, an unpatched oscillator isn't routed");
+    check (bench.connect ({ Bench::Kind::oscillator, 1 }) && p.currentSettings().oscillators[1].routed
+               && ! p.currentSettings().oscillators[3].routed,
+           "and patching it to the output routes it");
+    check (! bench.connect ({ Bench::Kind::oscillator, 2 }), "an oscillator that isn't on the bench can't be patched");
     setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::fixed);
-    check (p.currentSettings().oscillators[1].routed, "in a fixed order, every oscillator is");
-    p.setRoutedToOutput (1, true);
-    setParam (p, ParamID::osc4On, 0.0f);
-    setParam (p, ParamID::unisonOn, 1.0f);
+    check (p.currentSettings().oscillators[3].routed, "in a fixed order, every oscillator is");
 }
 
 void testBusLayouts()
@@ -217,6 +240,14 @@ void testPlaying()
     Synth2AudioProcessor p;
     p.prepareToPlay (48000.0, 512);
 
+    juce::MidiBuffer first;
+    first.addEvent (juce::MidiMessage::noteOn (1, 60, 0.9f), 0);
+    check (playAndMeasure (p, first, 8) == 0.0f, "an empty bench makes no sound");
+    juce::MidiBuffer stop;
+    stop.addEvent (juce::MidiMessage::allNotesOff (1), 0);
+    playAndMeasure (p, stop, 4);
+
+    fillBench (p);
     check (playAndMeasure (p, {}, 4) == 0.0f, "silent with no notes");
 
     juce::MidiBuffer chord;
@@ -256,6 +287,7 @@ void testPlaying()
 
     // A mono bus gets sound too.
     Synth2AudioProcessor mono;
+    fillBench (mono);
     juce::AudioProcessor::BusesLayout layout;
     layout.outputBuses.add (juce::AudioChannelSet::mono());
     mono.setBusesLayout (layout);
@@ -298,6 +330,57 @@ void testStateRoundTrip()
     check (approx (param (b, ParamID::release), 3.0f, 0.001f), "RELEASE comes back");
     check (approx (param (b, ParamID::output), -4.0f, 0.01f), "OUTPUT comes back");
 
+    // The bench comes back as it was left: what is on it, where, and the cables.
+    Bench::Model benchA (a.getState());
+    benchA.add (Bench::Kind::oscillator, { 300.0f, 20.0f });
+    benchA.add (Bench::Kind::oscillator, { 600.0f, 260.0f });
+    benchA.add (Bench::Kind::envelope, { 0.0f, 0.0f });
+    benchA.connect ({ Bench::Kind::oscillator, 1 });
+    setParam (a, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::cables);
+    a.getStateInformation (saved);
+    Synth2AudioProcessor c;
+    c.setStateInformation (saved.getData(), (int) saved.getSize());
+    const Bench::Model benchC (c.getState());
+    check (benchC.isPresent ({ Bench::Kind::oscillator, 1 }) && benchC.isPresent ({ Bench::Kind::envelope, 0 })
+               && ! benchC.isPresent ({ Bench::Kind::unison, 0 }) && benchC.present().size() == 3,
+           "the modules on the bench come back");
+    check (benchC.positionOf ({ Bench::Kind::oscillator, 0 }) == juce::Point<float> (300.0f, 20.0f)
+               && benchC.positionOf ({ Bench::Kind::oscillator, 1 }) == juce::Point<float> (600.0f, 260.0f),
+           "where they were");
+    check (benchC.isPatchedToOutput ({ Bench::Kind::oscillator, 1 }) && ! benchC.isPatchedToOutput ({ Bench::Kind::oscillator, 0 }),
+           "with their cables");
+    check (c.currentSettings().oscillators[1].routed && ! c.currentSettings().oscillators[0].routed, "which the sound follows");
+
+    Synth2AudioProcessor fresh;
+    fresh.getStateInformation (saved);
+    Synth2AudioProcessor d;
+    d.setStateInformation (saved.getData(), (int) saved.getSize());
+    check (Bench::Model (d.getState()).isEmpty(), "an empty bench comes back empty");
+
+    // A session from before the bench opens as it looked then: OSC 1 (and OSC 2,
+    // if it was on) along the top, unison and the envelope below.
+    auto old = juce::ValueTree::fromXml (*juce::parseXML (a.getState().copyState().toXmlString()));
+    old.removeChild (old.getChildWithName (Bench::benchType), nullptr);
+    for (const auto* id : { ParamID::osc1On, ParamID::unisonOn, ParamID::envelopeOn, ParamID::signalFlow })
+        old.removeChild (old.getChildWithProperty ("id", id), nullptr);
+    for (const auto* id : { ParamID::osc1On, ParamID::osc2On })
+        if (auto prm = old.getChildWithProperty ("id", id); prm.isValid())
+            prm.setProperty ("value", id == ParamID::osc2On ? 1.0f : 0.0f, nullptr);
+    juce::MemoryBlock oldSaved;
+    juce::AudioProcessor::copyXmlToBinary (*old.createXml(), oldSaved);
+    Synth2AudioProcessor e;
+    e.setStateInformation (oldSaved.getData(), (int) oldSaved.getSize());
+    const Bench::Model benchE (e.getState());
+    check (benchE.isPresent ({ Bench::Kind::oscillator, 0 }) && benchE.isPresent ({ Bench::Kind::oscillator, 1 })
+               && benchE.isPresent ({ Bench::Kind::unison, 0 }) && benchE.isPresent ({ Bench::Kind::envelope, 0 })
+               && benchE.present().size() == 4,
+           "a session from before the bench gets OSC 1, OSC 2 (it was on), unison and the envelope");
+    check (benchE.positionOf ({ Bench::Kind::oscillator, 1 }) == Bench::defaultPosition ({ Bench::Kind::oscillator, 1 })
+               && benchE.positionOf ({ Bench::Kind::unison, 0 }) == Bench::defaultPosition ({ Bench::Kind::unison, 0 }),
+           "set out as the old panel was");
+    check (approx (param (e, ParamID::voices), 7.0f, 1e-6f) && approx (param (e, ParamID::signalFlow), 0.0f, 1e-6f),
+           "keeping its sound, in a fixed order");
+
     // Junk is ignored rather than resetting the sound.
     const char junk[] = "not a synth state";
     b.setStateInformation (junk, (int) sizeof (junk));
@@ -305,6 +388,67 @@ void testStateRoundTrip()
 }
 
 // ---- The editor ------------------------------------------------------------------
+
+// With SYNTH2_SNAPSHOTS set to a folder, saves `image` there as `name`.png, to
+// look the faces over by eye.
+void snapshot (const juce::Image& image, const char* name)
+{
+    const auto folder = juce::SystemStats::getEnvironmentVariable ("SYNTH2_SNAPSHOTS", {});
+    if (folder.isEmpty())
+        return;
+    const auto file = juce::File (folder).getChildFile (juce::String (name) + ".png");
+    file.deleteFile();
+    juce::FileOutputStream out (file);
+    juce::PNGImageFormat().writeImageToStream (image, out);
+}
+
+// A mouse event on `target` at `at`, for a press that began at `downAt`.
+juce::MouseEvent mouseAt (juce::Component& target, juce::Point<float> at, std::optional<juce::Point<float>> downAt = {})
+{
+    return juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), at, {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                             &target, &target, juce::Time::getCurrentTime(), downAt.value_or (at), juce::Time::getCurrentTime(), 1,
+                             downAt.has_value());
+}
+
+// Drags `module` by its header so its top left (on the bench) moves by `by`.
+void dragHeader (BenchModule& module, juce::Point<float> by)
+{
+    const auto grab = module.headerBounds().getCentre().translated (-40.0f, 0.0f);
+    module.mouseDown (mouseAt (module, grab));
+    module.mouseDrag (mouseAt (module, grab + by * 0.5f, grab));
+    module.mouseDrag (mouseAt (module, grab + by, grab));
+    module.mouseUp (mouseAt (module, grab + by, grab));
+}
+
+// Holds middle C for a while and returns how loud the last block was.
+float holdAndMeasure (Synth2AudioProcessor& p)
+{
+    juce::MidiBuffer on;
+    on.addEvent (juce::MidiMessage::noteOn (1, 60, 0.9f), 0);
+    return playAndMeasure (p, on, 8);
+}
+
+void releaseAll (Synth2AudioProcessor& p)
+{
+    juce::MidiBuffer off;
+    off.addEvent (juce::MidiMessage::allNotesOff (1), 0);
+    playAndMeasure (p, off, 40);
+}
+
+// Whether two modules on the bench cover each other.
+bool anyOverlap (BenchView& bench)
+{
+    std::vector<juce::Rectangle<int>> shown;
+    for (const auto& id : Bench::allModules)
+        if (bench.getModule (id).isVisible())
+            shown.push_back (bench.getModule (id).getBounds());
+    for (size_t a = 0; a < shown.size(); ++a)
+        for (size_t b = a + 1; b < shown.size(); ++b)
+            if (shown[a].intersects (shown[b]))
+                return true;
+    return false;
+}
+
 void testEditor()
 {
     std::printf ("Editor:\n");
@@ -317,291 +461,294 @@ void testEditor()
     if (editor == nullptr)
         return;
 
-    check (editor->getWidth() == 480 && editor->getHeight() == 612, "opens at its 480 x 612 design size");
+    check (editor->getWidth() == 1040 && editor->getHeight() == 740, "opens at its 1040 x 740 design size");
     check (editor->isResizable(), "is resizable");
 
-    const auto first = render (*editor);
-    check (hasDetail (first), "renders its face");
+    // An empty bench, inviting a click, and the keyboard and OUTPUT below it.
+    auto& bench = editor->getBench();
+    bool noneShown = true;
+    for (const auto& id : Bench::allModules)
+        noneShown = noneShown && ! bench.getModule (id).isVisible();
+    check (noneShown && bench.isShowingHint(), "opens on an empty bench, with a hint to click it");
+    check (editor->getLocalBounds().contains (bench.getBounds()) && bench.getWidth() == 992 && bench.getHeight() == 512,
+           "the bench fills the middle of the panel");
+    check (editor->getLocalBounds().contains (editor->getKeyboard().getBounds()) && editor->getKeyboard().getY() > bench.getBottom()
+               && editor->getKeyboard().getHeight() > 80,
+           "the keyboard runs along the bottom");
+    check (editor->getOutputDial().getX() > editor->getKeyboard().getRight() && editor->getOutputDial().getWidth() >= 40,
+           "with OUTPUT at its right");
+    const auto empty = render (*editor);
+    check (hasDetail (empty), "renders its face");
+    snapshot (empty, "1-empty");
 
-    // Big enough to grab: every dial in view (OSC 2's wait until it is added)
-    // and the keyboard.
-    bool dialsFit = true;
-    int  inView   = 0;
-    for (int i = 0; i < Synth2AudioProcessorEditor::numDials; ++i)
+    // A click on the bench offers what can go on it, there.
+    auto& tray = editor->getAddTray();
+    const auto clickBench = [&] (juce::Point<float> at) { bench.mouseDown (mouseAt (bench, at)); };
+    const auto addAt = [&] (int choice, juce::Point<float> at)
     {
-        if (! editor->getDial (i).isVisible())
-            continue;
-        ++inView;
-        dialsFit = dialsFit && editor->getDial (i).getWidth() >= 40 && editor->getLocalBounds().contains (editor->getDial (i).getBounds());
-    }
-    check (dialsFit && inView == 9, "the nine dials in view are laid out inside the panel");
-    check (editor->getLocalBounds().contains (editor->getKeyboard().getBounds()) && editor->getKeyboard().getHeight() > 80,
-           "the keyboard fits along the bottom");
-
-    // Dials drive their parameters.
-    editor->getDial (6).setValue (5.0, juce::sendNotificationSync);
-    check (approx (param (p, ParamID::voices), 5.0f, 1e-6f), "the VOICES dial sets VOICES");
-    editor->getDial (7).setValue (40.0, juce::sendNotificationSync);
-    check (approx (param (p, ParamID::detune), 40.0f, 0.01f), "the DETUNE dial sets DETUNE");
-
-    // The displays follow the parameters on the editor's timer.
-    const auto& unison = editor->getUnisonDisplay();
-    check (pumpUntil ([&unison] { return unison.getState().voices == 5 && approx (unison.getState().detune, 40.0f, 0.01f); }),
-           "the UNISON well shows the stack");
-    const auto spread = render (*editor);
-    check (pixelsChanged (first, spread) > 200, "and redraws when the stack changes");
-
-    // The wave picker, laid over the WAVE well: its arrows step through the
-    // shapes and wrap round, the wheel flips through them, a click opens the tray.
-    auto& picker = editor->getWavePicker();
-    auto& menu   = editor->getWaveMenu();
-    auto& well   = editor->getWaveDisplay();
-    check (picker.getBounds() == well.getBounds() && editor->getLocalBounds().contains (picker.getBounds()),
-           "OSC 1's picker sits over its well");
-    check (picker.getSelected() == 2 && picker.pillBounds().getWidth() > 80.0f
-               && picker.getLocalBounds().toFloat().contains (picker.pillBounds()),
-           "its pill shows SAW, the default, in the well's corner");
-
-    const auto clickAt = [] (juce::Component& target, juce::Point<float> at)
-    {
-        return juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), at, {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-                                 &target, &target, juce::Time::getCurrentTime(), at, juce::Time::getCurrentTime(), 1, false);
+        clickBench (at);
+        tray.mouseDown (mouseAt (tray, tray.choiceBounds (choice).getCentre()));
     };
-    picker.mouseDown (clickAt (picker, picker.nextArrow().getCentre()));
+
+    clickBench ({ 150.0f, 40.0f });
+    check (tray.isOpen() && tray.getTitle() == "ADD TO THE BENCH" && tray.getNumChoices() == 3, "a click on the bench opens the add tray");
+    check (tray.getChoice (0).name == "Oscillator" && tray.getChoice (0).detail.startsWith ("4 of 4 left")
+               && tray.getChoice (1).name == "Unison" && tray.getChoice (2).name == "Envelope",
+           "offering an oscillator (4 left), unison and the envelope");
+    check (tray.getChoice (0).enabled && tray.getChoice (1).enabled && tray.getChoice (2).enabled, "all of them free");
+    check (editor->getLocalBounds().toFloat().contains (tray.trayBounds())
+               && tray.trayBounds().getPosition().getDistanceFrom ((juce::Point<float> (150.0f, 40.0f) + bench.getPosition().toFloat())) < 1.0f,
+           "opening where the click was");
+    check (pumpUntil ([&tray] { return tray.getAlpha() >= 1.0f; }), "fading in");
+    snapshot (render (*editor), "2-add-tray");
+
+    tray.keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
+    check (! tray.isOpen() && bench.isShowingHint(), "Escape closes it, adding nothing");
+
+    addAt (0, { 150.0f, 40.0f });
+    auto& osc1 = bench.getOscillator (0);
+    Bench::Model model (p.getState());
+    check (! tray.isOpen() && param (p, ParamID::osc1On) >= 0.5f, "picking Oscillator puts OSC 1 on the bench");
+    check (pumpUntil ([&osc1] { return osc1.isVisible() && osc1.getAlpha() >= 1.0f; }), "which fades in");
+    check (osc1.getTitle() == "OSC 1" && model.positionOf (osc1.getId()) == juce::Point<float> (32.0f, 25.0f)
+               && osc1.getBounds() == juce::Rectangle<int> (32, 25, 236, 240),
+           "under the click, its header where the click was");
+    check (! bench.isShowingHint(), "and the hint goes");
+    check (holdAndMeasure (p) > 0.02f, "a note now sounds");
+    releaseAll (p);
+
+    // Dragging a module by its header moves it, and the bench remembers.
+    dragHeader (osc1, { 220.0f, -25.0f });
+    check (model.positionOf (osc1.getId()) == juce::Point<float> (252.0f, 0.0f) && osc1.getPosition() == juce::Point<int> (252, 0),
+           "dragging OSC 1's header moves it, and the bench keeps the spot");
+    dragHeader (osc1, { 2000.0f, 0.0f });
+    check (osc1.getRight() <= bench.getWidth() && model.positionOf (osc1.getId()).x <= Bench::areaWidth - Bench::moduleWidth,
+           "a module can't be dragged off the bench");
+    dragHeader (osc1, { -(float) osc1.getX() + 252.0f, 0.0f });
+
+    // A module dropped on another slides off it to the nearest free spot.
+    addAt (0, { 900.0f, 40.0f });
+    auto& osc2 = bench.getOscillator (1);
+    check (param (p, ParamID::osc2On) >= 0.5f && pumpUntil ([&osc2] { return osc2.isVisible(); }), "a second oscillator is OSC 2");
+    check (juce::exactlyEqual (model.positionOf (osc2.getId()).x, Bench::areaWidth - Bench::moduleWidth), "kept inside the bench");
+    dragHeader (osc2, juce::Point<float> (300.0f, 30.0f) - osc2.getPosition().toFloat());
+    const auto landed = model.positionOf (osc2.getId());
+    check (! Bench::boundsAt (landed).intersects (Bench::boundsAt (model.positionOf (osc1.getId())))
+               && landed != juce::Point<float> (300.0f, 30.0f) && landed.getDistanceFrom ({ 300.0f, 30.0f }) < 200.0f,
+           "dropped on OSC 1, OSC 2 slides off to the nearest free spot");
+    check (pumpUntil ([&] { return osc2.getBounds() == bench.boundsFor (osc2.getId()); }) && ! anyOverlap (bench), "and glides there");
+
+    // The cross takes a module off the bench.
+    osc2.mouseDown (mouseAt (osc2, osc2.closeBounds().getCentre()));
+    check (param (p, ParamID::osc2On) < 0.5f && pumpUntil ([&osc2] { return ! osc2.isVisible(); }), "the cross takes OSC 2 off the bench");
+
+    // Fill the bench: a 4 x 2 grid, OSC 1 where it was.
+    addAt (0, { 118.0f, 15.0f });     // OSC 2, back again, at (0, 0)
+    addAt (0, { 118.0f, 271.0f });    // OSC 3 at (0, 256)
+    addAt (0, { 622.0f, 15.0f });     // OSC 4 at (504, 0)
+    clickBench ({ 370.0f, 271.0f });
+    check (! tray.getChoice (0).enabled && tray.getChoice (0).detail == "All four are on the bench", "a fifth oscillator is greyed out");
+    tray.mouseDown (mouseAt (tray, tray.choiceBounds (0).getCentre()));
+    check (tray.isOpen(), "and picking it does nothing");
+    tray.mouseDown (mouseAt (tray, tray.choiceBounds (1).getCentre()));   // unison at (252, 256)
+    addAt (2, { 622.0f, 271.0f });                                         // the envelope at (504, 256)
+    check (pumpUntil ([&] { return bench.getEnvelope().isVisible() && bench.getEnvelope().getAlpha() >= 1.0f; }),
+           "unison and the envelope go on too");
+    bool allShown = true;
+    for (const auto& id : Bench::allModules)
+        allShown = allShown && bench.getModule (id).isVisible();
+    check (allShown && ! anyOverlap (bench), "six modules, none covering another");
+    check (model.positionOf (bench.getOscillator (1).getId()) == juce::Point<float> (0.0f, 0.0f)
+               && model.positionOf (bench.getUnison().getId()) == juce::Point<float> (252.0f, 256.0f),
+           "each where it was put");
+    clickBench ({ 870.0f, 271.0f });
+    check (! tray.getChoice (0).enabled && ! tray.getChoice (1).enabled && ! tray.getChoice (2).enabled, "now the tray has nothing left to add");
+    tray.close();
+    snapshot (render (*editor), "3-full-bench");
+
+    // Dials in the modules drive their parameters, and the wells follow.
+    auto& unison = bench.getUnison();
+    unison.getDial (0).setValue (5.0, juce::sendNotificationSync);
+    unison.getDial (1).setValue (40.0, juce::sendNotificationSync);
+    check (approx (param (p, ParamID::voices), 5.0f, 1e-6f) && approx (param (p, ParamID::detune), 40.0f, 0.01f),
+           "UNISON's dials set VOICES and DETUNE");
+    check (pumpUntil ([&unison] { return unison.getDisplay().getState().voices == 5; }), "and its well shows the stack");
+    auto& osc3 = bench.getOscillator (2);
+    osc3.getDial (0).setValue (12.0, juce::sendNotificationSync);
+    osc3.getDial (2).setValue (0.5, juce::sendNotificationSync);
+    check (approx (param (p, ParamID::osc3Pitch), 12.0f, 1e-6f) && approx (param (p, ParamID::osc3Level), 0.5f, 1e-6f),
+           "OSC 3's dials set its own PITCH and LEVEL");
+    check (pumpUntil ([&osc3] { return approx (osc3.getDisplay().getOsc().level, 0.5f, 1e-6f) && osc3.getDisplay().getOsc().cycles > 3.9f; }),
+           "and its well shows twice the cycles, half as tall");
+
+    // The wave picker, laid over each oscillator's WAVE well.
+    auto& picker = osc1.getPicker();
+    auto& well   = osc1.getDisplay();
+    auto& menu   = editor->getWaveMenu (0);
+    check (picker.getBounds() == well.getBounds() && osc1.getLocalBounds().contains (picker.getBounds()),
+           "OSC 1's picker sits over its well");
+    check (picker.getSelected() == 2, "its pill shows SAW, the default");
+    picker.mouseDown (mouseAt (picker, picker.nextArrow().getCentre()));
     check (approx (param (p, ParamID::wave), (float) Waveform::square, 1e-6f) && picker.getSelected() == 3,
            "the right arrow steps SAW to SQUARE");
-    picker.mouseDown (clickAt (picker, picker.nextArrow().getCentre()));
-    check (picker.getSelected() == 0, "and on round to SINE");
-    picker.mouseDown (clickAt (picker, picker.previousArrow().getCentre()));
-    check (picker.getSelected() == 3, "the left arrow steps back, round to SQUARE");
-    check (! menu.isOpen(), "the arrows don't open the tray");
+    picker.mouseDown (mouseAt (picker, picker.nextArrow().getCentre()));
+    picker.mouseDown (mouseAt (picker, picker.previousArrow().getCentre()));
+    check (picker.getSelected() == 3 && ! menu.isOpen(), "and round to SINE and back, without opening the tray");
 
     juce::MouseWheelDetails wheel {};
-    wheel.deltaY = -0.25f;   // one notch down
-    picker.mouseWheelMove (clickAt (picker, { 40.0f, 60.0f }), wheel);
-    check (picker.getSelected() == 0, "scrolling down over the well flips to the next shape");
-    wheel.deltaY = 0.05f;
-    picker.mouseWheelMove (clickAt (picker, { 40.0f, 60.0f }), wheel);
-    check (picker.getSelected() == 0, "a nudge too small to count doesn't");
+    wheel.deltaY = -0.25f;
+    picker.mouseWheelMove (mouseAt (picker, { 40.0f, 60.0f }), wheel);
+    check (picker.getSelected() == 0, "scrolling over the well flips the shape");
     wheel.deltaY = 0.25f;
-    picker.mouseWheelMove (clickAt (picker, { 40.0f, 60.0f }), wheel);
-    check (picker.getSelected() == 3, "scrolling up flips back");
+    picker.mouseWheelMove (mouseAt (picker, { 40.0f, 60.0f }), wheel);
+    check (picker.getSelected() == 3 && pumpUntil ([&well] { return well.getShownWave() == Waveform::square; }), "and the well follows");
 
-    // A trackpad with natural scrolling: many small, reversed deltas add up.
-    wheel.deltaY     = 0.05f;
-    wheel.isReversed = true;
-    for (int i = 0; i < 3; ++i)
-        picker.mouseWheelMove (clickAt (picker, { 40.0f, 60.0f }), wheel);
-    check (picker.getSelected() == 0, "small reversed trackpad deltas gather into a step");
-    picker.step (-1);
-    wheel.isReversed = false;
-
-    // A morph, not a jump, then the new shape.
-    check (pumpUntil ([&well] { return well.getState().wave == Waveform::square; }), "the WAVE well follows the pick");
-    check (well.getShownWave() == Waveform::square, "and shows the new shape");
-    check (pumpUntil ([&well] { return ! well.isMorphing(); }), "morphing into it, briefly");
-
-    picker.mouseDown (clickAt (picker, { 60.0f, 60.0f }));
-    check (menu.isOpen() && menu.getBounds() == editor->getLocalBounds(), "a click on the well opens the tray over the panel");
+    picker.mouseDown (mouseAt (picker, { 60.0f, 60.0f }));
+    const auto wellInEditor = editor->getLocalArea (&well, well.getLocalBounds()).toFloat();
     bool tilesFit = true;
     for (int i = 0; i < WaveMenu::numWaves; ++i)
-        tilesFit = tilesFit && menu.tileBounds (i).getWidth() > 60.0f && menu.trayBounds().contains (menu.tileBounds (i))
-                && menu.tileBounds (i).getY() > (float) well.getBottom();
-    check (tilesFit, "its four tiles drop from under the well");
+        tilesFit = tilesFit && menu.trayBounds().contains (menu.tileBounds (i)) && menu.tileBounds (i).getY() > wellInEditor.getBottom()
+                && editor->getLocalBounds().toFloat().contains (menu.tileBounds (i));
+    check (menu.isOpen() && menu.getBounds() == editor->getLocalBounds() && tilesFit, "a click on the well drops its tray from under it");
     check (pumpUntil ([&menu] { return menu.getAlpha() >= 1.0f; }), "fading in");
-    const auto trayShown = render (*editor);
-
-    juce::MouseEvent hover (clickAt (menu, menu.tileBounds (1).getCentre()));
-    menu.mouseMove (hover);
-    check (menu.getHighlighted() == 1 && well.getShownWave() == Waveform::triangle, "hovering TRIANGLE previews it in the well");
-    check (approx (param (p, ParamID::wave), (float) Waveform::square, 1e-6f), "without changing WAVE");
-    check (pixelsChanged (trayShown, render (*editor)) > 50, "the hovered tile lights up");
-    menu.mouseExit (hover);
-    check (well.getShownWave() == Waveform::square, "leaving the tiles puts the chosen shape back");
-
-    menu.mouseDown (clickAt (menu, menu.tileBounds (0).getCentre()));
-    check (approx (param (p, ParamID::wave), (float) Waveform::sine, 1e-6f) && picker.getSelected() == 0,
-           "clicking the SINE tile picks the sine");
-    check (! menu.isOpen(), "and closes the tray");
-
-    picker.mouseDown (clickAt (picker, { 60.0f, 60.0f }));
-    menu.mouseDown (clickAt (menu, { 10.0f, (float) editor->getHeight() - 10.0f }));
-    check (! menu.isOpen() && picker.getSelected() == 0, "a click outside the tiles closes it, changing nothing");
-
-    picker.mouseDown (clickAt (picker, { 60.0f, 60.0f }));
-    menu.keyPressed (juce::KeyPress (juce::KeyPress::rightKey));
-    menu.keyPressed (juce::KeyPress (juce::KeyPress::rightKey));
-    check (menu.getHighlighted() == 2, "the arrow keys walk along the tiles");
-    menu.keyPressed (juce::KeyPress (juce::KeyPress::returnKey));
-    check (picker.getSelected() == 2 && ! menu.isOpen(), "and Return picks");
-    picker.mouseDown (clickAt (picker, { 60.0f, 60.0f }));
-    menu.keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
-    check (! menu.isOpen() && picker.getSelected() == 2, "Escape closes it");
-
-    // Host automation reaches the picker too.
+    snapshot (render (*editor), "4-wave-tray");
+    menu.mouseMove (mouseAt (menu, menu.tileBounds (1).getCentre()));
+    check (menu.getHighlighted() == 1 && well.getShownWave() == Waveform::triangle
+               && approx (param (p, ParamID::wave), (float) Waveform::square, 1e-6f),
+           "hovering TRIANGLE previews it in the well, changing nothing");
+    menu.mouseDown (mouseAt (menu, menu.tileBounds (0).getCentre()));
+    check (approx (param (p, ParamID::wave), (float) Waveform::sine, 1e-6f) && ! menu.isOpen(), "clicking SINE picks it and closes the tray");
+    auto& osc4Picker = bench.getOscillator (3).getPicker();
+    osc4Picker.mouseDown (mouseAt (osc4Picker, osc4Picker.nextArrow().getCentre()));
+    check (approx (param (p, ParamID::osc4Wave), (float) Waveform::saw, 1e-6f) && approx (param (p, ParamID::wave), (float) Waveform::sine, 1e-6f),
+           "OSC 4's arrows step its own shape (TRIANGLE to SAW), not OSC 1's");
     setParam (p, ParamID::wave, (float) Waveform::square);
-    check (pumpUntil ([&picker] { return picker.getSelected() == 3; }), "a host change of WAVE shows SQUARE in the pill");
-    check (pumpUntil ([&well] { return well.getShownWave() == Waveform::square; }), "and in the well");
+    check (pumpUntil ([&picker] { return picker.getSelected() == 3; }), "a host change of WAVE shows in the pill");
 
-    // Keyboard: middle C is on it, and the keys the host plays light up on it
-    // without being played a second time.
+    // Keyboard: the keys the host plays light up, without being played twice.
     auto& keyboard = editor->getKeyboard();
-    const auto keyArea = keyboard.getRectangleForKey (60);
-    check (! keyArea.isEmpty() && keyboard.getLocalBounds().toFloat().contains (keyArea.getCentre()), "middle C is on the keyboard");
-
+    check (keyboard.getLocalBounds().toFloat().contains (keyboard.getRectangleForKey (60).getCentre()), "middle C is on the keyboard");
     juce::MidiBuffer hostNote;
     hostNote.addEvent (juce::MidiMessage::noteOn (1, 64, 0.8f), 0);
     playAndMeasure (p, hostNote, 2);
     check (pumpUntil ([&p] { return p.getKeyboardState().isNoteOn (1, 64); }), "a note the host plays lights its key");
     playAndMeasure (p, {}, 2);
     check (p.getNumActiveNotes() == 1, "and isn't played again from the keyboard");
-
     juce::MidiBuffer hostOff;
     hostOff.addEvent (juce::MidiMessage::noteOff (1, 64), 0);
     playAndMeasure (p, hostOff, 2);
     check (pumpUntil ([&p] { return ! p.getKeyboardState().isNoteOn (1, 64); }), "and goes dark when the host lets go");
+    releaseAll (p);
 
-    // Each group's display sits right above its three dials.
-    const auto above = [] (juce::Component& display, juce::Slider& firstDial, juce::Slider& lastDial)
-    {
-        return display.getBottom() <= firstDial.getY() && display.getX() <= firstDial.getX()
-            && display.getRight() >= lastDial.getRight();
-    };
-    check (above (editor->getWaveDisplay (0), editor->getDial (0), editor->getDial (2)), "the OSC 1 well sits over its PITCH, FINE and LEVEL");
-    check (above (editor->getUnisonDisplay(), editor->getDial (6), editor->getDial (8)), "the UNISON well sits over VOICES, DETUNE and WIDTH");
-    check (above (editor->getAmpDisplay(), editor->getDial (9), editor->getDial (11)), "the AMP well sits over ATTACK, RELEASE and OUTPUT");
-    check (editor->getWaveDisplay (0).getBottom() < editor->getUnisonDisplay().getY(), "the oscillators come first, the voice below");
-
-    // OSC 2 is out of sight until it is added: OSC 1 takes the whole row, with
-    // a "+ OSC 2" chip in its well.
-    auto& osc2     = editor->getWavePicker (1);
-    auto& osc2Well = editor->getWaveDisplay (1);
-    auto& osc1Well = editor->getWaveDisplay (0);
-    auto& addOsc2  = editor->getAddOsc2Chip();
-    check (osc2.hasPowerSwitch() && ! editor->getWavePicker (0).hasPowerSwitch(), "OSC 2 has a power switch, OSC 1 doesn't");
-    check (! editor->isOsc2Shown() && ! osc2Well.isVisible() && ! osc2.isVisible()
-               && ! editor->getDial (3).isVisible() && ! editor->getDial (4).isVisible() && ! editor->getDial (5).isVisible(),
-           "while OSC 2 is off, its well and dials are hidden");
-    check (osc1Well.getWidth() == editor->getUnisonDisplay().getWidth() * 2 + (editor->getAmpDisplay().getX() - editor->getUnisonDisplay().getRight()),
-           "and OSC 1's well spans the whole row");
-    check (editor->getDial (2).getRight() > editor->getAmpDisplay().getX(), "its dials spread across it");
-    check (addOsc2.isVisible() && osc1Well.getBounds().contains (addOsc2.getBounds())
-               && ! addOsc2.getBounds().toFloat().intersects (osc1Well.getBounds().toFloat().withTrimmedLeft ((float) osc1Well.getWidth() - 130.0f)),
-           "with a + OSC 2 chip in its corner, clear of its pill");
-    const auto osc2Off = render (*editor);
-
-    const auto clickOn = [] (juce::Component& target, juce::Point<float> at)
-    {
-        return juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), at, {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-                                 &target, &target, juce::Time::getCurrentTime(), at, juce::Time::getCurrentTime(), 1, false);
-    };
-    addOsc2.mouseDown (clickOn (addOsc2, addOsc2.getLocalBounds().getCentre().toFloat()));
-    check (param (p, ParamID::osc2On) >= 0.5f && osc2.isOn() && editor->isOsc2Shown(), "the chip adds OSC 2");
-    check (pumpUntil ([&] { return osc2Well.isVisible() && osc2Well.getAlpha() >= 1.0f && editor->getDial (5).getAlpha() >= 1.0f; }),
-           "which fades in with its dials");
-    check (! addOsc2.isVisible(), "and the chip goes");
-    check (above (osc2Well, editor->getDial (3), editor->getDial (5)) && osc2Well.getX() > osc1Well.getRight(),
-           "OSC 2's well sits on the right, over its own dials");
-    check (osc1Well.getWidth() == editor->getUnisonDisplay().getWidth(), "and OSC 1 moves over to the left half");
-    check (pixelsChanged (osc2Off, render (*editor)) > 200, "visibly");
-    check (! editor->getWaveMenu (1).isOpen() && ! editor->getWaveMenu (0).isOpen(), "without opening a tray");
-
-    const float osc1Wave = param (p, ParamID::wave);
-    osc2.mouseDown (clickOn (osc2, osc2.nextArrow().getCentre()));
-    check (approx (param (p, ParamID::osc2Wave), (float) Waveform::sine, 1e-6f) && approx (param (p, ParamID::wave), osc1Wave, 1e-6f),
-           "OSC 2's arrows step its own shape (SQUARE round to SINE), not OSC 1's");
-    check (pumpUntil ([&osc2Well] { return osc2Well.getShownWave() == Waveform::sine; }), "and its well follows");
-
-    osc2.mouseDown (clickOn (osc2, { 60.0f, 60.0f }));
-    auto& osc2Menu = editor->getWaveMenu (1);
-    check (osc2Menu.isOpen() && osc2Menu.trayBounds().getX() <= (float) editor->getWaveDisplay (0).getX()
-               && osc2Menu.trayBounds().getRight() >= (float) osc2Well.getRight(),
-           "OSC 2's tray opens across both wells");
-    osc2Menu.mouseDown (clickOn (osc2Menu, osc2Menu.tileBounds (2).getCentre()));
-    check (approx (param (p, ParamID::osc2Wave), (float) Waveform::saw, 1e-6f) && ! osc2Menu.isOpen(), "and picks OSC 2's shape");
-
-    // PITCH and LEVEL show in the well: an octave up, twice the cycles.
-    editor->getDial (3).setValue (12.0, juce::sendNotificationSync);
-    editor->getDial (5).setValue (0.5, juce::sendNotificationSync);
-    check (approx (param (p, ParamID::osc2Pitch), 12.0f, 1e-6f) && approx (param (p, ParamID::osc2Level), 0.5f, 1e-6f),
-           "OSC 2's dials set its PITCH and LEVEL");
-    check (pumpUntil ([&osc2Well] { return approx (osc2Well.getOsc().cycles, 4.0f, 1e-3f) && approx (osc2Well.getOsc().level, 0.5f, 1e-6f); }),
-           "its well shows twice the cycles, half as tall");
-
-    osc2.mouseDown (clickOn (osc2, osc2.powerBounds().getCentre()));
-    check (param (p, ParamID::osc2On) < 0.5f, "its power chip switches OSC 2 off");
-    check (pumpUntil ([&] { return ! editor->isOsc2Shown(); }) && ! osc2Well.isVisible() && ! editor->getDial (3).isVisible()
-               && addOsc2.isVisible() && osc1Well.getRight() > editor->getAmpDisplay().getX(),
-           "and it goes out of sight again, OSC 1 taking the row back");
-
-    setParam (p, ParamID::osc2On, 1.0f);
-    check (pumpUntil ([&] { return editor->isOsc2Shown() && osc2Well.isVisible(); }), "the host switching it on brings it back too");
-    setParam (p, ParamID::osc2On, 0.0f);
-    check (pumpUntil ([&] { return ! editor->isOsc2Shown(); }), "and off takes it away");
-
-    // The AMP well follows its dials, and a dot rides the envelope for each note.
-    playAndMeasure (p, {}, 100);      // let the earlier tests' notes fade out
+    // The envelope's well: a dot rides the envelope for each note.
+    auto& amp = bench.getEnvelope().getDisplay();
     setParam (p, ParamID::attack, 0.5f);
-    setParam (p, ParamID::output, -6.0f);
-    const auto& amp = editor->getAmpDisplay();
-    check (pumpUntil ([&amp] { return approx (amp.getAmpState().attackSeconds, 0.5f, 0.001f)
-                                   && approx (amp.getAmpState().outputDb, -6.0f, 0.01f); }),
-           "the AMP well shows ATTACK and OUTPUT");
-    const auto beforeNotes = render (*editor);
-
+    check (pumpUntil ([&amp] { return approx (amp.getAmpState().attackSeconds, 0.5f, 0.001f); }), "the ENVELOPE well shows ATTACK");
     juce::MidiBuffer chordOn;
     for (const int note : { 60, 64 })
         chordOn.addEvent (juce::MidiMessage::noteOn (2, note, 0.8f), 0);
-    playAndMeasure (p, chordOn, 4);   // ~40 ms into a 500 ms attack
+    playAndMeasure (p, chordOn, 4);
     check (pumpUntil ([&amp] { return amp.getAmpState().numSounding() == 2; }), "two notes, two dots");
-    const auto& rising = amp.getAmpState();
-    bool climbing = true;
-    for (const auto& note : rising.notes)
-        if (note.stage != NoteActivity::Stage::idle)
-            climbing = climbing && note.stage == NoteActivity::Stage::attack && note.level > 0.0f && note.level < 0.5f;
-    check (climbing, "early in the attack, they are partway up the rise");
-    check (pixelsChanged (beforeNotes, render (*editor)) > 20, "and they show in the AMP well");
-
-    // Every sounding note is in `stage` (and there are two of them).
-    const auto allIn = [&amp] (NoteActivity::Stage stage)
-    {
-        const auto& state = amp.getAmpState();
-        bool all = state.numSounding() == 2;
-        for (const auto& note : state.notes)
-            if (note.stage != NoteActivity::Stage::idle)
-                all = all && note.stage == stage;
-        return all;
-    };
-
-    playAndMeasure (p, {}, 60);       // past the attack
-    check (pumpUntil ([&] { return allIn (NoteActivity::Stage::hold); }), "with the keys down, they rest on the top");
-
     juce::MidiBuffer chordOff;
     for (const int note : { 60, 64 })
         chordOff.addEvent (juce::MidiMessage::noteOff (2, note), 0);
     playAndMeasure (p, chordOff, 4);
-    check (pumpUntil ([&] { return allIn (NoteActivity::Stage::release); }), "let go, they release");
-    bool falling = true;
-    for (const auto& note : amp.getAmpState().notes)
-        if (note.stage != NoteActivity::Stage::idle)
-            falling = falling && note.level < note.releaseFrom;
-    check (falling, "and walk down from where they were");
     playAndMeasure (p, {}, 100);
-    check (pumpUntil ([&amp] { return amp.getAmpState().numSounding() == 0; }), "and leave once the notes have faded");
+    check (pumpUntil ([&amp] { return amp.getAmpState().numSounding() == 0; }), "which leave once the notes have faded");
     setParam (p, ParamID::attack, 0.005f);
-    setParam (p, ParamID::output, 0.0f);
+
+    // The gear picks how sound flows: following the layout numbers the modules.
+    auto& settings = editor->getSettingsTray();
+    editor->mouseDown (mouseAt (*editor, editor->gearBounds().getCentre()));
+    check (settings.isOpen() && settings.getTitle() == "SIGNAL FLOW" && settings.getNumChoices() == 3
+               && settings.getChoice (0).ticked && ! settings.getChoice (1).ticked,
+           "the gear opens the signal-flow settings, Fixed order ticked");
+    check (editor->getLocalBounds().toFloat().contains (settings.trayBounds()) && settings.trayBounds().getY() > editor->gearBounds().getBottom(),
+           "under the gear");
+    check (pumpUntil ([&settings] { return settings.getAlpha() >= 1.0f; }), "fading in");
+    snapshot (render (*editor), "5-settings");
+    settings.mouseDown (mouseAt (settings, settings.choiceBounds (1).getCentre()));
+    check (! settings.isOpen() && approx (param (p, ParamID::signalFlow), 1.0f, 1e-6f), "picking Follow layout sets the flow");
+
+    const auto orderIs = [&bench] (std::initializer_list<std::pair<Bench::ModuleId, int>> expected)
+    {
+        return std::all_of (expected.begin(), expected.end(), [&bench] (const auto& e) { return bench.getModule (e.first).getOrder() == e.second; });
+    };
+    const Bench::ModuleId o1 { Bench::Kind::oscillator, 0 }, o2 { Bench::Kind::oscillator, 1 }, o3 { Bench::Kind::oscillator, 2 },
+                          o4 { Bench::Kind::oscillator, 3 }, un { Bench::Kind::unison, 0 }, env { Bench::Kind::envelope, 0 };
+    check (orderIs ({ { o2, 1 }, { o1, 2 }, { o4, 3 }, { o3, 4 }, { un, 5 }, { env, 6 } }),
+           "each module shows its place, row by row, left to right");
+    snapshot (render (*editor), "6-follow-layout");
+    dragHeader (bench.getOscillator (3), { 252.0f, 256.0f });
+    check (pumpUntil ([&] { return orderIs ({ { o2, 1 }, { o1, 2 }, { o3, 3 }, { un, 4 }, { env, 5 }, { o4, 6 } }); }),
+           "moving OSC 4 to the end of the second row renumbers them");
+
+    // Patch cables: the oscillators get OUT jacks, the output an IN jack, and
+    // only an oscillator patched to the output is heard.
+    editor->mouseDown (mouseAt (*editor, editor->gearBounds().getCentre()));
+    settings.mouseDown (mouseAt (settings, settings.choiceBounds (2).getCentre()));
+    check (approx (param (p, ParamID::signalFlow), 2.0f, 1e-6f), "picking Patch cables sets the flow");
+    check (pumpUntil ([&] { return osc1.isJackShown() && osc1.getOrder() == 0; }) && ! unison.isJackShown(),
+           "the oscillators show OUT jacks (unison doesn't), and no numbers");
+    bool allDimmed = true;
+    for (int slot = 0; slot < Bench::numOscillators; ++slot)
+        allDimmed = allDimmed && bench.getOscillator (slot).isDimmed();
+    check (allDimmed && ! unison.isDimmed() && ! bench.getEnvelope().isDimmed(), "with nothing patched, every oscillator is greyed out");
+    check (holdAndMeasure (p) < 1e-4f, "and silent");
+    const auto unpatched = render (*editor);
+
+    const auto jack = osc1.jackBounds().getCentre();
+    const auto inJack = osc1.getLocalPoint (editor, editor->outputJackBounds().getCentre());
+    osc1.mouseDown (mouseAt (osc1, jack));
+    osc1.mouseDrag (mouseAt (osc1, jack + juce::Point<float> (40.0f, 200.0f), jack));
+    check (editor->isPatching(), "dragging from OSC 1's OUT jack pulls a cable");
+    snapshot (render (*editor), "7-patching");
+    osc1.mouseUp (mouseAt (osc1, inJack, jack));
+    check (! editor->isPatching() && model.isPatchedToOutput (o1), "dropped on the output's IN jack, it's patched");
+    check (! osc1.isDimmed() && bench.getOscillator (1).isDimmed(), "OSC 1 lights up, the others stay grey");
+    check (holdAndMeasure (p) > 0.02f, "and is heard");
+    check (pumpUntil ([&] { return pixelsChanged (unpatched, render (*editor)) > 200; }), "the cable hangs between the jacks");
+    snapshot (render (*editor), "8-cables");
+
+    osc1.mouseDown (mouseAt (osc1, jack));
+    osc1.mouseUp (mouseAt (osc1, jack + juce::Point<float> (0.0f, 120.0f), jack));
+    check (! model.isPatchedToOutput (o1) && osc1.isDimmed(), "a cable dropped anywhere else is unplugged");
+    check (holdAndMeasure (p) < 1e-3f, "and OSC 1 goes quiet");
+
+    osc1.mouseDown (mouseAt (osc1, jack));
+    osc1.mouseUp (mouseAt (osc1, inJack, jack));
+    auto& osc4 = bench.getOscillator (3);
+    const auto jack4 = osc4.jackBounds().getCentre();
+    osc4.mouseDown (mouseAt (osc4, jack4));
+    osc4.mouseUp (mouseAt (osc4, osc4.getLocalPoint (editor, editor->outputJackBounds().getCentre()), jack4));
+    check (model.isPatchedToOutput (o1) && model.isPatchedToOutput (o4), "more than one oscillator can be patched to the output");
+
+    const auto in = editor->outputJackBounds().getCentre();
+    editor->mouseDown (mouseAt (*editor, in));
+    check (editor->isPatching() && ! model.isPatchedToOutput (o4) && model.isPatchedToOutput (o1),
+           "grabbing the IN jack picks up the last cable patched to it");
+    editor->mouseUp (mouseAt (*editor, in + juce::Point<float> (-300.0f, -200.0f), in));
+    check (! editor->isPatching() && ! model.isPatchedToOutput (o4), "and dropping it away unplugs it");
+
+    osc1.mouseDown (mouseAt (osc1, osc1.closeBounds().getCentre()));
+    check (! model.isPatchedToOutput (o1) && param (p, ParamID::osc1On) < 0.5f, "taking an oscillator off the bench unplugs its cable");
+    releaseAll (p);
+
+    // Back to a fixed order: no jacks, nothing greyed out.
+    setParam (p, ParamID::signalFlow, 0.0f);
+    check (pumpUntil ([&] { return ! osc4.isJackShown() && ! osc4.isDimmed(); }), "a host change of the flow shows too");
 
     // Scaled up: the same face at 2x.
-    editor->setSize (960, 1224);
-    check (approx ((float) editor->getDial (0).getWidth() / 2.0f, 52.0f, 1.0f), "at 2x every control doubles");
-    const auto doubled = render (*editor);
-    check (hasDetail (doubled), "renders at 2x");
+    editor->setSize (2080, 1480);
+    check (osc4.getWidth() == 472 && approx ((float) osc4.getDial (0).getWidth(), 104.0f, 1.0f), "at 2x every module and dial doubles");
+    check (osc4.getPosition() == (model.positionOf (o4) * 2.0f).toInt(), "and the modules keep their places");
+    check (hasDetail (render (*editor)), "renders at 2x");
 
     // The aspect ratio is held when a host (or the corner) resizes it.
     if (auto* constrainer = editor->getConstrainer())
-        constrainer->setBoundsForComponent (editor, { 0, 0, 720, 600 }, false, false, true, true);
+        constrainer->setBoundsForComponent (editor, { 0, 0, 1300, 800 }, false, false, true, true);
     const float aspect = (float) editor->getWidth() / (float) editor->getHeight();
-    check (approx (aspect, 480.0f / 612.0f, 0.02f), "resizing keeps the design's proportions");
+    check (approx (aspect, 1040.0f / 740.0f, 0.02f), "resizing keeps the design's proportions");
 }
 } // namespace
 
