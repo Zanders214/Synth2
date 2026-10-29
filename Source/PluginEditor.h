@@ -7,14 +7,15 @@
 #include "Synth2LookAndFeel.h"
 #include "NeonKeyboard.h"
 #include "VoiceDisplays.h"
-#include "WaveSelector.h"
+#include "WavePicker.h"
 
 /**
     Synth2AudioProcessorEditor — the Neon Plugins face for Synth2.
 
     A dark panel, top to bottom: the wordmark and POLY badge; the WAVE well
-    (the shape, and a faint copy per unison voice) over the four wave chips;
-    then two groups, each a display over the three dials it shows: the UNISON
+    (the shape, and a faint copy per unison voice), which is also where the
+    shape is picked: its pill steps and scrolls through them, and a click
+    drops open a tray of the four; then two groups, each a display over the three dials it shows: the UNISON
     well (a dot per voice, by detune and pan) over VOICES / DETUNE / WIDTH,
     and the AMP well (the envelope, with a dot riding it for each note that
     sounds) over ATTACK / RELEASE / OUTPUT. The dials run the spectrum, and
@@ -36,7 +37,8 @@ public:
 
     // For the tests: the controls, in display order.
     juce::Slider&  getDial (int index) noexcept { return dials[(size_t) index]; }
-    WaveSelector&  getWaveSelector() noexcept   { return waveSelector; }
+    WavePicker&    getWavePicker() noexcept     { return wavePicker; }
+    WaveMenu&      getWaveMenu() noexcept       { return waveMenu; }
     NeonKeyboard&  getKeyboard() noexcept       { return keyboard; }
     WaveDisplay&   getWaveDisplay() noexcept    { return waveDisplay; }
     UnisonDisplay& getUnisonDisplay() noexcept  { return unisonDisplay; }
@@ -55,7 +57,8 @@ private:
     WaveDisplay   waveDisplay;
     UnisonDisplay unisonDisplay;
     AmpDisplay    ampDisplay;
-    WaveSelector  waveSelector;
+    WavePicker    wavePicker;
+    WaveMenu      waveMenu;
     NeonKeyboard  keyboard;
 
     std::array<juce::Slider, numDials> dials;

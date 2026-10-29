@@ -13,7 +13,7 @@ note -> VOICES x oscillator -> DETUNE + WIDTH -> ATTACK / RELEASE -> OUTPUT
 
 | Control     | What it does                                                        |
 |-------------|---------------------------------------------------------------------|
-| **Wave**    | The four chips under the WAVE display: **SINE**, **TRI**, **SAW** (the default) or **SQUARE**. |
+| **Wave**    | **SINE**, **TRIANGLE**, **SAW** (the default) or **SQUARE**, picked in the WAVE display (see below). |
 | **Voices**  | How many copies of the oscillator play each note, 1 to 16. One voice is a plain, centred oscillator. |
 | **Detune**  | How far apart the voices are tuned: the outer two sit this many cents flat and sharp (up to ±50 ct) and the rest fall evenly between. Detuned voices beat against each other, which is what makes the sound thick. |
 | **Width**   | How far the voices spread across the stereo field. 0% keeps them in the centre (mono); 100% puts the outer ones hard left and right. |
@@ -23,12 +23,24 @@ note -> VOICES x oscillator -> DETUNE + WIDTH -> ATTACK / RELEASE -> OUTPUT
 
 Every control is a parameter, so it's saved with your set and can be automated.
 
+### Picking the wave
+
+The WAVE display is also where the shape is picked. The pill in its top right
+corner shows the current shape: its arrows step to the previous and next one
+(wrapping round), and the scroll wheel anywhere over the display flips through
+them. Click the display anywhere else and a tray of the four shapes drops open
+under it, with the rest of the panel dimmed: hover a tile to preview it in the
+display (the sound doesn't change until you pick), click it to keep it, or
+click outside (or press Escape) to leave things as they were. The arrow keys
+and Return work in the tray too. Each change morphs the drawing from the old
+shape to the new one rather than jumping.
+
 ### Seeing what they do
 
 Each group of dials has a display right above it, drawn in the dials' colours:
 
-- **WAVE** (above the wave chips): two cycles of the shape, with a faint copy for every
-  unison voice, shifted by its detune.
+- **WAVE**: two cycles of the shape, with a faint copy for every unison voice, shifted
+  by its detune.
 - **UNISON** (above VOICES / DETUNE / WIDTH): a glowing dot per voice, placed left to
   right by its detune (on a fixed -50..+50 cent scale) and top to bottom by its place in
   the stereo field. DETUNE fans the dots out sideways, WIDTH up and down.
@@ -98,13 +110,13 @@ Source/
   SynthVoice.h               one note: up to 16 unison oscillators under the envelope
   Oscillator.h               the four wave shapes, and the PolyBLEP oscillator that plays them
   Unison.h                   where each unison voice sits: its detune, its pan, the stack's level
-  PluginEditor.{h,cpp}       the Neon Plugins editor: wells, wave chips, dials, keyboard
+  PluginEditor.{h,cpp}       the Neon Plugins editor: wells, wave picker, dials, keyboard
   Synth2LookAndFeel.{h,cpp}  the dials (design-system Dial: arc + glowing core)
-  WaveSelector.h             the SINE / TRI / SAW / SQUARE chips
+  WavePicker.h               the WAVE well's picker (pill, arrows, wheel) and its tray of shapes
   VoiceDisplays.h            the WAVE, UNISON and AMP wells
   NeonKeyboard.h             the on-screen keyboard
   Synth2Theme.h              shared palette, fonts, colour + value formatting
-  Synth2VisualModel.h        pure wave / unison / envelope -> display math (uses the engine's own)
+  Synth2VisualModel.h        pure wave / unison / envelope -> display math (uses the engine's own), the morph and its ease
   RtSafety.h                 the RealtimeSanitizer annotation
 Tests/
   Synth2EngineTests.cpp         framework-free DSP tests: pitch, envelope, unison, polyphony, pedal
@@ -119,7 +131,8 @@ Tests/
 The editor follows the **Neon Plugins** design system natively in JUCE (no WebView):
 the dark radial panel, the `Zanders` + product wordmark (Synth2 in violet) with its
 mode badge, the WAVE well (the shape in the spectrum gradient with a faint copy per
-unison voice) over the wave chips with their accent-gradient selection, then two groups
+unison voice, with its picker pill and a drop-open tray of glowing shape tiles, the
+chosen one ringed in the accent), then two groups
 of three Dials coloured along the cyan → violet → pink → amber spectrum, each under the
 display it drives (UNISON: a glowing dot per voice, by detune and pan; AMP: the envelope
 in its dials' colours, with a live dot per sounding note), and an ivory keyboard whose

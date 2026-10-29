@@ -10,7 +10,7 @@ using namespace Synth2;
 namespace
 {
     constexpr float kDesignWidth  = 480.0f;
-    constexpr float kDesignHeight = 548.0f;
+    constexpr float kDesignHeight = 522.0f;
     constexpr float kPanelPad     = 24.0f;
 
     // The dials, in display order: three for the unison stack, three for the amp.
@@ -46,15 +46,26 @@ namespace
 Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
     : AudioProcessorEditor (&p),
       processorRef (p),
-      waveSelector (*p.getState().getParameter (ParamID::wave)),
+      wavePicker (*p.getState().getParameter (ParamID::wave)),
       keyboard (p.getKeyboardState())
 {
     addAndMakeVisible (waveDisplay);
     addAndMakeVisible (unisonDisplay);
     addAndMakeVisible (ampDisplay);
     ampDisplay.setColours (dialColour (3), dialColour (4), dialColour (5));   // ATTACK, RELEASE, OUTPUT
-    addAndMakeVisible (waveSelector);
+    addAndMakeVisible (wavePicker);
     addAndMakeVisible (keyboard);
+
+    // The WAVE well opens the tray of shapes; hovering one previews it in the
+    // well, picking one sets WAVE.
+    wavePicker.onOpenMenu = [this]
+    {
+        waveMenu.open (wavePicker.getSelected());
+        wavePicker.setMenuOpen (true);
+    };
+    waveMenu.onChoose = [this] (int wave) { wavePicker.choose (wave); };
+    waveMenu.onHover  = [this] (int wave) { waveDisplay.setPreview (wave); };
+    waveMenu.onClose  = [this] { wavePicker.setMenuOpen (false); };
 
     for (size_t i = 0; i < dials.size(); ++i)
     {
@@ -90,6 +101,8 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
                      (int) (kDesignWidth * 2.0f), (int) (kDesignHeight * 2.0f));
 
     setSize ((int) kDesignWidth, (int) kDesignHeight);
+    addChildComponent (waveMenu);   // last, so it opens over everything
+    resized();
     timerCallback();
     startTimerHz (30);
 }
@@ -244,7 +257,8 @@ void Synth2AudioProcessorEditor::resized()
     looks.setUiScale (s);
     waveDisplay.setUiScale (s);
     unisonDisplay.setUiScale (s);
-    waveSelector.setUiScale (s);
+    wavePicker.setUiScale (s);
+    waveMenu.setUiScale (s);
     keyboard.setUiScale (s);
 
     ampDisplay.setUiScale (s);
@@ -256,11 +270,13 @@ void Synth2AudioProcessorEditor::resized()
     layout.badge  = layout.header.withTrimmedLeft (layout.header.getWidth() - px (54.0f))
                                  .withSizeKeepingCentre (px (54.0f), px (20.0f));
 
-    // The WAVE well across the panel, the wave chips under it.
+    // The WAVE well across the panel, its picker laid over it; the tray of
+    // shapes covers the editor and drops from under the well.
     area.removeFromTop (px (16.0f));
-    waveDisplay.setBounds (area.removeFromTop (px (84.0f)));
-    area.removeFromTop (px (10.0f));
-    waveSelector.setBounds (area.removeFromTop (px (28.0f)));
+    waveDisplay.setBounds (area.removeFromTop (px (96.0f)));
+    wavePicker.setBounds (waveDisplay.getBounds());
+    waveMenu.setBounds (getLocalBounds());
+    waveMenu.setAnchor (waveDisplay.getBounds());
 
     // Hairline, then two groups side by side, each a display over its three
     // dials: UNISON on the left, AMP on the right.

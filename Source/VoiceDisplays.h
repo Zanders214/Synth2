@@ -37,6 +37,7 @@ public:
         if (newState == displayState)
             return;
         displayState = newState;
+        stateChanged();
         repaint();
     }
 
@@ -44,6 +45,9 @@ public:
 
 protected:
     float getUiScale() const noexcept { return uiScale; }
+
+    /** Called when setState() brings something new, before the repaint. */
+    virtual void stateChanged() {}
 
     /** Paints the well and its captions, and returns the area left for the plot. */
     juce::Rectangle<float> paintWell (juce::Graphics& g, const juce::String& caption, const juce::String& readout) const
@@ -87,18 +91,34 @@ private:
     WaveDisplay — the WAVE well: two cycles of the chosen shape in the spectrum
     gradient, glowing, over a faint copy per unison voice, each drawn shifted by
     its detune (a picture of the stack spreading out, see Synth2VisualModel).
+
+    A new shape doesn't jump in: the old one morphs into it over 150 ms. While
+    the wave menu is open, hovering a shape previews it here the same way.
 */
-class WaveDisplay final : public DisplayWell
+class WaveDisplay final : public DisplayWell,
+                          private juce::Timer
 {
 public:
     WaveDisplay() { setInterceptsMouseClicks (false, false); }
 
+    /** Shows `wave` (0..3) in place of the chosen one, or the chosen one
+        again for -1. */
+    void setPreview (int wave)
+    {
+        preview = wave;
+        retarget();
+    }
+
+    /** The shape the well shows, or is morphing to. */
+    Waveform getShownWave() const noexcept { return morphTo; }
+    bool isMorphing() const noexcept { return morphProgress() < 1.0f; }
+
     void paint (juce::Graphics& g) override
     {
-        static const juce::StringArray names { "SINE", "TRIANGLE", "SAW", "SQUARE" };
         const auto& state = getState();
         const float s    = getUiScale();
-        const auto  plot = paintWell (g, "WAVE", names[(int) state.wave]);
+        const auto  plot = paintWell (g, preview >= 0 ? juce::String (juce::CharPointer_UTF8 ("WAVE  \xc2\xb7  PREVIEW")) : juce::String ("WAVE"), {});
+        const float amount = Synth2VisualModel::ease (morphProgress());
 
         // Centre line.
         g.setColour (Synth2::Palette::gridLine);
@@ -111,7 +131,7 @@ public:
             for (int p = 0; p <= points; ++p)
             {
                 const float x01 = (float) p / (float) points;
-                const float v   = Synth2VisualModel::waveAt (state.wave, x01, phaseOffset);
+                const float v   = Synth2VisualModel::morphAt (morphFrom, morphTo, amount, x01, phaseOffset);
                 const juce::Point pt (plot.getX() + x01 * plot.getWidth(),
                                       plot.getCentreY() - v * plot.getHeight() * 0.42f);
                 if (p == 0) path.startNewSubPath (pt);
@@ -147,6 +167,41 @@ public:
         g.setGradientFill (ramp);
         g.strokePath (shape, main);
     }
+
+private:
+    void stateChanged() override { retarget(); }
+
+    // Starts a morph to whatever the well should show now, from what it
+    // showed last (a change mid-morph starts afresh from the last target).
+    void retarget()
+    {
+        const auto target = preview >= 0 ? (Waveform) preview : getState().wave;
+        if (target == morphTo)
+            return;
+        morphFrom  = morphTo;
+        morphTo    = target;
+        morphStart = juce::Time::getMillisecondCounterHiRes();
+        startTimerHz (60);
+        repaint();
+    }
+
+    float morphProgress() const noexcept
+    {
+        const double elapsed = juce::Time::getMillisecondCounterHiRes() - morphStart;
+        return Synth2VisualModel::clamp01 ((float) (elapsed / (1000.0 * Synth2VisualModel::morphSeconds)));
+    }
+
+    void timerCallback() override
+    {
+        repaint();
+        if (! isMorphing())
+            stopTimer();
+    }
+
+    int      preview    = -1;
+    Waveform morphFrom  = Waveform::saw;
+    Waveform morphTo    = Waveform::saw;
+    double   morphStart = 0.0;
 };
 
 /**
