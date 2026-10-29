@@ -88,6 +88,85 @@ void testPolyBlep()
     check (osc.getIncrement() < 0.5, "an oscillator never steps past Nyquist");
 }
 
+void testBlockRender()
+{
+    std::printf ("Block render:\n");
+
+    // The engine plays its oscillators a block at a time, several side by
+    // side. That must be the very same samples, to the bit, as stepping each
+    // one on its own, and stepping on its own the same as the shape's maths
+    // (with the full floor() wrap the fast path leaves out).
+    constexpr int numOscillators = 7;   // a group of four, a pair and one
+    constexpr int numSamples     = 32;
+    float levels[numSamples];
+    for (int n = 0; n < numSamples; ++n)
+        levels[n] = 0.25f + 0.02f * (float) n;
+
+    bool sameAsNext = true, sameAsMaths = true;
+    for (int w = 0; w < 4; ++w)
+    {
+        const auto wave = (Waveform) w;
+        BlepOscillator together[numOscillators], alone[numOscillators];
+        BlepOscillator* pointers[numOscillators];
+        float rows[numOscillators][numSamples];
+        float* rowPointers[numOscillators];
+        for (int k = 0; k < numOscillators; ++k)
+        {
+            for (auto* osc : { &together[k], &alone[k] })
+            {
+                osc->reset (0.13 * k);
+                osc->setIncrement (0.003 + 0.071 * k);
+            }
+            pointers[k]    = &together[k];
+            rowPointers[k] = rows[k];
+        }
+
+        for (int pass = 0; pass < 20; ++pass)
+        {
+            const bool add = pass % 2 == 1;   // OSC 2 mixes in on top of OSC 1
+            if (! add)
+                for (auto& row : rows)
+                    for (auto& value : row)
+                        value = 0.0f;
+            float expected[numOscillators][numSamples];
+            for (int k = 0; k < numOscillators; ++k)
+                for (int n = 0; n < numSamples; ++n)
+                    expected[k][n] = rows[k][n];
+
+            BlepOscillator::renderAll (pointers, rowPointers, numOscillators, wave, levels, numSamples, add);
+
+            for (int k = 0; k < numOscillators; ++k)
+                for (int n = 0; n < numSamples; ++n)
+                {
+                    const double phase = alone[k].getPhase();
+                    const double dt    = alone[k].getIncrement();
+                    const float  value = alone[k].next (wave);
+                    if (add)
+                        expected[k][n] += value * levels[n];
+                    else
+                        expected[k][n] = value * levels[n];
+                    sameAsNext = sameAsNext && rows[k][n] == expected[k][n];
+
+                    float maths = Oscillator::naive (wave, phase);
+                    if (wave == Waveform::saw)
+                    {
+                        const double u = Oscillator::wrap (phase + 0.5);
+                        maths = (float) (2.0 * u - 1.0 - Oscillator::polyBlep (u, dt));
+                    }
+                    else if (wave == Waveform::square)
+                    {
+                        maths = (float) ((phase < 0.5 ? 1.0 : -1.0)
+                                         + Oscillator::polyBlep (phase, dt)
+                                         - Oscillator::polyBlep (Oscillator::wrap (phase + 0.5), dt));
+                    }
+                    sameAsMaths = sameAsMaths && value == maths;
+                }
+        }
+    }
+    check (sameAsNext,  "rendering oscillators together gives each one's own samples, to the bit");
+    check (sameAsMaths, "every shape plays exactly its maths, wrapped phase and all");
+}
+
 void testUnisonSpread()
 {
     std::printf ("Unison spread:\n");
@@ -257,6 +336,7 @@ int main()
 
     testShapes();
     testPolyBlep();
+    testBlockRender();
     testUnisonSpread();
     testVisualModel();
     testEnvelope();
