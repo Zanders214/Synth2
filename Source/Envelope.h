@@ -16,6 +16,10 @@
     its level, and the attack climbs from there at its usual rate. Likewise a
     release falls from wherever the key went up, and turning SUSTAIN while a
     note sits on it glides there rather than stepping.
+
+    The level runs in double precision: a long DECAY to a high SUSTAIN (10 s
+    to 99%, say) steps by less than half a float's resolution near the top,
+    so in floats the level would never move.
 */
 class Envelope
 {
@@ -72,13 +76,13 @@ public:
     void reset() noexcept
     {
         stage   = Stage::idle;
-        level   = 0.0f;
+        level   = 0.0;
         elapsed = 0.0;
     }
 
     bool  isActive() const noexcept { return stage != Stage::idle; }
     Stage getStage() const noexcept { return stage; }
-    float getLevel() const noexcept { return level; }
+    float getLevel() const noexcept { return (float) level; }
 
     /** How far through its stage the envelope is, 0..1 (0.5 while it sustains). */
     float getProgress() const noexcept
@@ -86,11 +90,11 @@ public:
         switch (stage)
         {
             case Stage::delay:   return fraction (elapsed, delaySamples);
-            case Stage::attack:  return level;
+            case Stage::attack:  return (float) level;
             case Stage::hold:    return fraction (elapsed, holdSamples);
-            case Stage::decay:   return parameters.sustain < 1.0f ? std::clamp ((1.0f - level) / (1.0f - parameters.sustain), 0.0f, 1.0f) : 1.0f;
+            case Stage::decay:   return parameters.sustain < 1.0f ? fraction (1.0 - level, 1.0 - sustain()) : 1.0f;
             case Stage::sustain: return 0.5f;
-            case Stage::release: return releaseFrom > 0.0f ? std::clamp (1.0f - level / releaseFrom, 0.0f, 1.0f) : 1.0f;
+            case Stage::release: return releaseFrom > 0.0 ? fraction (releaseFrom - level, releaseFrom) : 1.0f;
             case Stage::idle:    break;
         }
         return 0.0f;
@@ -109,7 +113,7 @@ public:
             case Stage::sustain: settle(); break;
             case Stage::release: fade(); break;
         }
-        return level;
+        return (float) level;
     }
 
     /** Steps `samples` on without wanting the levels, for an oscillator that
@@ -125,8 +129,10 @@ private:
     bool isSettled() const noexcept
     {
         return stage == Stage::idle
-            || (stage == Stage::sustain && ! (level < parameters.sustain) && ! (level > parameters.sustain));
+            || (stage == Stage::sustain && ! (level < sustain()) && ! (level > sustain()));
     }
+
+    double sustain() const noexcept { return (double) parameters.sustain; }
 
     static float fraction (double done, double total) noexcept
     {
@@ -138,16 +144,16 @@ private:
     // starting level change.
     void recalculate() noexcept
     {
-        const auto perSample = [this] (float distance, float seconds)
+        const auto perSample = [this] (double distance, float seconds)
         {
-            return seconds > 0.0f ? (float) (distance / (seconds * sampleRate)) : 2.0f;
+            return seconds > 0.0f ? distance / ((double) seconds * sampleRate) : 2.0;
         };
         delaySamples = (double) parameters.delay * sampleRate;
         holdSamples  = (double) parameters.hold * sampleRate;
-        attackRate   = perSample (1.0f, parameters.attack);
-        decayRate    = perSample (1.0f - parameters.sustain, parameters.decay);
+        attackRate   = perSample (1.0, parameters.attack);
+        decayRate    = perSample (1.0 - sustain(), parameters.decay);
         releaseRate  = perSample (releaseFrom, parameters.release);
-        glideStep    = (float) (1.0 / (sustainGlideSeconds * sampleRate));
+        glideStep    = 1.0 / (sustainGlideSeconds * sampleRate);
     }
 
     void wait (double length, Stage next) noexcept
@@ -163,9 +169,9 @@ private:
     void rise() noexcept
     {
         level += attackRate;
-        if (level >= 1.0f)
+        if (level >= 1.0)
         {
-            level   = 1.0f;
+            level   = 1.0;
             elapsed = 0.0;
             stage   = holdSamples > 0.0 ? Stage::hold : Stage::decay;
         }
@@ -175,25 +181,25 @@ private:
     // to ends the decay there instead, and the level glides up to it.
     void fall() noexcept
     {
-        const float before = level;
+        const double before = level;
         level -= decayRate;
-        if (level <= parameters.sustain)
+        if (level <= sustain())
         {
-            level = std::min (before, parameters.sustain);
+            level = std::min (before, sustain());
             stage = Stage::sustain;
         }
     }
 
     void settle() noexcept
     {
-        const float target = parameters.sustain;
+        const double target = sustain();
         level = level < target ? std::min (target, level + glideStep) : std::max (target, level - glideStep);
     }
 
     void fade() noexcept
     {
         level -= releaseRate;
-        if (level <= 0.0f)
+        if (level <= 0.0)
             reset();
     }
 
@@ -202,11 +208,11 @@ private:
     double delaySamples = 0.0;
     double holdSamples  = 0.0;
     double elapsed      = 0.0;
-    float  attackRate   = 0.0f;
-    float  decayRate    = 0.0f;
-    float  releaseRate  = 0.0f;
-    float  glideStep    = 0.0f;
-    float  releaseFrom  = 0.0f;
-    float  level        = 0.0f;
+    double attackRate   = 0.0;
+    double decayRate    = 0.0;
+    double releaseRate  = 0.0;
+    double glideStep    = 0.0;
+    double releaseFrom  = 0.0;
+    double level        = 0.0;
     Stage  stage        = Stage::idle;
 };

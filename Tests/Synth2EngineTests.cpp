@@ -226,6 +226,20 @@ void testEnvelopeStages()
     e.getNextSample();
     check (e.getLevel() > caught, "played again mid-release, it climbs from where it was rather than from silence");
 
+    // A long, shallow decay still gets there: its steps are far finer than a
+    // float can resolve near the top.
+    Envelope slow;
+    slow.setSampleRate (44100.0);
+    slow.setParameters ({ 0.0f, 0.001f, 0.0f, 10.0f, 0.99f, 0.3f });
+    slow.noteOn();
+    for (int i = 0; i < 44100 * 5; ++i)
+        slow.getNextSample();
+    check (slow.getStage() == Stage::decay && slow.getProgress() > 0.45f && slow.getProgress() < 0.55f,
+           "a 10 s DECAY to 99% is halfway after 5 s");
+    for (int i = 0; i < 44100 * 6; ++i)
+        slow.getNextSample();
+    check (slow.getStage() == Stage::sustain && approx (slow.getLevel(), 0.99f, 1e-6f), "and reaches SUSTAIN after 10 s");
+
     // In a note: DELAY holds it back, and a low SUSTAIN lets it fall after the hit.
     auto settings = defaults();
     auto& shape = settings.envelopes[0];
