@@ -229,14 +229,18 @@ namespace Bench
         }
 
         /** Sets out a session from before the bench as it looked then: OSC 1
-            (and OSC 2, if it was on) above, unison and the envelope below. */
-        void adoptClassicLayout()
+            (and OSC 2, if it was on) above, unison and the envelope below.
+            OSC 1, unison and the envelope were always there, so they go on
+            the bench, unless `saved` (the restored state) already switched
+            them on or off itself. */
+        void adoptClassicLayout (const juce::ValueTree& saved = {})
         {
             ensureBench();
             for (const auto& id : allModules)
                 setPosition (id, defaultPosition (id));
             for (const auto& id : { ModuleId { Kind::oscillator, 0 }, ModuleId { Kind::unison, 0 }, ModuleId { Kind::envelope, 0 } })
-                setPresent (id, true);
+                if (! saved.getChildWithProperty ("id", juce::String (parameterFor (id))).isValid())
+                    setPresent (id, true);
         }
 
         bool isPresent (const ModuleId& id) const

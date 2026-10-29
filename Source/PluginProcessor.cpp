@@ -319,13 +319,15 @@ void Synth2AudioProcessor::setStateInformation (const void* data, int sizeInByte
 
     // A session from before the bench had OSC 1, unison and the envelope
     // always there: set them out on the bench as they looked then.
+    // (replaceState shares the tree and fills in the parameters it lacks,
+    // so what was saved is read from a copy.)
     const auto restored = juce::ValueTree::fromXml (*xml);
-    const bool fromBeforeTheBench = ! Bench::Model::hasBench (restored);
+    const auto saved    = restored.createCopy();
     apvts.replaceState (restored);
 
     Bench::Model bench (apvts);
-    if (fromBeforeTheBench)
-        bench.adoptClassicLayout();
+    if (! Bench::Model::hasBench (saved))
+        bench.adoptClassicLayout (saved);
     bench.ensureBench();
     followCables();
 }

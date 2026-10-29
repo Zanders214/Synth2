@@ -95,9 +95,11 @@ public:
     }
 
     /** Catches up with the bench: modules that came or went (from the host,
-        undo or a restored session) and where they sit. */
+        undo or a restored session) and where they sit. A module being
+        dragged, or gliding or fading, is left to finish first. */
     void sync()
     {
+        auto& animator = juce::Desktop::getInstance().getAnimator();
         for (const auto& id : Bench::allModules)
         {
             auto& module = getModule (id);
@@ -106,6 +108,9 @@ public:
                 show (id, true);
             else if (! present && module.isVisible())
                 hide (id);
+            else if (present && ! module.isBeingDragged() && ! animator.isAnimating (&module))
+                if (const auto bounds = boundsFor (id); module.getBounds() != bounds)
+                    module.setBounds (bounds);
         }
 
         const bool empty = model.isEmpty();

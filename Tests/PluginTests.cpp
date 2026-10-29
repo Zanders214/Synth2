@@ -381,6 +381,21 @@ void testStateRoundTrip()
     check (approx (param (e, ParamID::voices), 7.0f, 1e-6f) && approx (param (e, ParamID::signalFlow), 0.0f, 1e-6f),
            "keeping its sound, in a fixed order");
 
+    // One saved with the switches but before the layout keeps them as saved.
+    auto between = juce::ValueTree::fromXml (*juce::parseXML (a.getState().copyState().toXmlString()));
+    between.removeChild (between.getChildWithName (Bench::benchType), nullptr);
+    for (const auto* id : { ParamID::osc1On, ParamID::unisonOn, ParamID::envelopeOn })
+        between.getChildWithProperty ("id", id).setProperty ("value", juce::String (id) == ParamID::osc1On ? 1.0f : 0.0f, nullptr);
+    juce::AudioProcessor::copyXmlToBinary (*between.createXml(), oldSaved);
+    Synth2AudioProcessor f;
+    f.setStateInformation (oldSaved.getData(), (int) oldSaved.getSize());
+    const Bench::Model benchF (f.getState());
+    check (benchF.isPresent ({ Bench::Kind::oscillator, 0 }) && ! benchF.isPresent ({ Bench::Kind::unison, 0 })
+               && ! benchF.isPresent ({ Bench::Kind::envelope, 0 }),
+           "one that saved its modules' switches, but no layout, keeps the switches as saved");
+    check (benchF.positionOf ({ Bench::Kind::oscillator, 0 }) == Bench::defaultPosition ({ Bench::Kind::oscillator, 0 }),
+           "and gets the old panel's layout");
+
     // Junk is ignored rather than resetting the sound.
     const char junk[] = "not a synth state";
     b.setStateInformation (junk, (int) sizeof (junk));
@@ -737,6 +752,16 @@ void testEditor()
     // Back to a fixed order: no jacks, nothing greyed out.
     setParam (p, ParamID::signalFlow, 0.0f);
     check (pumpUntil ([&] { return ! osc4.isJackShown() && ! osc4.isDimmed(); }), "a host change of the flow shows too");
+
+    // A session restored while the editor is open moves the cards there.
+    juce::MemoryBlock layoutSaved;
+    p.getStateInformation (layoutSaved);
+    model.move (o4, { 756.0f, 0.0f });
+    check (pumpUntil ([&] { return osc4.getPosition() == juce::Point<int> (756, 0); }),
+           "a module moved on the bench (by undo, say) moves on screen");
+    p.setStateInformation (layoutSaved.getData(), (int) layoutSaved.getSize());
+    check (pumpUntil ([&] { return osc4.getPosition() == juce::Point<int> (756, 256); }) && osc4.getBounds() == bench.boundsFor (o4),
+           "and restoring a session puts the cards back where it had them");
 
     // Scaled up: the same face at 2x.
     editor->setSize (2080, 1480);
