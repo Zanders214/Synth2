@@ -12,59 +12,64 @@
     Bench
 
     The workbench the editor shows: an empty space the user fills with modules
-    (up to four oscillators, the unison stack and the envelope) and arranges
-    freely, and, when sound follows the cables, the cables patched from the
-    oscillators to the output.
+    (up to four oscillators, each with its own unison stack, and up to four
+    envelopes) and arranges freely, and, when sound follows the cables, the
+    cables patched between them.
 
     Whether a module is on the bench is its parameter (osc1On..osc4On,
-    unisonOn, envelopeOn), so the engine, host undo and a restored session all
-    agree on it. Where each module sits, and the cables, live in a BENCH child
-    of the plugin's state tree, saved and restored with the session:
+    env1On..env4On), so the engine, host undo and a restored session all agree
+    on it. Where each module sits, and the cables, live in a BENCH child of the
+    plugin's state tree, saved and restored with the session:
 
-        BENCH { version }
-          MODULE { id: "osc:0" | ... | "osc:3" | "unison" | "envelope", x, y }
-          CABLE  { from: "osc:2", to: "out" }
+        BENCH { version: 2 }
+          MODULE { id: "osc:0" .. "osc:3" | "env:0" .. "env:3", x, y }
+          CABLE  { from: "osc:2", to: "env:1" | "out" }
+          CABLE  { from: "env:1", to: "out" }
 
     Positions are in design pixels from the bench area's top left, so they
     scale with the window. A module keeps its last position while it is off
     the bench, and comes back there.
+
+    Each envelope shapes one oscillator, picked by how sound flows (see
+    envelopeAssignment): by number, by the layout, or along the cables.
 */
 namespace Bench
 {
     enum class Kind
     {
         oscillator,
-        unison,
         envelope
     };
 
-    inline constexpr int numOscillators = 4;
+    /** How sound passes between the modules (the signalFlow parameter's choices). */
+    enum class Flow
+    {
+        fixed,    // ENV n shapes OSC n
+        layout,   // each envelope shapes an oscillator before it in reading order
+        cables    // OSC -> ENV -> OUT, as patched
+    };
 
-    /** One module: which kind, and for an oscillator, which (0..3). */
+    inline constexpr int numOscillators = 4;
+    inline constexpr int numEnvelopes   = 4;
+
+    /** One module: which kind, and which of that kind (0..3). */
     struct ModuleId
     {
         Kind kind = Kind::oscillator;
         int  slot = 0;
 
-        juce::String toString() const
-        {
-            switch (kind)
-            {
-                case Kind::unison:   return "unison";
-                case Kind::envelope: return "envelope";
-                case Kind::oscillator: break;
-            }
-            return "osc:" + juce::String (slot);
-        }
+        juce::String toString() const { return (kind == Kind::envelope ? "env:" : "osc:") + juce::String (slot); }
 
         static std::optional<ModuleId> fromString (const juce::String& text)
         {
-            if (text == "unison")   return ModuleId { Kind::unison, 0 };
-            if (text == "envelope") return ModuleId { Kind::envelope, 0 };
-            if (text.startsWith ("osc:"))
-                if (const int slot = text.fromFirstOccurrenceOf (":", false, false).getIntValue();
-                    slot >= 0 && slot < numOscillators && text.length() == 5)
-                    return ModuleId { Kind::oscillator, slot };
+            if (text == "envelope")   // the one envelope of the first bench
+                return ModuleId { Kind::envelope, 0 };
+            const auto kind = text.upToFirstOccurrenceOf (":", false, false);
+            const int  slot = text.fromFirstOccurrenceOf (":", false, false).getIntValue();
+            if (text.length() != 5 || slot < 0 || slot > 3)
+                return std::nullopt;
+            if (kind == "osc") return ModuleId { Kind::oscillator, slot };
+            if (kind == "env") return ModuleId { Kind::envelope, slot };
             return std::nullopt;
         }
 
@@ -73,52 +78,54 @@ namespace Bench
     };
 
     /** Every module there can be, in the order the editor stacks them. */
-    inline constexpr std::array<ModuleId, 6> allModules {
+    inline constexpr std::array<ModuleId, 8> allModules {
         ModuleId { Kind::oscillator, 0 }, ModuleId { Kind::oscillator, 1 },
         ModuleId { Kind::oscillator, 2 }, ModuleId { Kind::oscillator, 3 },
-        ModuleId { Kind::unison, 0 },     ModuleId { Kind::envelope, 0 } };
+        ModuleId { Kind::envelope, 0 },   ModuleId { Kind::envelope, 1 },
+        ModuleId { Kind::envelope, 2 },   ModuleId { Kind::envelope, 3 } };
 
     /** The parameter that says whether `id` is on the bench. */
     inline const char* parameterFor (const ModuleId& id) noexcept
     {
-        switch (id.kind)
-        {
-            case Kind::unison:   return ParamID::unisonOn;
-            case Kind::envelope: return ParamID::envelopeOn;
-            case Kind::oscillator: break;
-        }
-        return ParamID::oscillators[juce::jlimit (0, numOscillators - 1, id.slot)].on;
+        const auto slot = (size_t) juce::jlimit (0, 3, id.slot);
+        return id.kind == Kind::envelope ? ParamID::envelopes[slot].on : ParamID::oscillators[slot].on;
     }
 
     // ---- Geometry (design pixels) ------------------------------------------------
 
-    inline constexpr float moduleWidth  = 236.0f;
-    inline constexpr float moduleHeight = 240.0f;
-    inline constexpr float areaWidth    = 992.0f;   // four modules and three 16 px gaps
-    inline constexpr float areaHeight   = 512.0f;   // two rows, with room to spare
-    inline constexpr float gap          = 16.0f;
+    inline constexpr float moduleWidth      = 236.0f;
+    inline constexpr float oscillatorHeight = 336.0f;   // its wave well over two rows of dials
+    inline constexpr float envelopeHeight   = 240.0f;   // its AMP well over one
+    inline constexpr float areaWidth        = 992.0f;   // four modules and three 16 px gaps
+    inline constexpr float areaHeight       = 688.0f;   // two rows of oscillators
+    inline constexpr float gap              = 16.0f;
+    inline constexpr float rowStep          = 120.0f;   // how much lower a module starts a new row
 
-    inline juce::Rectangle<float> boundsAt (juce::Point<float> topLeft) noexcept
+    inline float heightOf (Kind kind) noexcept { return kind == Kind::envelope ? envelopeHeight : oscillatorHeight; }
+
+    inline juce::Rectangle<float> boundsAt (juce::Point<float> topLeft, Kind kind) noexcept
     {
-        return { topLeft.x, topLeft.y, moduleWidth, moduleHeight };
+        return { topLeft.x, topLeft.y, moduleWidth, heightOf (kind) };
     }
 
     /** `topLeft` moved, if need be, so the whole module is inside the bench. */
-    inline juce::Point<float> clampToArea (juce::Point<float> topLeft) noexcept
+    inline juce::Point<float> clampToArea (juce::Point<float> topLeft, Kind kind) noexcept
     {
         return { juce::jlimit (0.0f, areaWidth - moduleWidth, topLeft.x),
-                 juce::jlimit (0.0f, areaHeight - moduleHeight, topLeft.y) };
+                 juce::jlimit (0.0f, areaHeight - heightOf (kind), topLeft.y) };
     }
 
-    /** Where a module dropped at `wanted` lands: there (inside the bench) if
-        it covers none of `others`, else the nearest spot that is free. If the
-        bench has no free spot big enough, it stays where it was dropped. */
-    inline juce::Point<float> resolveOverlap (juce::Point<float> wanted, const std::vector<juce::Rectangle<float>>& others)
+    /** Where a module of `kind` dropped at `wanted` lands: there (inside the
+        bench) if it covers none of `others`, else the nearest spot that is
+        free. If the bench has no free spot big enough, it stays where it was
+        dropped. */
+    inline juce::Point<float> resolveOverlap (juce::Point<float> wanted, Kind kind, const std::vector<juce::Rectangle<float>>& others)
     {
-        wanted = clampToArea (wanted);
-        const auto isFree = [&others] (juce::Point<float> topLeft)
+        wanted = clampToArea (wanted, kind);
+        const float height = heightOf (kind);
+        const auto isFree = [&others, kind] (juce::Point<float> topLeft)
         {
-            const auto bounds = boundsAt (topLeft);
+            const auto bounds = boundsAt (topLeft, kind);
             return std::none_of (others.begin(), others.end(), [&bounds] (const auto& other) { return bounds.intersects (other); });
         };
         if (isFree (wanted))
@@ -129,14 +136,14 @@ namespace Bench
         constexpr float step = 8.0f;
         std::vector<float> xs;
         std::vector<float> ys;
-        for (float x = 0.0f; x <= areaWidth - moduleWidth; x += step)   xs.push_back (x);
-        for (float y = 0.0f; y <= areaHeight - moduleHeight; y += step) ys.push_back (y);
+        for (float x = 0.0f; x <= areaWidth - moduleWidth; x += step) xs.push_back (x);
+        for (float y = 0.0f; y <= areaHeight - height; y += step)     ys.push_back (y);
         xs.push_back (areaWidth - moduleWidth);
-        ys.push_back (areaHeight - moduleHeight);
+        ys.push_back (areaHeight - height);
         for (const auto& other : others)
         {
-            xs.insert (xs.end(), { other.getX() - moduleWidth - gap, other.getRight() + gap, wanted.x });
-            ys.insert (ys.end(), { other.getY() - moduleHeight - gap, other.getBottom() + gap, wanted.y });
+            xs.insert (xs.end(), { other.getX() - moduleWidth - gap, other.getRight() + gap, other.getX(), wanted.x });
+            ys.insert (ys.end(), { other.getY() - height - gap, other.getBottom() + gap, other.getY(), wanted.y });
         }
 
         std::optional<juce::Point<float>> best;
@@ -145,7 +152,8 @@ namespace Bench
             for (const float y : ys)
             {
                 const juce::Point<float> candidate (x, y);
-                if (! juce::exactlyEqual (clampToArea (candidate).x, x) || ! juce::exactlyEqual (clampToArea (candidate).y, y))
+                const auto inside = clampToArea (candidate, kind);
+                if (! juce::exactlyEqual (inside.x, x) || ! juce::exactlyEqual (inside.y, y))
                     continue;
                 const float distance = candidate.getDistanceSquaredFrom (wanted);
                 if ((! best.has_value() || distance < bestDistance) && isFree (candidate))
@@ -158,8 +166,8 @@ namespace Bench
     }
 
     /** The order modules at `positions` read in: row by row, top to bottom
-        (a module starts a new row once it sits half a module lower than the
-        row's first), each row left to right. */
+        (a module starts a new row once it sits rowStep lower than the row's
+        first), each row left to right. */
     inline std::vector<size_t> readingOrder (const std::vector<juce::Point<float>>& positions)
     {
         std::vector<size_t> byHeight (positions.size());
@@ -174,7 +182,7 @@ namespace Bench
         {
             const float rowTop = positions[byHeight[rowStart]].y;
             size_t rowEnd = rowStart;
-            while (rowEnd < byHeight.size() && positions[byHeight[rowEnd]].y < rowTop + moduleHeight * 0.5f)
+            while (rowEnd < byHeight.size() && positions[byHeight[rowEnd]].y < rowTop + rowStep)
                 ++rowEnd;
             std::vector<size_t> row (byHeight.begin() + (std::ptrdiff_t) rowStart, byHeight.begin() + (std::ptrdiff_t) rowEnd);
             std::stable_sort (row.begin(), row.end(), [&positions] (size_t a, size_t b) { return positions[a].x < positions[b].x; });
@@ -185,16 +193,11 @@ namespace Bench
     }
 
     /** Where module `id` sits when it has no place of its own yet: the
-        oscillators along the top row, unison and the envelope below. */
+        oscillators along the top row, each envelope under its oscillator. */
     inline juce::Point<float> defaultPosition (const ModuleId& id) noexcept
     {
-        switch (id.kind)
-        {
-            case Kind::unison:   return { 0.0f, moduleHeight + gap };
-            case Kind::envelope: return { moduleWidth + gap, moduleHeight + gap };
-            case Kind::oscillator: break;
-        }
-        return { (float) id.slot * (moduleWidth + gap), 0.0f };
+        const float x = (float) id.slot * (moduleWidth + gap);
+        return { x, id.kind == Kind::envelope ? oscillatorHeight + gap : 0.0f };
     }
 
     // ---- The model ----------------------------------------------------------------
@@ -209,6 +212,10 @@ namespace Bench
     inline const juce::Identifier toProperty      { "to" };
     inline const juce::Identifier versionProperty { "version" };
     inline const juce::String     outputJack      { "out" };
+    inline constexpr int          currentVersion = 2;
+
+    /** Where a cable goes: the output, or an envelope's IN. */
+    using Destination = std::optional<ModuleId>;   // nullopt = the output
 
     /** The bench in `state`: its modules, where they sit and the cables
         between them. Message thread only. */
@@ -217,30 +224,50 @@ namespace Bench
     public:
         explicit Model (juce::AudioProcessorValueTreeState& stateToUse) : state (stateToUse) {}
 
-        /** Whether `root` (a saved state) already has a bench; one from before
-            the bench doesn't. */
-        static bool hasBench (const juce::ValueTree& root) { return root.getChildWithName (benchType).isValid(); }
-
         /** Makes sure the state has a bench to keep the layout in. */
         void ensureBench()
         {
             auto bench = state.state.getOrCreateChildWithName (benchType, nullptr);
-            bench.setProperty (versionProperty, 1, nullptr);
+            if (! bench.hasProperty (versionProperty))
+                bench.setProperty (versionProperty, currentVersion, nullptr);
+        }
+
+        /** Brings a restored session up to date. `saved` is the state as it
+            was saved (before the parameters it lacked were filled in): one
+            from before the bench is set out as it looked then, and one from
+            the first bench (one unison stack and one envelope for every
+            oscillator) gets each oscillator its own of both. */
+        void migrate (const juce::ValueTree& saved)
+        {
+            const auto savedBench = saved.getChildWithName (benchType);
+            if (! savedBench.isValid())
+                adoptClassicLayout (saved);
+            else if ((int) savedBench.getProperty (versionProperty, 1) < currentVersion)
+                adoptFirstBench (saved);
+            ensureBench();
+            bench().setProperty (versionProperty, currentVersion, nullptr);
         }
 
         /** Sets out a session from before the bench as it looked then: OSC 1
-            (and OSC 2, if it was on) above, unison and the envelope below.
-            OSC 1, unison and the envelope were always there, so they go on
-            the bench, unless `saved` (the restored state) already switched
-            them on or off itself. */
+            (and the other oscillators that were on) along the top, each under
+            its own envelope, and each with the unison stack it shared then.
+            OSC 1 and the envelope were always there, so they go on the bench,
+            unless `saved` already switched them on or off itself. */
         void adoptClassicLayout (const juce::ValueTree& saved = {})
         {
             ensureBench();
             for (const auto& id : allModules)
                 setPosition (id, defaultPosition (id));
-            for (const auto& id : { ModuleId { Kind::oscillator, 0 }, ModuleId { Kind::unison, 0 }, ModuleId { Kind::envelope, 0 } })
-                if (! saved.getChildWithProperty ("id", juce::String (parameterFor (id))).isValid())
-                    setPresent (id, true);
+
+            if (! hasSaved (saved, ParamID::osc1On))
+                setPresent ({ Kind::oscillator, 0 }, true);
+            const bool shaped = savedValue (saved, ParamID::envelopeOn, 1.0f) >= 0.5f;
+            if (! hasSaved (saved, ParamID::envelopes[0].on))
+                setPresent ({ Kind::envelope, 0 }, shaped);
+
+            shareUnison (savedValue (saved, ParamID::unisonOn, 1.0f) >= 0.5f);
+            if (isPresent ({ Kind::envelope, 0 }))
+                shareEnvelope();
         }
 
         bool isPresent (const ModuleId& id) const
@@ -265,19 +292,21 @@ namespace Bench
             const auto module = findModule (id);
             if (! module.isValid())
                 return defaultPosition (id);
-            return clampToArea ({ (float) module.getProperty (xProperty), (float) module.getProperty (yProperty) });
+            return clampToArea ({ (float) module.getProperty (xProperty), (float) module.getProperty (yProperty) }, id.kind);
         }
 
-        /** Whether another module of `kind` fits: four oscillators, one of each other kind. */
+        juce::Rectangle<float> boundsOf (const ModuleId& id) const { return boundsAt (positionOf (id), id.kind); }
+
+        /** Whether another module of `kind` fits: four of each. */
         bool canAdd (Kind kind) const { return freeSlot (kind).has_value(); }
 
-        /** How many more oscillators can be added. */
-        int oscillatorsLeft() const
+        /** How many more modules of `kind` can be added. */
+        int left (Kind kind) const
         {
-            int left = 0;
-            for (int slot = 0; slot < numOscillators; ++slot)
-                left += isPresent ({ Kind::oscillator, slot }) ? 0 : 1;
-            return left;
+            int count = 0;
+            for (const auto& id : allModules)
+                count += id.kind == kind && ! isPresent (id) ? 1 : 0;
+            return count;
         }
 
         std::optional<ModuleId> freeSlot (Kind kind) const
@@ -296,28 +325,29 @@ namespace Bench
             if (! id.has_value())
                 return std::nullopt;
 
-            setPosition (*id, resolveOverlap (at, othersThan (*id)));
+            setPosition (*id, resolveOverlap (at, kind, othersThan (*id)));
             setPresent (*id, true);
             return id;
         }
 
-        /** Takes `id` off the bench, and unplugs its cables. */
+        /** Takes `id` off the bench, and unplugs its cables, in and out. */
         void remove (const ModuleId& id)
         {
             disconnect (id);
+            if (id.kind == Kind::envelope)
+                disconnectInto (id);
             setPresent (id, false);
         }
 
         /** Moves `id` to `to` (or the nearest free spot); returns where it landed. */
         juce::Point<float> move (const ModuleId& id, juce::Point<float> to)
         {
-            const auto landed = resolveOverlap (to, othersThan (id));
+            const auto landed = resolveOverlap (to, id.kind, othersThan (id));
             setPosition (id, landed);
             return landed;
         }
 
-        /** The modules on the bench in the order sound passes through them
-            when it follows the layout. */
+        /** The modules on the bench in reading order. */
         std::vector<ModuleId> readingOrder() const
         {
             const auto ids = present();
@@ -331,56 +361,170 @@ namespace Bench
             return ordered;
         }
 
-        // ---- Cables (only oscillators to the output, for now) ---------------------
+        // ---- Cables -------------------------------------------------------------
 
-        bool isPatchedToOutput (const ModuleId& from) const { return findCable (from).isValid(); }
-
-        /** Patches `from` (an oscillator on the bench) to the output. Returns
-            false for anything that can't be patched there. */
-        bool connect (const ModuleId& from)
+        /** Where `from`'s cable goes, if it has one. */
+        std::optional<Destination> destinationOf (const ModuleId& from) const
         {
-            if (from.kind != Kind::oscillator || ! isPresent (from))
-                return false;
-            if (isPatchedToOutput (from))
-                return true;
+            const auto cable = findCableFrom (from);
+            if (! cable.isValid())
+                return std::nullopt;
+            return destinationFrom (cable[toProperty].toString());
+        }
 
+        bool isPatchedToOutput (const ModuleId& from) const
+        {
+            const auto to = destinationOf (from);
+            return to.has_value() && ! to->has_value();
+        }
+
+        /** The oscillator patched into envelope `env`'s IN, if any. */
+        std::optional<ModuleId> inputOf (const ModuleId& env) const
+        {
+            for (const auto& child : bench())
+                if (child.hasType (cableType) && child[toProperty].toString() == env.toString())
+                    return ModuleId::fromString (child[fromProperty].toString());
+            return std::nullopt;
+        }
+
+        /** Patches `from` to `to` (the output, or an envelope's IN), replacing
+            the cable `from` had and any other cable into that envelope. An
+            oscillator patches to the output or an envelope, an envelope to the
+            output, and only modules on the bench. Returns false for anything
+            that can't be patched there. */
+        bool connect (const ModuleId& from, Destination to = std::nullopt)
+        {
+            if (! isPresent (from) || (to.has_value() && (from.kind != Kind::oscillator || to->kind != Kind::envelope || ! isPresent (*to))))
+                return false;
+
+            disconnect (from);
+            if (to.has_value())
+                disconnectInto (*to);
             ensureBench();
             juce::ValueTree cable (cableType);
             cable.setProperty (fromProperty, from.toString(), nullptr);
-            cable.setProperty (toProperty, outputJack, nullptr);
+            cable.setProperty (toProperty, to.has_value() ? to->toString() : outputJack, nullptr);
             bench().appendChild (cable, nullptr);
             return true;
         }
 
+        /** Unplugs `from`'s cable. */
         void disconnect (const ModuleId& from)
         {
-            if (auto cable = findCable (from); cable.isValid())
+            if (auto cable = findCableFrom (from); cable.isValid())
                 bench().removeChild (cable, nullptr);
         }
 
-        /** The oscillators patched to the output, on the bench or not. */
+        /** Unplugs the cable into envelope `env`'s IN. */
+        void disconnectInto (const ModuleId& env)
+        {
+            for (auto child : bench())
+                if (child.hasType (cableType) && child[toProperty].toString() == env.toString())
+                {
+                    bench().removeChild (child, nullptr);
+                    return;
+                }
+        }
+
+        /** Every cable, in the order they were patched. */
+        std::vector<std::pair<ModuleId, Destination>> cables() const
+        {
+            std::vector<std::pair<ModuleId, Destination>> all;
+            for (const auto& child : bench())
+                if (child.hasType (cableType))
+                    if (const auto from = ModuleId::fromString (child[fromProperty].toString()))
+                        if (const auto to = destinationFrom (child[toProperty].toString()))
+                            all.emplace_back (*from, *to);
+            return all;
+        }
+
+        /** The modules patched to the output, in the order they were patched. */
         std::vector<ModuleId> patchedToOutput() const
         {
             std::vector<ModuleId> ids;
-            for (const auto& id : allModules)
-                if (isPatchedToOutput (id))
-                    ids.push_back (id);
+            for (const auto& [from, to] : cables())
+                if (! to.has_value())
+                    ids.push_back (from);
             return ids;
+        }
+
+        // ---- What sound does ------------------------------------------------------
+
+        /** Which envelope (0..3, or -1 for none) shapes each oscillator when
+            sound flows by `flow`:
+              fixed:  ENV n shapes OSC n, when both are on the bench;
+              layout: going through the bench in reading order, each envelope
+                      takes the first oscillator before it that has none yet;
+              cables: an envelope shapes the oscillator patched into it. */
+        std::array<int, numOscillators> envelopeAssignment (Flow flow) const
+        {
+            std::array<int, numOscillators> shapedBy { -1, -1, -1, -1 };
+            if (flow == Flow::fixed)
+            {
+                for (int k = 0; k < numOscillators; ++k)
+                    if (isPresent ({ Kind::envelope, k }) && isPresent ({ Kind::oscillator, k }))
+                        shapedBy[(size_t) k] = k;
+            }
+            else if (flow == Flow::layout)
+            {
+                std::vector<int> waiting;
+                for (const auto& id : readingOrder())
+                {
+                    if (id.kind == Kind::oscillator)
+                        waiting.push_back (id.slot);
+                    else if (! waiting.empty())
+                    {
+                        shapedBy[(size_t) waiting.front()] = id.slot;
+                        waiting.erase (waiting.begin());
+                    }
+                }
+            }
+            else
+            {
+                for (int e = 0; e < numEnvelopes; ++e)
+                    if (const auto input = inputOf ({ Kind::envelope, e }); input.has_value() && isPresent ({ Kind::envelope, e }))
+                        shapedBy[(size_t) input->slot] = e;
+            }
+            return shapedBy;
+        }
+
+        /** Whether each oscillator reaches the output along the cables:
+            patched to it, or to an envelope that is. */
+        std::array<bool, numOscillators> heardThroughCables() const
+        {
+            std::array<bool, numOscillators> heard {};
+            for (int k = 0; k < numOscillators; ++k)
+            {
+                const ModuleId osc { Kind::oscillator, k };
+                const auto to = destinationOf (osc);
+                if (! to.has_value() || ! isPresent (osc))
+                    continue;
+                heard[(size_t) k] = ! to->has_value() || isPatchedToOutput (**to);
+            }
+            return heard;
         }
 
     private:
         juce::ValueTree bench() const { return state.state.getChildWithName (benchType); }
+
+        static std::optional<Destination> destinationFrom (const juce::String& text)
+        {
+            if (text == outputJack)
+                return Destination {};
+            if (const auto env = ModuleId::fromString (text); env.has_value() && env->kind == Kind::envelope)
+                return Destination { *env };
+            return std::nullopt;
+        }
 
         juce::ValueTree findModule (const ModuleId& id) const
         {
             return bench().getChildWithProperty (idProperty, id.toString());
         }
 
-        juce::ValueTree findCable (const ModuleId& from) const
+        juce::ValueTree findCableFrom (const ModuleId& from) const
         {
             for (const auto& child : bench())
-                if (child.hasType (cableType) && child[fromProperty].toString() == from.toString()
-                    && child[toProperty].toString() == outputJack)
+                if (child.hasType (cableType) && child[fromProperty].toString() == from.toString())
                     return child;
             return {};
         }
@@ -401,12 +545,94 @@ namespace Bench
 
         void setPresent (const ModuleId& id, bool shouldBePresent)
         {
-            auto* parameter = state.getParameter (parameterFor (id));
-            if (parameter == nullptr || isPresent (id) == shouldBePresent)
+            if (isPresent (id) == shouldBePresent)
                 return;
+            auto* parameter = state.getParameter (parameterFor (id));
             parameter->beginChangeGesture();
             parameter->setValueNotifyingHost (shouldBePresent ? 1.0f : 0.0f);
             parameter->endChangeGesture();
+        }
+
+        void setValue (const char* id, float value)
+        {
+            auto* parameter = state.getParameter (id);
+            parameter->setValueNotifyingHost (parameter->convertTo0to1 (value));
+        }
+
+        float valueOf (const char* id) const { return state.getRawParameterValue (id)->load(); }
+
+        static bool hasSaved (const juce::ValueTree& saved, const char* id)
+        {
+            return saved.getChildWithProperty (idProperty, juce::String (id)).isValid();
+        }
+
+        static float savedValue (const juce::ValueTree& saved, const char* id, float fallback)
+        {
+            const auto parameter = saved.getChildWithProperty (idProperty, juce::String (id));
+            return parameter.isValid() ? (float) parameter.getProperty ("value", fallback) : fallback;
+        }
+
+        // The one unison stack every oscillator shared (OSC 1's parameters
+        // now) becomes each oscillator's own; without it, each plays one voice.
+        void shareUnison (bool stacked)
+        {
+            const float voices = stacked ? valueOf (ParamID::voices) : 1.0f;
+            for (int k = 0; k < numOscillators; ++k)
+            {
+                const auto& ids = ParamID::oscillators[k];
+                setValue (ids.voices, voices);
+                setValue (ids.detune, valueOf (ParamID::detune));
+                setValue (ids.width, valueOf (ParamID::width));
+            }
+        }
+
+        // The one envelope every oscillator shared (ENV 1 now) goes under each
+        // other oscillator on the bench too, as a copy, at the nearest free spot.
+        void shareEnvelope()
+        {
+            for (int k = 1; k < numOscillators; ++k)
+            {
+                const ModuleId env { Kind::envelope, k };
+                if (! isPresent ({ Kind::oscillator, k }) || isPresent (env))
+                    continue;
+                setValue (ParamID::envelopes[k].attack, valueOf (ParamID::envelopes[0].attack));
+                setValue (ParamID::envelopes[k].release, valueOf (ParamID::envelopes[0].release));
+                setPosition (env, resolveOverlap (positionOf (env), Kind::envelope, othersThan (env)));
+                setPresent (env, true);
+            }
+        }
+
+        // The first bench: its unison module goes (each oscillator getting the
+        // stack it played), its envelope becomes ENV 1 (and a copy for each
+        // other oscillator), oscillators patched to the output go through
+        // their envelope, and everything is moved off anything it now covers.
+        void adoptFirstBench (const juce::ValueTree& saved)
+        {
+            auto first = bench();
+            if (auto unison = first.getChildWithProperty (idProperty, "unison"); unison.isValid())
+                first.removeChild (unison, nullptr);
+            if (auto envelope = first.getChildWithProperty (idProperty, "envelope"); envelope.isValid())
+                envelope.setProperty (idProperty, ModuleId { Kind::envelope, 0 }.toString(), nullptr);
+
+            shareUnison (savedValue (saved, ParamID::unisonOn, 0.0f) >= 0.5f);
+            setPresent ({ Kind::envelope, 0 }, savedValue (saved, ParamID::envelopeOn, 0.0f) >= 0.5f);
+
+            std::vector<juce::Rectangle<float>> placed;
+            for (const auto& id : readingOrder())
+            {
+                const auto landed = resolveOverlap (positionOf (id), id.kind, placed);
+                setPosition (id, landed);
+                placed.push_back (boundsAt (landed, id.kind));
+            }
+            if (isPresent ({ Kind::envelope, 0 }))
+                shareEnvelope();
+
+            for (const auto& from : patchedToOutput())
+                if (const ModuleId env { Kind::envelope, from.slot }; from.kind == Kind::oscillator && isPresent (env))
+                {
+                    connect (from, env);
+                    connect (env);
+                }
         }
 
         std::vector<juce::Rectangle<float>> othersThan (const ModuleId& id) const
@@ -414,7 +640,7 @@ namespace Bench
             std::vector<juce::Rectangle<float>> others;
             for (const auto& other : present())
                 if (other != id)
-                    others.push_back (boundsAt (positionOf (other)));
+                    others.push_back (boundsOf (other));
             return others;
         }
 

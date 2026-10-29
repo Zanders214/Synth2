@@ -28,8 +28,8 @@ public:
     {
         for (int slot = 0; slot < Bench::numOscillators; ++slot)
             oscillators[(size_t) slot] = std::make_unique<OscillatorModule> (slot, looks, state);
-        unison   = std::make_unique<UnisonModule> (looks, state);
-        envelope = std::make_unique<EnvelopeModule> (looks, state);
+        for (int slot = 0; slot < Bench::numEnvelopes; ++slot)
+            envelopes[(size_t) slot] = std::make_unique<EnvelopeModule> (slot, looks, state);
 
         for (const auto& id : Bench::allModules)
         {
@@ -46,18 +46,14 @@ public:
 
     BenchModule& getModule (const Bench::ModuleId& id)
     {
-        switch (id.kind)
-        {
-            case Bench::Kind::unison:   return *unison;
-            case Bench::Kind::envelope: return *envelope;
-            case Bench::Kind::oscillator: break;
-        }
-        return *oscillators[(size_t) juce::jlimit (0, Bench::numOscillators - 1, id.slot)];
+        const auto slot = (size_t) juce::jlimit (0, 3, id.slot);
+        if (id.kind == Bench::Kind::envelope)
+            return *envelopes[slot];
+        return *oscillators[slot];
     }
 
     OscillatorModule& getOscillator (int slot) { return *oscillators[(size_t) slot]; }
-    UnisonModule&     getUnison() noexcept     { return *unison; }
-    EnvelopeModule&   getEnvelope() noexcept   { return *envelope; }
+    EnvelopeModule&   getEnvelope (int slot)   { return *envelopes[(size_t) slot]; }
 
     void setUiScale (float newScale)
     {
@@ -75,9 +71,9 @@ public:
     /** Where module `id` sits in this view. */
     juce::Rectangle<int> boundsFor (const Bench::ModuleId& id) const
     {
-        const auto bounds = Bench::boundsAt (model.positionOf (id));
+        const auto bounds = model.boundsOf (id);
         return (bounds * uiScale).getSmallestIntegerContainer().withSize (juce::roundToInt (Bench::moduleWidth * uiScale),
-                                                                           juce::roundToInt (Bench::moduleHeight * uiScale));
+                                                                           juce::roundToInt (Bench::heightOf (id.kind) * uiScale));
     }
 
     /** Adds a module of `kind` at `at` (design pixels), fading it in. */
@@ -202,8 +198,7 @@ private:
     Bench::Model model;
 
     std::array<std::unique_ptr<OscillatorModule>, Bench::numOscillators> oscillators;
-    std::unique_ptr<UnisonModule>   unison;
-    std::unique_ptr<EnvelopeModule> envelope;
+    std::array<std::unique_ptr<EnvelopeModule>, Bench::numEnvelopes> envelopes;
 
     std::function<void (juce::Point<float>, juce::Point<int>)> emptyClickHandler;
     float uiScale  = 1.0f;
