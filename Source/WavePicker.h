@@ -50,13 +50,8 @@ namespace WaveGlyph
     well opens the wave menu (onOpenMenu). Hovering lights the well's border
     in the accent, the design system's mark of a well you can act on.
 
-    Given a power parameter (OSC 2's), it also carries the oscillator's power
-    chip at the well's top left: a glowing dot and the oscillator's name, which
-    switches it off (the editor then hides the oscillator until it is added
-    again).
-
-    It is tied to the parameters directly (ParameterAttachment), so host
-    automation and undo see each pick, and each switch, as one gesture.
+    It is tied to the parameter directly (ParameterAttachment), so host
+    automation and undo see each pick as one gesture.
 */
 class WavePicker final : public juce::Component
 {
@@ -66,42 +61,12 @@ public:
     /** What a click on the well (not on an arrow) does: open, or close, the menu. */
     void onOpenMenu (std::function<void()> handler) { openMenuHandler = std::move (handler); }
 
-    explicit WavePicker (juce::RangedAudioParameter& waveParameter,
-                         juce::RangedAudioParameter* powerParameter = nullptr,
-                         const juce::String& name = {})
-        : attachment (waveParameter, [this] (float value) { setSelected (juce::roundToInt (value)); }),
-          powerName (name)
+    explicit WavePicker (juce::RangedAudioParameter& waveParameter)
+        : attachment (waveParameter, [this] (float value) { setSelected (juce::roundToInt (value)); })
     {
         setRepaintsOnMouseActivity (true);
         setMouseCursor (juce::MouseCursor::PointingHandCursor);
         attachment.sendInitialUpdate();
-
-        if (powerParameter != nullptr)
-        {
-            power = std::make_unique<juce::ParameterAttachment> (*powerParameter, [this] (float value)
-            {
-                on = value >= 0.5f;
-                repaint();
-            });
-            power->sendInitialUpdate();
-        }
-    }
-
-    bool hasPowerSwitch() const noexcept { return power != nullptr; }
-    bool isOn() const noexcept           { return on; }
-
-    /** Switches the oscillator on or off, as one gesture. */
-    void setOn (bool shouldBeOn)
-    {
-        if (power != nullptr)
-            power->setValueAsCompleteGesture (shouldBeOn ? 1.0f : 0.0f);
-    }
-
-    /** The power chip at the well's top left (empty without a switch). */
-    juce::Rectangle<float> powerBounds() const noexcept
-    {
-        const float s = uiScale;
-        return power != nullptr ? juce::Rectangle<float> (6.0f * s, 6.0f * s, 70.0f * s, 20.0f * s) : juce::Rectangle<float>();
     }
 
     void setUiScale (float newScale) { uiScale = newScale; repaint(); }
@@ -130,9 +95,7 @@ public:
 
     void mouseDown (const juce::MouseEvent& e) override
     {
-        if (power != nullptr && powerBounds().contains (e.position))
-            setOn (! on);
-        else if (previousArrow().contains (e.position))
+        if (previousArrow().contains (e.position))
             step (-1);
         else if (nextArrow().contains (e.position))
             step (1);
@@ -171,9 +134,6 @@ public:
             g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), 12.0f * s, juce::jmax (1.0f, s));
         }
 
-        if (power != nullptr)
-            paintPowerChip (g, over && powerBounds().contains (mouse));
-
         // The pill: arrows either side of the chosen shape and its name.
         const auto pill = pillBounds();
         g.setColour (over ? Palette::idleFill.withMultipliedAlpha (1.6f) : Palette::idleFill);
@@ -210,40 +170,6 @@ public:
     }
 
 private:
-    // A glowing dot (lit while on, a hollow ring while off) and the name.
-    void paintPowerChip (juce::Graphics& g, bool hot) const
-    {
-        using namespace Synth2;
-        const float s    = uiScale;
-        const auto  chip = powerBounds();
-
-        const float idleAlpha = hot ? 1.6f : 1.0f;
-        g.setColour (on ? Palette::accentSoft : Palette::idleFill.withMultipliedAlpha (idleAlpha));
-        g.fillRoundedRectangle (chip, chip.getHeight() * 0.5f);
-        g.setColour (on ? Palette::accent.withAlpha (0.45f) : Palette::strongLine);
-        g.drawRoundedRectangle (chip.reduced (0.5f), chip.getHeight() * 0.5f, juce::jmax (1.0f, s));
-
-        const auto dot = juce::Rectangle<float> (7.0f * s, 7.0f * s).withCentre ({ chip.getX() + 12.0f * s, chip.getCentreY() });
-        if (on)
-        {
-            juce::Path body;
-            body.addEllipse (dot);
-            juce::DropShadow (Palette::accent.withAlpha (0.9f), (int) (8.0f * s), {}).drawForPath (g, body);
-            g.setColour (Palette::accent);
-            g.fillPath (body);
-        }
-        else
-        {
-            g.setColour (hot ? Palette::textMid : Palette::textFaint);
-            g.drawEllipse (dot.reduced (0.5f * s), juce::jmax (1.0f, 1.2f * s));
-        }
-
-        g.setFont (Fonts::sans (9.0f * s, true, 0.22f));
-        const auto offText = hot ? Palette::textMid : Palette::textDim;
-        g.setColour (on ? Palette::textStrong : offText);
-        g.drawText (powerName, chip.withTrimmedLeft (22.0f * s), juce::Justification::centredLeft, false);
-    }
-
     void setSelected (int index)
     {
         selected = juce::jlimit (0, numWaves - 1, index);
@@ -252,9 +178,6 @@ private:
 
     std::function<void()> openMenuHandler;
     juce::ParameterAttachment attachment;
-    std::unique_ptr<juce::ParameterAttachment> power;
-    juce::String powerName;
-    bool  on          = true;
     int   selected    = 0;
     float uiScale     = 1.0f;
     float wheelTravel = 0.0f;
@@ -471,62 +394,4 @@ private:
     float uiScale     = 1.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WaveMenu)
-};
-
-/**
-    AddChip — a small accent-outlined pill with a "+" and a name ("+ OSC 2"),
-    for adding something that is out of sight until it is wanted.
-*/
-class AddChip final : public juce::Component
-{
-public:
-    void onClick (std::function<void()> handler) { clickHandler = std::move (handler); }
-
-    explicit AddChip (const juce::String& name) : label (name)
-    {
-        setRepaintsOnMouseActivity (true);
-        setMouseCursor (juce::MouseCursor::PointingHandCursor);
-        setTitle ("Add " + name);
-    }
-
-    void setUiScale (float newScale) { uiScale = newScale; repaint(); }
-
-    void mouseDown (const juce::MouseEvent&) override
-    {
-        if (clickHandler != nullptr)
-            clickHandler();
-    }
-
-    void paint (juce::Graphics& g) override
-    {
-        using namespace Synth2;
-        const float s     = uiScale;
-        const bool  over  = isMouseOver();
-        const auto  chip  = getLocalBounds().toFloat().reduced (0.5f);
-        const float round = chip.getHeight() * 0.5f;
-
-        g.setColour (over ? Palette::accentSoft.withMultipliedAlpha (1.8f) : Palette::accentSoft);
-        g.fillRoundedRectangle (chip, round);
-        g.setColour (Palette::accent.withAlpha (over ? 0.8f : 0.45f));
-        g.drawRoundedRectangle (chip, round, juce::jmax (1.0f, s));
-
-        // The plus, drawn rather than typed so it sits dead centre.
-        const auto  c   = juce::Point (chip.getX() + 12.0f * s, chip.getCentreY());
-        const float arm = 3.5f * s;
-        const float w   = juce::jmax (1.0f, 1.4f * s);
-        g.setColour (Palette::accent.brighter (over ? 0.4f : 0.0f));
-        g.fillRect (juce::Rectangle (c.x - arm, c.y - w * 0.5f, arm * 2.0f, w));
-        g.fillRect (juce::Rectangle (c.x - w * 0.5f, c.y - arm, w, arm * 2.0f));
-
-        g.setFont (Fonts::sans (9.0f * s, true, 0.22f));
-        g.setColour (over ? Palette::textStrong : Palette::accent.brighter (0.3f));
-        g.drawText (label, chip.withTrimmedLeft (22.0f * s), juce::Justification::centredLeft, false);
-    }
-
-private:
-    std::function<void()> clickHandler;
-    juce::String label;
-    float uiScale = 1.0f;
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AddChip)
 };

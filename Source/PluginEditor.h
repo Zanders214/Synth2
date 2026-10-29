@@ -2,29 +2,37 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <array>
+#include <optional>
 
 #include "PluginProcessor.h"
+#include "Bench.h"
+#include "BenchModules.h"
+#include "BenchView.h"
 #include "Synth2LookAndFeel.h"
 #include "NeonKeyboard.h"
-#include "VoiceDisplays.h"
 #include "WavePicker.h"
 
 /**
-    Synth2AudioProcessorEditor — the Neon Plugins face for Synth2.
+    Synth2AudioProcessorEditor — the Neon Plugins face for Synth2: a workbench.
 
-    A dark panel, top to bottom: the wordmark and POLY badge; then four groups
-    in two rows, each a display over the three dials it shows. On top, the
-    oscillators: the OSC 1 well (the shape at its pitch and level, and a faint
-    copy per unison voice) over its PITCH / FINE / LEVEL, across the whole row
-    until OSC 2 is added (the "+ OSC 2" chip in its corner); then OSC 1 takes
-    the left half and OSC 2 fades in on the right, its power chip taking it
-    away again. Each well is also where its shape is picked (a pill that steps
-    and scrolls, and a click that drops open a tray of the four). Below, the UNISON well (a dot per voice, by detune and pan) over
-    VOICES / DETUNE / WIDTH, and the AMP well (the envelope, with a dot riding
-    it for each note that sounds) over ATTACK / RELEASE / OUTPUT. Each row of
-    dials runs the spectrum, and each display draws in its dials' colours. A
-    three-octave keyboard plays it. Everything is drawn natively (no WebView)
-    and scales proportionally from the 480 px design.
+    A dark panel, top to bottom: the wordmark, the POLY badge and the gear
+    (the signal-flow settings); the bench, which starts empty and holds
+    whatever modules are put on it, wherever they are put (see BenchView);
+    and along the bottom the keyboard that plays it and the OUTPUT dial.
+
+    Click an empty spot on the bench to add a module there: an oscillator (up
+    to four), the unison stack or the envelope. Drag a module by its header to
+    move it; its cross takes it off the bench.
+
+    The gear picks how sound flows between the modules: in a fixed order by
+    kind, following the layout (each module shows its place in the order), or
+    along patch cables. With patch cables each oscillator gets an OUT jack and
+    the output an IN jack: drag from one to the other to patch a cable (an
+    oscillator with no cable to the output is greyed out and silent), and drag
+    a cable off either end to unplug it.
+
+    Everything is drawn natively (no WebView) and scales proportionally from
+    the 1040 px design.
 */
 class Synth2AudioProcessorEditor final : public juce::AudioProcessorEditor,
                                          private juce::Timer
@@ -35,60 +43,89 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
 
-    static constexpr int numDials       = 12;
-    static constexpr int numOscillators = 2;
+    static constexpr float designWidth  = 1040.0f;
+    static constexpr float designHeight = 740.0f;
 
-    // For the tests: the controls, in display order (the dials run OSC 1,
-    // OSC 2, UNISON, AMP, three each), and each oscillator's well, picker and tray.
-    juce::Slider&  getDial (int index) noexcept                { return dials[(size_t) index]; }
-    WavePicker&    getWavePicker (int oscillator = 0) noexcept { return oscillator == 0 ? osc1Picker : osc2Picker; }
-    WaveMenu&      getWaveMenu (int oscillator = 0) noexcept   { return waveMenus[(size_t) oscillator]; }
-    WaveDisplay&   getWaveDisplay (int oscillator = 0) noexcept { return waveDisplays[(size_t) oscillator]; }
-    NeonKeyboard&  getKeyboard() noexcept                      { return keyboard; }
-    AddChip&       getAddOsc2Chip() noexcept                   { return addOsc2; }
-    bool           isOsc2Shown() const noexcept                { return osc2Shown; }
-    UnisonDisplay& getUnisonDisplay() noexcept  { return unisonDisplay; }
-    AmpDisplay&    getAmpDisplay() noexcept     { return ampDisplay; }
+    // For the tests: the bench, the trays, the OUTPUT dial and keyboard, and
+    // where the gear and the output's IN jack sit (in the editor).
+    BenchView&    getBench() noexcept                  { return bench; }
+    ChoiceTray&   getAddTray() noexcept                { return addTray; }
+    ChoiceTray&   getSettingsTray() noexcept           { return settingsTray; }
+    WaveMenu&     getWaveMenu (int slot) noexcept      { return waveMenus[(size_t) slot]; }
+    juce::Slider& getOutputDial() noexcept             { return outputDial; }
+    NeonKeyboard& getKeyboard() noexcept               { return keyboard; }
+    juce::Rectangle<float> gearBounds() const noexcept { return layout.gear.toFloat(); }
+    juce::Rectangle<float> outputJackBounds() const noexcept;
+    bool isPatching() const noexcept                   { return patchingFrom.has_value(); }
+
+    /** Where module `id`'s OUT jack sits, in the editor. */
+    juce::Point<float> jackCentre (const Bench::ModuleId& id);
 
 private:
+    // Draws the cables over the bench and the bottom strip, without taking
+    // any clicks from them.
+    class CableLayer final : public juce::Component
+    {
+    public:
+        explicit CableLayer (Synth2AudioProcessorEditor& ownerToUse) : owner (ownerToUse) { setInterceptsMouseClicks (false, false); }
+        void paint (juce::Graphics& g) override { owner.paintCables (g); }
+
+    private:
+        Synth2AudioProcessorEditor& owner;
+    };
+
     void timerCallback() override;
     void paintHeader (juce::Graphics&, float scale) const;
-    void paintDialLabels (juce::Graphics&, float scale) const;
-    VoiceDisplayState displayState (Waveform wave) const;
-    WaveDisplay::Osc  oscView (int oscillator) const;
-    void showOsc2 (bool shown, bool fadeIn);
-    AmpDisplayState   ampState() const;
+    void paintOutput (juce::Graphics&, float scale) const;
+    void paintCables (juce::Graphics&);
+    void paintCable (juce::Graphics&, juce::Point<float> from, juce::Point<float> to, juce::Colour colour) const;
+
+    Synth2AudioProcessor::SignalFlow signalFlow() const;
+    void showFlow();
+    void openAddTray (juce::Point<float> benchAt, juce::Point<int> editorAt);
+    void openSettings();
+    void patch (const Bench::ModuleId& from, const juce::MouseEvent& e, int phase);
+    juce::String cableSignature();
+    VoiceDisplayState voiceState (const Synth2Engine::Settings& settings) const;
+    AmpDisplayState   ampState (const Synth2Engine::Settings& settings) const;
 
     Synth2AudioProcessor& processorRef;
     Synth2LookAndFeel looks;
+    Bench::Model model;
 
-    std::array<WaveDisplay, numOscillators> waveDisplays;
-    UnisonDisplay unisonDisplay;
-    AmpDisplay    ampDisplay;
-    WavePicker    osc1Picker;
-    WavePicker    osc2Picker;
-    std::array<WaveMenu, numOscillators> waveMenus;
-    AddChip       addOsc2 { "OSC 2" };
-    NeonKeyboard  keyboard;
-
-    std::array<juce::Slider, numDials> dials;
-    using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
-    std::array<std::unique_ptr<SliderAttachment>, numDials> attachments;
+    BenchView    bench;
+    NeonKeyboard keyboard;
+    juce::Slider outputDial;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment;
+    CableLayer   cables { *this };
+    std::array<WaveMenu, Bench::numOscillators> waveMenus;
+    ChoiceTray   addTray;
+    ChoiceTray   settingsTray;
+    juce::Point<float> addAt;   // where on the bench the add tray was opened
 
     // Painted regions computed by resized() and read back by paint().
     struct Layout
     {
         juce::Rectangle<int> header;
         juce::Rectangle<int> badge;
-        std::array<juce::Rectangle<int>, numDials> dialColumns;
-        int groupsSeparatorY   = 0;
-        int keyboardSeparatorY = 0;
+        juce::Rectangle<int> gear;
+        juce::Rectangle<int> outputColumn;
+        int stripSeparatorY = 0;
     };
     Layout layout;
 
-    float uiScale = 1.0f;
-    bool  osc2Shown = false;   // OSC 2 is on, and its well and dials are in view
+    // A cable being dragged: from which oscillator, to where the mouse is.
+    std::optional<Bench::ModuleId> patchingFrom;
+    juce::Point<float> patchingTo;
+
+    juce::String lastCables;
+    float lastOutput = 0.0f;
+    int   lastFlow   = -1;
+    float uiScale    = 1.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Synth2AudioProcessorEditor)
 };

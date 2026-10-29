@@ -1,6 +1,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "ParamIDs.h"
+#include "Bench.h"
 
 namespace
 {
@@ -14,10 +15,14 @@ Synth2AudioProcessor::Synth2AudioProcessor()
       apvts (*this, nullptr, "PARAMETERS", createParameterLayout())
 {
     keyboardState.addListener (this);
+    Bench::Model (apvts).ensureBench();
+    apvts.state.addListener (this);
+    followCables();
 }
 
 Synth2AudioProcessor::~Synth2AudioProcessor()
 {
+    apvts.state.removeListener (this);
     keyboardState.removeListener (this);
 }
 
@@ -38,10 +43,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
     const auto semitonesFromValue = [] (int value, int) { return (value > 0 ? "+" : "") + String (value) + " st"; };
     const auto centsFromValue     = [] (float value, int) { return (value > 0.0f ? "+" : "") + String (value, 1) + " ct"; };
 
-    // The four oscillators: each switched on or off, a shape, a transposition,
-    // a fine tune and a level. OSC 1 plays from the start, the others are off
-    // until they are switched on. (OSC 1's shape keeps its original "wave"
-    // ID, and OSC 2 its version 2 IDs, so older sessions load as they were.)
+    // The four oscillators: each on the bench or not, a shape, a transposition,
+    // a fine tune and a level. The bench starts empty, so all four start off.
+    // (OSC 1's shape keeps its original "wave" ID, and OSC 2 its version 2
+    // IDs, so older sessions load as they were.)
     const auto onOff = [] (bool automatable) { return AudioParameterBoolAttributes().withAutomatable (automatable); };
     const auto addOscillator = [&] (int index, int version)
     {
@@ -53,7 +58,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
         // it is part of the patch rather than something to automate (OSC 2's
         // switch was automatable before the bench, and stays so).
         layout.add (std::make_unique<AudioParameterBool> (
-            ParameterID { ids.on, index == 1 ? 2 : 3 }, name + "On", defaults.on, onOff (index == 1)));
+            ParameterID { ids.on, index == 1 ? 2 : 3 }, name + "On", false, onOff (index == 1)));
         layout.add (std::make_unique<AudioParameterChoice> (
             ParameterID { ids.wave, index == 0 ? 1 : version }, name + "Wave", waves, (int) defaults.wave));
         layout.add (std::make_unique<AudioParameterInt> (
@@ -74,10 +79,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
     addOscillator (2, 3);
     addOscillator (3, 3);
 
-    // Which modules are on the bench, and how sound flows between them.
-    const Synth2Engine::Settings defaults;
-    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::unisonOn, 3 },   "Unison On",   defaults.unisonOn,   onOff (false)));
-    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::envelopeOn, 3 }, "Envelope On", defaults.envelopeOn, onOff (false)));
+    // Whether the unison stack and the envelope are on the bench (not until
+    // they are added), and how sound flows between the modules.
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::unisonOn, 3 },   "Unison On",   false, onOff (false)));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::envelopeOn, 3 }, "Envelope On", false, onOff (false)));
     layout.add (std::make_unique<AudioParameterChoice> (
         ParameterID { ParamID::signalFlow, 3 }, "Signal Flow", StringArray { "Fixed order", "Follow layout", "Patch cables" },
         (int) SignalFlow::fixed, AudioParameterChoiceAttributes().withAutomatable (false)));
@@ -312,7 +317,45 @@ void Synth2AudioProcessor::setStateInformation (const void* data, int sizeInByte
     if (xml == nullptr || ! xml->hasTagName (apvts.state.getType()))
         return;
 
-    apvts.replaceState (juce::ValueTree::fromXml (*xml));
+    // A session from before the bench had OSC 1, unison and the envelope
+    // always there: set them out on the bench as they looked then.
+    // (replaceState shares the tree and fills in the parameters it lacks,
+    // so what was saved is read from a copy.)
+    const auto restored = juce::ValueTree::fromXml (*xml);
+    const auto saved    = restored.createCopy();
+    apvts.replaceState (restored);
+
+    Bench::Model bench (apvts);
+    if (! Bench::Model::hasBench (saved))
+        bench.adoptClassicLayout (saved);
+    bench.ensureBench();
+    followCables();
+}
+
+// The cables patched to the output decide which oscillators reach it when the
+// sound follows them. Message thread, whenever the bench changes.
+void Synth2AudioProcessor::followCables()
+{
+    const Bench::Model bench (apvts);
+    for (int slot = 0; slot < Synth2Engine::numOscillators; ++slot)
+        setRoutedToOutput (slot, bench.isPatchedToOutput ({ Bench::Kind::oscillator, slot }));
+}
+
+void Synth2AudioProcessor::valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTree&)
+{
+    if (parent.hasType (Bench::benchType))
+        followCables();
+}
+
+void Synth2AudioProcessor::valueTreeChildRemoved (juce::ValueTree& parent, juce::ValueTree&, int)
+{
+    if (parent.hasType (Bench::benchType))
+        followCables();
+}
+
+void Synth2AudioProcessor::valueTreeRedirected (juce::ValueTree&)
+{
+    followCables();
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

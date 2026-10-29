@@ -131,8 +131,7 @@ public:
 
     const Osc& getOsc() const noexcept { return osc; }
 
-    /** The caption at the well's top left ("OSC 1"); empty when something
-        laid over the well (OSC 2's power switch) draws its own. */
+    /** The caption at the well's top left ("WAVE"); empty for none. */
     void setCaption (const juce::String& newCaption) { caption = newCaption; repaint(); }
 
     /** Shows `wave` (0..3) in place of the chosen one, or the chosen one

@@ -12,15 +12,17 @@
 /**
     Synth2AudioProcessor
 
-    Thin host wrapper around Synth2Engine. It owns the parameter state and feeds
-    the engine's settings each block; all DSP lives in Synth2Engine.
+    Thin host wrapper around Synth2Engine. It owns the parameter state (and in
+    it the bench's layout, see Bench.h) and feeds the engine's settings each
+    block; all DSP lives in Synth2Engine.
 
     The editor's on-screen keyboard plays through keyboardState. Its notes reach
     the audio thread through a lock-free FIFO (JUCE's own hand-over locks), and
     the keys the host is playing are lit on it from the editor's timer.
 */
 class Synth2AudioProcessor : public juce::AudioProcessor,
-                             private juce::MidiKeyboardState::Listener
+                             private juce::MidiKeyboardState::Listener,
+                             private juce::ValueTree::Listener
 {
 public:
     /** How sound flows between the modules on the bench: in a fixed order by
@@ -92,6 +94,12 @@ private:
     void handleNoteOn (juce::MidiKeyboardState*, int midiChannel, int midiNoteNumber, float velocity) override;
     void handleNoteOff (juce::MidiKeyboardState*, int midiChannel, int midiNoteNumber, float velocity) override;
     void playOnScreenKeys() noexcept;
+
+    // ValueTree::Listener: the bench's cables changed (or a whole new state arrived).
+    void followCables();
+    void valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTree& child) override;
+    void valueTreeChildRemoved (juce::ValueTree& parent, juce::ValueTree& child, int index) override;
+    void valueTreeRedirected (juce::ValueTree& tree) override;
 
     juce::AudioProcessorValueTreeState apvts;
     Synth2Engine engine;
