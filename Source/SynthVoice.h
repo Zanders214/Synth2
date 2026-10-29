@@ -77,13 +77,14 @@ public:
             // don't all line up and thump on the attack. A lone voice starts on
             // the zero crossing at the top of the cycle.
             const int count = Unison::clampVoices (settings.voices);
-            for (size_t i = 0; i < oscillators.size(); ++i)
+            for (size_t i = 0; i < copies.size(); ++i)
             {
+                auto& copy = copies[i];
                 const bool lone = i == 0 && count == 1;
-                oscillators[i] .reset (lone ? 0.0 : random.nextDouble());
-                oscillators2[i].reset (lone ? 0.0 : random.nextDouble());
-                fades[i] = (int) i < count ? 1.0f : 0.0f;
-                pans[i]  = Unison::panGains (Unison::pan ((int) i, count, settings.width));
+                copy.osc1.reset (lone ? 0.0 : random.nextDouble());
+                copy.osc2.reset (lone ? 0.0 : random.nextDouble());
+                copy.fade = (int) i < count ? 1.0f : 0.0f;
+                copy.pan  = Unison::panGains (Unison::pan ((int) i, count, settings.width));
             }
             stackLevel = Unison::stackGain ((float) count);
             oscLevel1  = settings.level1;
@@ -169,20 +170,14 @@ public:
             return;
 
         const int count = Unison::clampVoices (settings.voices);
-        std::array<float, maxChunk> stackL {};
-        std::array<float, maxChunk> stackR {};
         const float ramp = 1.0f / (float) numSamples;
 
         // The oscillators' levels glide across the chunk. OSC 2 runs only
         // while it is (or was, a moment ago) above silence.
         std::array<float, maxChunk> levels1 {};
         std::array<float, maxChunk> levels2 {};
-        for (int n = 0; n < numSamples; ++n)
-        {
-            const float t = (float) (n + 1) * ramp;
-            levels1[(size_t) n] = oscLevel1 + (settings.level1 - oscLevel1) * t;
-            levels2[(size_t) n] = oscLevel2 + (settings.level2 - oscLevel2) * t;
-        }
+        glide (levels1, oscLevel1, settings.level1, numSamples, ramp);
+        glide (levels2, oscLevel2, settings.level2, numSamples, ramp);
         const bool second = settings.level2 > 0.0f || oscLevel2 > 0.0f;
         oscLevel1 = settings.level1;
         oscLevel2 = settings.level2;
@@ -194,112 +189,48 @@ public:
                            || ! juce::exactlyEqual (settings.width, layout.width);
         layout = { count, settings.detuneCents, settings.width };
 
-        // First the copies' oscillators, all of them together, each copy into
-        // its own row...
-        std::array<std::array<float, maxChunk>, Unison::maxVoices> copies;
-        std::array<size_t, Unison::maxVoices>          playing {};
+        // First the sounding copies' oscillators, all of them together, each
+        // copy into its own row...
+        std::array<size_t, Unison::maxVoices> playing {};
+        const int numPlaying = tune (settings, count, relayout, second, playing);
+
+        std::array<std::array<float, maxChunk>, Unison::maxVoices> rows;
         std::array<BlepOscillator*, Unison::maxVoices> playing1 {};
         std::array<BlepOscillator*, Unison::maxVoices> playing2 {};
-        std::array<float*, Unison::maxVoices>          rows {};
-        int numPlaying = 0;
-
-        for (size_t i = 0; i < oscillators.size(); ++i)
-        {
-            const float target = (int) i < count ? 1.0f : 0.0f;
-            if (fades[i] <= 0.0f && target <= 0.0f)
-                continue;
-
-            if (target > 0.0f && relayout)
-            {
-                cents[i]  = Unison::detuneCents ((int) i, count, settings.detuneCents);
-                ratios[i] = Unison::ratio (cents[i]);
-            }
-
-            const double copyHz = noteHz * ratios[i];
-            oscillators[i].setIncrement (copyHz * settings.ratio1 / sampleRate);
-            if (second)
-                oscillators2[i].setIncrement (copyHz * settings.ratio2 / sampleRate);
-
-            const auto k = (size_t) numPlaying++;
-            playing[k]  = i;
-            playing1[k] = &oscillators[i];
-            playing2[k] = &oscillators2[i];
-            rows[k]     = copies[i].data();
-        }
-
-        BlepOscillator::renderAll (playing1.data(), rows.data(), numPlaying, settings.wave, levels1.data(), numSamples, false);
-        if (second)
-            BlepOscillator::renderAll (playing2.data(), rows.data(), numPlaying, settings.wave2, levels2.data(), numSamples, true);
-
-        // ...then each copy into the stack, in order, faded and panned.
+        std::array<float*, Unison::maxVoices>          outs {};
         for (size_t k = 0; k < (size_t) numPlaying; ++k)
         {
-            const size_t i = playing[k];
-            const float target = (int) i < count ? 1.0f : 0.0f;
-            const auto& copy = copies[i];
-
-            // A copy that is leaving keeps its last place. The others move to
-            // theirs across this chunk, so a new VOICES count re-pans them
-            // without a jump.
-            const auto from = pans[i];
-            if (target > 0.0f && relayout)
-                pans[i] = Unison::panGains (Unison::pan ((int) i, count, settings.width));
-
-            float fade = fades[i];
-            const auto to = pans[i];
-            if (juce::exactlyEqual (fade, target) && juce::exactlyEqual (from.left, to.left) && juce::exactlyEqual (from.right, to.right))
-            {
-                // Settled: nothing to glide, so the copy goes straight in.
-                for (int n = 0; n < numSamples; ++n)
-                {
-                    const float value = copy[(size_t) n] * fade;
-                    stackL[(size_t) n] += value * to.left;
-                    stackR[(size_t) n] += value * to.right;
-                }
-                continue;
-            }
-
-            for (int n = 0; n < numSamples; ++n)
-            {
-                const float t = (float) (n + 1) * ramp;
-                const float value = copy[(size_t) n] * fade;
-                stackL[(size_t) n] += value * (from.left  + (to.left  - from.left)  * t);
-                stackR[(size_t) n] += value * (from.right + (to.right - from.right) * t);
-                fade = target > fade ? juce::jmin (target, fade + fadeStep)
-                                     : juce::jmax (target, fade - fadeStep);
-            }
-            fades[i] = fade;
+            playing1[k] = &copies[playing[k]].osc1;
+            playing2[k] = &copies[playing[k]].osc2;
+            outs[k]     = rows[k].data();
         }
+        BlepOscillator::renderAll (playing1.data(), outs.data(), numPlaying, settings.wave, levels1.data(), numSamples, false);
+        if (second)
+            BlepOscillator::renderAll (playing2.data(), outs.data(), numPlaying, settings.wave2, levels2.data(), numSamples, true);
 
-        // The stack's level follows the copies actually sounding (fading ones
-        // count in part), gliding across the chunk, so it never jumps.
-        float sounding = 0.0f;
-        for (const float fade : fades)
-            sounding += fade;
-        const float stackFrom = stackLevel;
-        stackLevel = Unison::stackGain (sounding);
+        // ...then each copy into the stack, in order, faded and panned.
+        std::array<float, maxChunk> stackL {};
+        std::array<float, maxChunk> stackR {};
+        for (size_t k = 0; k < (size_t) numPlaying; ++k)
+            mix (playing[k], count, settings.width, relayout, rows[k].data(), stackL.data(), stackR.data(), numSamples, ramp);
 
-        for (int n = 0; n < numSamples; ++n)
-        {
-            const float stack = stackFrom + (stackLevel - stackFrom) * (float) (n + 1) * ramp;
-            envelopeLevel = envelope.getNextSample();
-            const float gain = envelopeLevel * level * stack;
-            left[n]  += stackL[(size_t) n] * gain;
-            right[n] += stackR[(size_t) n] * gain;
-        }
-
+        applyEnvelope (left, right, stackL.data(), stackR.data(), numSamples, ramp);
         if (! envelope.isActive())
             kill();
     }
 
 private:
-    std::array<BlepOscillator, Unison::maxVoices>    oscillators {};    // OSC 1, one per copy
-    std::array<BlepOscillator, Unison::maxVoices>    oscillators2 {};   // OSC 2
-    std::array<float, Unison::maxVoices>             fades {};
-    std::array<float, Unison::maxVoices>             cents {};
-    std::array<double, Unison::maxVoices>            ratios = filled (1.0);   // Unison::ratio (cents)
-    std::array<Unison::PanGains, Unison::maxVoices>  pans {};
-    juce::ADSR envelope;
+    // One unison copy: its two oscillators, how far it has faded in, and its
+    // place in the detune spread and the stereo field.
+    struct Copy
+    {
+        BlepOscillator   osc1;
+        BlepOscillator   osc2;
+        float            fade  = 0.0f;
+        float            cents = 0.0f;
+        double           ratio = 1.0;   // Unison::ratio (cents)
+        Unison::PanGains pan;
+    };
 
     // What the copies' detune and pans were last worked out for.
     struct Layout
@@ -308,14 +239,110 @@ private:
         float detuneCents = 0.0f;
         float width       = 0.0f;
     };
-    Layout layout;
 
-    static std::array<double, Unison::maxVoices> filled (double value) noexcept
+    // `from` gliding to `to` across the chunk, ending on `to`.
+    static void glide (std::array<float, maxChunk>& values, float from, float to, int numSamples, float ramp) noexcept
     {
-        std::array<double, Unison::maxVoices> values {};
-        values.fill (value);
-        return values;
+        for (int n = 0; n < numSamples; ++n)
+        {
+            const float t = (float) (n + 1) * ramp;
+            values[(size_t) n] = from + (to - from) * t;
+        }
     }
+
+    // Tunes the copies that are sounding (or fading out) for this chunk and
+    // lists them in `playing`, returning how many there are.
+    int tune (const VoiceSettings& settings, int count, bool relayout, bool second,
+              std::array<size_t, Unison::maxVoices>& playing) noexcept
+    {
+        int numPlaying = 0;
+        for (size_t i = 0; i < copies.size(); ++i)
+        {
+            auto& copy = copies[i];
+            const bool wanted = (int) i < count;
+            if (copy.fade <= 0.0f && ! wanted)
+                continue;
+
+            if (wanted && relayout)
+            {
+                copy.cents = Unison::detuneCents ((int) i, count, settings.detuneCents);
+                copy.ratio = Unison::ratio (copy.cents);
+            }
+
+            const double copyHz = noteHz * copy.ratio;
+            copy.osc1.setIncrement (copyHz * settings.ratio1 / sampleRate);
+            if (second)
+                copy.osc2.setIncrement (copyHz * settings.ratio2 / sampleRate);
+            playing[(size_t) numPlaying++] = i;
+        }
+        return numPlaying;
+    }
+
+    // Adds copy `i`'s chunk (its oscillators, already levelled) into the
+    // stack, faded and panned.
+    void mix (size_t i, int count, float width, bool relayout, const float* samples,
+              float* stackL, float* stackR, int numSamples, float ramp) noexcept
+    {
+        auto& copy = copies[i];
+        const float target = (int) i < count ? 1.0f : 0.0f;
+
+        // A copy that is leaving keeps its last place. The others move to
+        // theirs across this chunk, so a new VOICES count re-pans them
+        // without a jump.
+        const auto from = copy.pan;
+        if (target > 0.0f && relayout)
+            copy.pan = Unison::panGains (Unison::pan ((int) i, count, width));
+
+        float fade = copy.fade;
+        const auto to = copy.pan;
+        if (juce::exactlyEqual (fade, target) && juce::exactlyEqual (from.left, to.left) && juce::exactlyEqual (from.right, to.right))
+        {
+            // Settled: nothing to glide, so the copy goes straight in.
+            for (int n = 0; n < numSamples; ++n)
+            {
+                const float value = samples[n] * fade;
+                stackL[n] += value * to.left;
+                stackR[n] += value * to.right;
+            }
+            return;
+        }
+
+        for (int n = 0; n < numSamples; ++n)
+        {
+            const float t = (float) (n + 1) * ramp;
+            const float value = samples[n] * fade;
+            stackL[n] += value * (from.left  + (to.left  - from.left)  * t);
+            stackR[n] += value * (from.right + (to.right - from.right) * t);
+            fade = target > fade ? juce::jmin (target, fade + fadeStep)
+                                 : juce::jmax (target, fade - fadeStep);
+        }
+        copy.fade = fade;
+    }
+
+    // Puts the stack under the envelope and adds it into left / right. The
+    // stack's level follows the copies actually sounding (fading ones count
+    // in part), gliding across the chunk, so it never jumps.
+    void applyEnvelope (float* left, float* right, const float* stackL, const float* stackR, int numSamples, float ramp) noexcept
+    {
+        float sounding = 0.0f;
+        for (const auto& copy : copies)
+            sounding += copy.fade;
+        const float stackFrom = stackLevel;
+        stackLevel = Unison::stackGain (sounding);
+
+        for (int n = 0; n < numSamples; ++n)
+        {
+            const float stack = stackFrom + (stackLevel - stackFrom) * (float) (n + 1) * ramp;
+            envelopeLevel = envelope.getNextSample();
+            const float gain = envelopeLevel * level * stack;
+            left[n]  += stackL[n] * gain;
+            right[n] += stackR[n] * gain;
+        }
+    }
+
+    std::array<Copy, Unison::maxVoices> copies {};
+    juce::ADSR envelope;
+    Layout     layout;
 
     double sampleRate = 44100.0;
     double noteHz     = 440.0;

@@ -70,14 +70,14 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
 
         // Each well opens its tray of shapes; hovering one previews it in the
         // well, picking one sets that oscillator's shape.
-        picker.onOpenMenu = [&menu, &picker]
+        picker.onOpenMenu ([&menu, &picker]
         {
             menu.open (picker.getSelected());
             picker.setMenuOpen (true);
-        };
-        menu.onChoose = [&picker]  (int wave) { picker.choose (wave); };
-        menu.onHover  = [&display] (int wave) { display.setPreview (wave); };
-        menu.onClose  = [&picker] { picker.setMenuOpen (false); };
+        });
+        menu.onChoose ([&picker]  (int wave) { picker.choose (wave); });
+        menu.onHover  ([&display] (int wave) { display.setPreview (wave); });
+        menu.onClose  ([&picker] { picker.setMenuOpen (false); });
     }
 
     addAndMakeVisible (unisonDisplay);
@@ -87,11 +87,11 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
 
     // OSC 2 is out of sight until it is added.
     addChildComponent (addOsc2);
-    addOsc2.onClick = [this]
+    addOsc2.onClick ([this]
     {
         osc2Picker.setOn (true);
         showOsc2 (true, true);
-    };
+    });
 
     for (size_t i = 0; i < dials.size(); ++i)
     {
