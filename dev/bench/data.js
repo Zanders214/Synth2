@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793272890931,
+  "lastUpdate": 1793273964689,
   "repoUrl": "https://github.com/Zanders214/Synth2",
   "entries": {
     "ZandersSynth2 DSP": [
@@ -337,6 +337,60 @@ window.BENCHMARK_DATA = {
           {
             "name": "DSP load 16x16 2-osc @48k/512",
             "value": 6.064,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "152227414+Zanders214@users.noreply.github.com",
+            "name": "Dennis Zanders",
+            "username": "Zanders214"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9238415c9b487011b499c4170f565d585c1f4863",
+          "message": "Merge pull request #8 from Zanders214/claude/sonar-copy-struct\n\nClear the SonarCloud findings: one struct per unison copy, render in steps, callbacks behind setters",
+          "timestamp": "2026-10-29T12:37:18+01:00",
+          "tree_id": "2464bcdf91749d4c45871d8dfdc4c5c5bcee922e",
+          "url": "https://github.com/Zanders214/Synth2/commit/9238415c9b487011b499c4170f565d585c1f4863"
+        },
+        "date": 1793273964367,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "processBlock 8x7",
+            "value": 116949.544,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 8x7 @48k/512",
+            "value": 1.096,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16",
+            "value": 397825.455,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 @48k/512",
+            "value": 3.73,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 2-osc",
+            "value": 741809.142,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 2-osc @48k/512",
+            "value": 6.954,
             "unit": "%"
           }
         ]
