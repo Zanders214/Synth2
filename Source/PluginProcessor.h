@@ -84,6 +84,10 @@ public:
         output, for when the signal flow follows the cables. Any thread. */
     void setRoutedToOutput (int oscillator, bool routed) noexcept;
 
+    /** Loads factory preset `index` (see Presets.h), even if it is the one
+        already loaded, so picking it again undoes any edits. Message thread. */
+    void loadPreset (int index);
+
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
@@ -102,6 +106,9 @@ private:
     void valueTreePropertyChanged (juce::ValueTree& tree, const juce::Identifier& property) override;
     void valueTreeRedirected (juce::ValueTree& tree) override;
     void parameterChanged (const juce::String& parameterID, float newValue) override;
+
+    // The bench followed, or a host's program change loaded, on the message
+    // thread when either came from off it.
     void handleAsyncUpdate() override;
 
     juce::AudioProcessorValueTreeState apvts;
@@ -113,6 +120,12 @@ private:
     // can flow, so the audio thread just picks the row for the flow in use.
     using Assignment = std::array<std::atomic<int>, Synth2Engine::numOscillators>;
     std::array<Assignment, 3> envelopeFor {};
+
+    // The factory preset last loaded (kept in the state too, so a host that
+    // sets the saved program again after restoring a session changes nothing),
+    // and one a host asked for off the message thread.
+    std::atomic<int> currentPreset { 0 };
+    std::atomic<int> pendingPreset { -1 };
 
     // Each voice's envelope for each oscillator, published by the audio thread every block.
     struct PublishedActivity

@@ -15,14 +15,18 @@
 /**
     Synth2AudioProcessorEditor — the Neon Plugins face for Synth2: a workbench.
 
-    A dark panel, top to bottom: the wordmark, the POLY badge and the gear
-    (the signal-flow settings); the bench, which starts empty and holds
+    A dark panel, top to bottom: the wordmark, the preset picker, the POLY
+    badge and the gear (the signal-flow settings); the bench, which starts empty and holds
     whatever modules are put on it, wherever they are put (see BenchView);
     and along the bottom the keyboard that plays it and the OUTPUT dial.
 
     Click an empty spot on the bench to add a module there: an oscillator,
     with its own unison stack, or an envelope (up to four of each). Drag a
     module by its header to move it; its cross takes it off the bench.
+
+    The preset picker shows the factory preset last loaded: its arrows step
+    to the previous and next one, and a click on its name opens a tray of
+    them all.
 
     The gear picks how sound flows between the modules, and so which
     oscillator each envelope shapes: by number (ENV 1 shapes OSC 1),
@@ -58,10 +62,12 @@ public:
     BenchView&    getBench() noexcept                  { return bench; }
     ChoiceTray&   getAddTray() noexcept                { return addTray; }
     ChoiceTray&   getSettingsTray() noexcept           { return settingsTray; }
+    ChoiceTray&   getPresetTray() noexcept             { return presetTray; }
     WaveMenu&     getWaveMenu (int slot) noexcept      { return waveMenus[(size_t) slot]; }
     juce::Slider& getOutputDial() noexcept             { return outputDial; }
     NeonKeyboard& getKeyboard() noexcept               { return keyboard; }
     juce::Rectangle<float> gearBounds() const noexcept { return layout.gear.toFloat(); }
+    juce::Rectangle<float> presetBounds() const noexcept { return layout.preset.toFloat(); }
     juce::Rectangle<float> outputJackBounds() const noexcept;
     bool isPatching() const noexcept                   { return patchingFrom.has_value(); }
 
@@ -91,6 +97,8 @@ private:
     void showFlow();
     void openAddTray (juce::Point<float> benchAt, juce::Point<int> editorAt);
     void openSettings();
+    void openPresets();
+    void stepPreset (int delta);
     void patch (const Bench::ModuleId& module, BenchModule::Jack which, const juce::MouseEvent& e, int phase);
     void dropCable (juce::Point<float> at);
     void showCables();
@@ -109,12 +117,14 @@ private:
     std::array<WaveMenu, Bench::numOscillators> waveMenus;
     ChoiceTray   addTray;
     ChoiceTray   settingsTray;
+    ChoiceTray   presetTray;
     juce::Point<float> addAt;   // where on the bench the add tray was opened
 
     // Painted regions computed by resized() and read back by paint().
     struct Layout
     {
         juce::Rectangle<int> header;
+        juce::Rectangle<int> preset;
         juce::Rectangle<int> badge;
         juce::Rectangle<int> gear;
         juce::Rectangle<int> outputColumn;
@@ -129,6 +139,7 @@ private:
     juce::String lastCables;
     float lastOutput = 0.0f;
     int   lastFlow   = -1;
+    int   lastPreset = -1;
     float uiScale    = 1.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Synth2AudioProcessorEditor)

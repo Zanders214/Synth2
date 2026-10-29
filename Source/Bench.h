@@ -348,6 +348,18 @@ namespace Bench
             return landed;
         }
 
+        /** Sets the modules on the bench out afresh, as a preset loads: the
+            oscillators along the top row, each envelope under its
+            oscillator, and every cable unplugged. */
+        void layOut()
+        {
+            ensureBench();
+            for (const auto& id : present())
+                setPosition (id, defaultPosition (id));
+            for (const auto& cable : cables())
+                disconnect (cable.first);
+        }
+
         /** The modules on the bench in reading order. */
         std::vector<ModuleId> readingOrder() const
         {

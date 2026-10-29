@@ -2,11 +2,15 @@
 #include "PluginEditor.h"
 #include "ParamIDs.h"
 #include "Bench.h"
+#include "Presets.h"
 
 namespace
 {
     // The MIDI channel the on-screen keyboard plays on.
     constexpr int keyboardChannel = 1;
+
+    // Which factory preset is loaded, kept on the state tree.
+    const juce::Identifier presetProperty { "preset" };
 }
 
 Synth2AudioProcessor::Synth2AudioProcessor()
@@ -340,12 +344,50 @@ void Synth2AudioProcessor::setRoutedToOutput (int oscillator, bool routed) noexc
     routedToOutput[(size_t) juce::jlimit (0, Synth2Engine::numOscillators - 1, oscillator)].store (routed, std::memory_order_relaxed);
 }
 
-int Synth2AudioProcessor::getNumPrograms()              { return 1; }
-int Synth2AudioProcessor::getCurrentProgram()           { return 0; }
-// A single unnamed program: there are no presets to switch to or rename.
-void Synth2AudioProcessor::setCurrentProgram (int)      { /* only program 0 exists */ }
-const juce::String Synth2AudioProcessor::getProgramName (int) { return {}; }   // NOSONAR(cpp:S5951): signature fixed by juce::AudioProcessor
-void Synth2AudioProcessor::changeProgramName (int, const juce::String&) { /* the one program has no name */ }
+// The host's programs are the factory presets.
+int Synth2AudioProcessor::getNumPrograms()              { return Presets::numPresets; }
+int Synth2AudioProcessor::getCurrentProgram()           { return currentPreset.load(); }
+
+// The latest request wins: one for the preset already loaded cancels any
+// still waiting for the message thread rather than being ignored.
+void Synth2AudioProcessor::setCurrentProgram (int index)
+{
+    if (index < 0 || index >= Presets::numPresets)
+        return;
+    if (juce::MessageManager::existsAndIsCurrentThread())
+    {
+        pendingPreset.store (-1);
+        if (index != currentPreset.load())
+            loadPreset (index);
+        return;
+    }
+    if (index == currentPreset.load())
+    {
+        pendingPreset.store (-1);
+        return;
+    }
+    pendingPreset.store (index);
+    triggerAsyncUpdate();
+}
+
+const juce::String Synth2AudioProcessor::getProgramName (int index)   // NOSONAR(cpp:S5951): signature fixed by juce::AudioProcessor
+{
+    return juce::isPositiveAndBelow (index, Presets::numPresets) ? juce::String (Presets::factory[(size_t) index].name) : juce::String();
+}
+
+void Synth2AudioProcessor::changeProgramName (int, const juce::String&) { /* the factory presets keep their names */ }
+
+void Synth2AudioProcessor::loadPreset (int index)
+{
+    if (! juce::isPositiveAndBelow (index, Presets::numPresets))
+        return;
+    Presets::apply (apvts, Presets::factory[(size_t) index]);
+    currentPreset.store (index);
+    apvts.state.setProperty (presetProperty, index, nullptr);
+    followBench();
+    updateHostDisplay (ChangeDetails().withProgramChanged (true));
+}
+
 
 void Synth2AudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
@@ -359,6 +401,10 @@ void Synth2AudioProcessor::setStateInformation (const void* data, int sizeInByte
     if (xml == nullptr || ! xml->hasTagName (apvts.state.getType()))
         return;
 
+    // A program a host asked for before this session arrived must not load
+    // over it once the message thread gets to it.
+    pendingPreset.store (-1);
+
     // An older session is brought up to date (see Bench::Model::migrate).
     // (replaceState shares the tree and fills in the parameters it lacks,
     // so what was saved is read from a copy.)
@@ -366,6 +412,7 @@ void Synth2AudioProcessor::setStateInformation (const void* data, int sizeInByte
     const auto saved    = restored.createCopy();
     apvts.replaceState (restored);
     Bench::Model (apvts).migrate (saved);
+    currentPreset.store (juce::jlimit (0, Presets::numPresets - 1, (int) saved.getProperty (presetProperty, 0)));
     followBench();
 }
 
@@ -419,6 +466,8 @@ void Synth2AudioProcessor::parameterChanged (const juce::String&, float)
 
 void Synth2AudioProcessor::handleAsyncUpdate()
 {
+    if (const int index = pendingPreset.exchange (-1); index >= 0)
+        loadPreset (index);
     followBench();
 }
 

@@ -32,6 +32,35 @@ with its single Unison and Envelope modules, is brought over the same way.
 
 The keyboard and the OUTPUT dial stay in a strip along the bottom.
 
+### Presets
+
+The pill in the middle of the header holds the factory presets: its arrows step to the
+previous and next one, and a click on its name opens a tray of them all. Your DAW lists
+the same presets as the plugin's programs. Loading one puts its modules on the bench
+(oscillators along the top, each with its own unison stack, and each DAHDSR envelope
+under the oscillator it shapes, in a fixed order with no cables) and sets everything
+it doesn't use back to its default; picking it again undoes your edits. Which preset
+you loaded is saved with your set.
+
+| Preset            | What it is                                              |
+|-------------------|---------------------------------------------------------|
+| **Empty Bench**   | Nothing on it: where a new instance starts              |
+| **Supersaw Pad**  | Nine wide saws, an octave blooming in on top            |
+| **Warm Strings**  | A soft saw section with a low triangle                  |
+| **Slow Swell**    | A shimmering stack, its layers delayed to arrive in turn |
+| **Trance Lead**   | A bright detuned saw and square                         |
+| **8-Bit Lead**    | Bare squares, the octave a short blip                   |
+| **Hollow Flute**  | A breathy triangle, its octave breathing in late        |
+| **Saw Pluck**     | A short, bright pluck for arpeggios                     |
+| **Wood Mallet**   | A soft mallet that dies away                            |
+| **Chord Stab**    | Held for a beat, then gone: house chords                |
+| **Drawbar Organ** | Sines at 16', 8' and 4', with a percussive click        |
+| **Glass Keys**    | Struck sines, the overtones dying first                 |
+| **Brass Section** | Biting saws that settle, a square swelling in below     |
+| **Fifth Stack**   | Root, fifth and sub, for big chords                     |
+| **Reese Bass**    | Two beating saws an octave down                         |
+| **Sub Bass**      | A clean sine sub with a plucked edge                    |
+
 ### Signal flow
 
 The gear at the top right picks how sound flows between the modules:
@@ -175,6 +204,7 @@ the flow modes, the cables) for a look by eye.
 Source/
   PluginProcessor.{h,cpp}    thin host wrapper + parameters (APVTS); the on-screen keyboard's lock-free hand-over; cables -> routing
   ParamIDs.h                 the parameter IDs
+  Presets.h                  the factory presets, and loading one onto the bench
   Synth2Engine.h             host-agnostic DSP core: 16 voices, up to four oscillators, MIDI, smoothing, output
   SynthVoice.h               one note: each oscillator's unison copies, under that oscillator's envelope
   Envelope.h                 the delay / attack / hold / decay / sustain / release envelope
