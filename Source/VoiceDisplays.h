@@ -301,17 +301,20 @@ struct AmpDisplayState
     AmpDisplay — the AMP well: the envelope its oscillator's notes follow,
     each stage drawn in the colour of the dial that shapes it (the wait in
     DELAY's, the rise in ATTACK's, the top in HOLD's, the fall in DECAY's, the
-    sustain in SUSTAIN's and the release in RELEASE's), its top at OUTPUT's
-    level over a faint 0 dB line. Each note that sounds is a glowing dot
-    riding it through the stages, resting on the sustain while its key (or
-    the pedal) is down.
+    sustain in SUSTAIN's and the release in RELEASE's). The shape always fills
+    the well, from its left edge to its right and up to its top, so it looks
+    the same whatever the well's size; OUTPUT's level is in the readout. Each
+    note that sounds is a glowing dot riding it through the stages, resting
+    on the sustain while its key (or the pedal) is down.
 
     Given its envelope's parameters (setParameters), the shape can be edited
     in place: each corner is a handle (see Synth2VisualModel::Handle) to drag
     sideways for its stage's time, DECAY's corner up and down for SUSTAIN
-    too. Shift drags finely, a double-click puts a corner's stage back to
-    its default, and the readout names the stage and value under the
-    pointer. Each drag is one gesture, so a host records and undoes it like a
+    too. A dragged corner follows the pointer, the stages after it making
+    room so the shape still fills the well; RELEASE's corner stays on the
+    right edge, and dragging it makes room before it. Shift drags finely, a double-click puts a corner's
+    stage back to its default, and the readout names the stage and value
+    under the pointer. Each drag is one gesture, so a host records and undoes it like a
     turn of the dial.
 */
 class AmpDisplay final : public DisplayWell,
@@ -336,7 +339,7 @@ public:
     juce::Rectangle<float> plotArea() const noexcept
     {
         const float s = getUiScale();
-        return plotBounds().withTrimmedBottom (10.0f * s).reduced (2.0f * s, 4.0f * s);
+        return plotBounds().withTrimmedBottom (10.0f * s).reduced (2.0f * s, 6.0f * s);
     }
 
     /** Where handle `h` is drawn, in this component. */
@@ -358,7 +361,8 @@ public:
         setHot (h);
         if (h < 0)
             return;
-        drag = Drag { (Handle) h, e.position, amp.dials };
+        const auto corner = Synth2VisualModel::handlePosition (shape(), (Handle) h);
+        drag = Drag { (Handle) h, e.position, amp.dials, corner.x, Synth2VisualModel::naturalWidth (amp.dials) };
         for (auto* p : parametersFor (drag->handle))
             p->beginChangeGesture();
         repaint();
@@ -374,21 +378,15 @@ public:
         const float height = juce::jmax (1.0f, plot.getHeight());
         const float dx     = fine * (e.position.x - drag->from.x) / width;
         auto dials = drag->dials;
-        const auto time = [&dx, h = drag->handle] (float& dial) { dial = Synth2VisualModel::dragDial (dial, dx, h); };
-        switch (drag->handle)
+        if (drag->handle == Handle::release)
+            dials.release = Synth2VisualModel::dragDial (dials.release, dx, Handle::release, drag->fullWidth);
+        else
+            Synth2VisualModel::dialOf (dials, drag->handle) = Synth2VisualModel::dialAt (dials, drag->handle, drag->cornerX + dx);
+        if (drag->handle == Handle::decay)
         {
-            case Handle::delay:   time (dials.delay);   break;
-            case Handle::attack:  time (dials.attack);  break;
-            case Handle::hold:    time (dials.hold);    break;
-            case Handle::release: time (dials.release); break;
-            case Handle::decay:
-            {
-                time (dials.decay);
-                const auto start = Synth2VisualModel::envelope (drag->dials, amp.outputDb);
-                const float dy   = fine * (drag->from.y - e.position.y) / height;
-                dials.sustain = Synth2VisualModel::sustainAt (start, start.sustain + dy, drag->dials.sustain);
-                break;
-            }
+            const auto start = Synth2VisualModel::envelope (drag->dials);
+            const float dy   = fine * (drag->from.y - e.position.y) / height;
+            dials.sustain = Synth2VisualModel::sustainAt (start, start.sustain + dy);
         }
         apply (dials);
     }
@@ -456,18 +454,14 @@ public:
         g.setColour (colourFor (Stage::release).withAlpha (0.85f));
         g.drawText ("R " + Synth2::Format::seconds (amp.releaseSeconds), times, juce::Justification::centredRight, false);
 
-        plot = plot.reduced (2.0f * s, 4.0f * s);
+        plot = plotArea();
         const auto e  = shape();
         const auto at = [this] (float x, float y) { return toPlot (x, y); };
 
-        // Baseline and the 0 dB line.
+        // The baseline.
         const float line = juce::jmax (1.0f, s);
         g.setColour (Synth2::Palette::gridLine);
         g.fillRect (juce::Rectangle (plot.getX(), plot.getBottom() - line, plot.getWidth(), line));
-        const float zeroDb = at (0.0f, Synth2VisualModel::heightForDb (0.0f)).y;
-        const auto dashes = (int) std::ceil (plot.getWidth() / (6.0f * s));
-        for (int i = 0; i < dashes; ++i)
-            g.fillRect (juce::Rectangle (plot.getX() + (float) i * 6.0f * s, zeroDb - line * 0.5f, 3.0f * s, line));
 
         // The shape, softly filled underneath.
         const std::array<std::pair<juce::Point<float>, Stage>, 7> corners { {
@@ -535,9 +529,11 @@ private:
         Handle handle;
         juce::Point<float> from;
         Synth2VisualModel::EnvelopeDials dials;   // where they were when the drag began
+        float cornerX;                            // where its corner was across the well
+        float fullWidth;                          // the natural length spanning the well then
     };
 
-    Synth2VisualModel::Envelope shape() const noexcept { return Synth2VisualModel::envelope (amp.dials, amp.outputDb); }
+    Synth2VisualModel::Envelope shape() const noexcept { return Synth2VisualModel::envelope (amp.dials); }
 
     void endDrag()
     {

@@ -262,28 +262,41 @@ void testEnvelope()
     M::EnvelopeDials none, all;
     none.sustain = 0.5f;
     all          = { 1.0f, 1.0f, 1.0f, 1.0f, 0.5f, 1.0f };
-    const auto shortest = M::envelope (none, 0.0f);
-    const auto longest  = M::envelope (all, 0.0f);
+    const auto shortest = M::envelope (none);
+    const auto longest  = M::envelope (all);
     check (approx (shortest.delayEnd, 0.0f, 1e-6f) && shortest.attackEnd > 0.0f && approx (shortest.holdEnd, shortest.attackEnd, 1e-6f)
                && shortest.holdEnd < shortest.decayEnd && shortest.decayEnd < shortest.sustainEnd && shortest.sustainEnd < shortest.releaseEnd,
            "the stages come in order, with no delay or hold at their shortest");
-    check (longest.releaseEnd <= 1.0f + 1e-6f, "at their longest the stages still fit the well");
+    check (approx (shortest.releaseEnd, 1.0f, 1e-6f) && approx (longest.releaseEnd, 1.0f, 1e-6f)
+               && approx (shortest.peak, 1.0f, 1e-6f) && approx (longest.peak, 1.0f, 1e-6f),
+           "short or long, the envelope fills the well: edge to edge and up to the top");
     check (longest.delayEnd > 0.0f && longest.holdEnd > longest.attackEnd, "turning DELAY and HOLD up opens a wait and a stretch at the top");
-    check (longest.attackEnd - longest.delayEnd > shortest.attackEnd - shortest.delayEnd
-               && longest.decayEnd - longest.holdEnd > shortest.decayEnd - shortest.holdEnd
-               && longest.releaseEnd - longest.sustainEnd > shortest.releaseEnd - shortest.sustainEnd,
+
+    // At one scale (a drag's), the stages grow as their dials turn.
+    const float full = M::naturalWidth (all);
+    const auto  shortAtFull = M::envelope (none, full);
+    check (approx (M::envelope (all, full).releaseEnd, 1.0f, 1e-6f) && shortAtFull.releaseEnd < 1.0f,
+           "at a fixed scale a shorter envelope ends before the edge");
+    check (longest.attackEnd - longest.delayEnd > shortAtFull.attackEnd - shortAtFull.delayEnd
+               && longest.decayEnd - longest.holdEnd > shortAtFull.decayEnd - shortAtFull.holdEnd
+               && longest.releaseEnd - longest.sustainEnd > shortAtFull.releaseEnd - shortAtFull.sustainEnd,
            "turning ATTACK, DECAY and RELEASE up stretches their ramps");
-    check (approx (longest.sustainEnd - longest.decayEnd, shortest.sustainEnd - shortest.decayEnd, 1e-6f),
+    check (approx (longest.sustainEnd - longest.decayEnd, shortAtFull.sustainEnd - shortAtFull.decayEnd, 1e-6f),
            "the sustain stretch keeps its length");
+
+    // Fitted, the shape keeps its proportions: only the stage that changed
+    // takes a bigger share, and the rest keep theirs to one another.
+    M::EnvelopeDials slower = none;
+    slower.attack = 1.0f;
+    const auto fitted = M::envelope (slower);
+    check (approx ((fitted.decayEnd - fitted.holdEnd) / (fitted.releaseEnd - fitted.sustainEnd),
+                   (shortest.decayEnd - shortest.holdEnd) / (shortest.releaseEnd - shortest.sustainEnd), 1e-5f)
+               && fitted.attackEnd - fitted.delayEnd > shortest.attackEnd - shortest.delayEnd,
+           "a longer ATTACK takes more of the well, the other stages keeping their proportions");
     check (approx (shortest.sustain, 0.5f * shortest.peak, 1e-6f), "SUSTAIN sets its stretch's height, as a share of the top");
 
-    check (approx (M::heightForDb (-24.0f), 0.0f, 1e-6f) && approx (M::heightForDb (6.0f), 1.0f, 1e-6f)
-               && approx (M::heightForDb (0.0f), 0.8f, 1e-6f),
-           "OUTPUT sets the top's height on a -24..+6 dB scale");
-    check (M::envelope (none, -12.0f).peak < M::envelope (none, 0.0f).peak, "turning OUTPUT down lowers the top");
-
     using Stage = Envelope::Stage;
-    const auto e = M::envelope (all, 0.0f);
+    const auto e = M::envelope (all);
     const auto waiting = M::noteDot (e, Stage::delay, 0.0f, 0.5f);
     const auto rising  = M::noteDot (e, Stage::attack, 0.5f, 0.5f);
     const auto holding = M::noteDot (e, Stage::hold, 1.0f, 0.5f);
@@ -319,18 +332,24 @@ void testEnvelope()
            "with no HOLD, a press on the shared corner takes ATTACK");
     check (near (shortest, Handle::attack, 4.0f) == (int) Handle::hold, "and a press just right of it takes HOLD, to pull it out");
 
-    check (approx (M::dragDial (0.2f, 0.5f * M::handleSpans[1], Handle::attack), 0.7f, 1e-6f)
-               && approx (M::dragDial (0.9f, 0.5f, Handle::release), 1.0f, 1e-6f) && approx (M::dragDial (0.1f, -0.5f, Handle::hold), 0.0f, 1e-6f),
-           "a drag moves a time dial by how much of its stage's width it covers, kept within 0..1");
-    M::EnvelopeDials moved = none;
-    moved.attack = M::dragDial (none.attack, 0.05f, Handle::attack);
-    check (approx (M::envelope (moved, 0.0f).attackEnd - shortest.attackEnd, 0.05f, 1e-6f), "so the corner follows the pointer");
-    check (approx (M::sustainAt (e, 0.5f * e.peak, 1.0f), 0.5f, 1e-6f) && approx (M::sustainAt (e, 2.0f, 0.5f), 1.0f, 1e-6f)
-               && approx (M::sustainAt (e, -1.0f, 0.5f), 0.0f, 1e-6f),
+    check (approx (M::dragDial (0.2f, 0.5f * M::handleSpans[1], Handle::attack, 1.0f), 0.7f, 1e-6f)
+               && approx (M::dragDial (0.2f, 0.25f * M::handleSpans[1], Handle::attack, 2.0f), 0.7f, 1e-6f)
+               && approx (M::dragDial (0.9f, 0.5f, Handle::release, 1.0f), 1.0f, 1e-6f) && approx (M::dragDial (0.1f, -0.5f, Handle::hold, 1.0f), 0.0f, 1e-6f),
+           "a drag moves a time dial by how much of its stage's width (at the well's scale) it covers, kept within 0..1");
+    bool follows = true;
+    for (const auto h : { Handle::delay, Handle::attack, Handle::hold, Handle::decay })
+    {
+        M::EnvelopeDials moved = none;
+        const float to = M::handlePosition (shortest, h).x + 0.1f;
+        M::dialOf (moved, h) = M::dialAt (moved, h, to);
+        follows = follows && approx (M::handlePosition (M::envelope (moved), h).x, to, 1e-5f);
+    }
+    check (follows, "dialAt puts a dragged corner under the pointer, the envelope still filling the well");
+    check (approx (M::dialAt (none, Handle::attack, 0.999f), 1.0f, 1e-6f) && approx (M::dialAt (none, Handle::attack, -0.5f), 0.0f, 1e-6f),
+           "a corner dragged past where its dial reaches stops there");
+    check (approx (M::sustainAt (e, 0.5f * e.peak), 0.5f, 1e-6f) && approx (M::sustainAt (e, 2.0f), 1.0f, 1e-6f)
+               && approx (M::sustainAt (e, -1.0f), 0.0f, 1e-6f),
            "DECAY's corner dragged up and down sets SUSTAIN as a share of the top");
-    const auto flat = M::envelope (all, M::minDb);
-    check (approx (flat.peak, 0.0f, 1e-6f) && approx (M::sustainAt (flat, 0.3f, 0.7f), 0.7f, 1e-6f),
-           "with OUTPUT at the bottom of the scale (no height to measure), SUSTAIN is left where it was");
 }
 } // namespace
 

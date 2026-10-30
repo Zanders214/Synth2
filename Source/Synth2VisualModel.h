@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <utility>
 
 #include "EffectSettings.h"
 #include "Envelope.h"
@@ -15,7 +16,7 @@
     Pure, framework-free numbers behind the editor's displays: the
     oscillators' WAVE wells (the shape at its pitch and level, and a faint copy
     per unison voice, each placed and tinted by its detune and pan) and the
-    envelopes' AMP wells (the envelope's shape at OUTPUT's level, and a dot per
+    envelopes' AMP wells (the envelope's shape, filling the well, and a dot per
     sounding note riding it), and the effects' wells (the delay's repeats and
     the reverb's ring).
 
@@ -124,10 +125,14 @@ struct Synth2VisualModel
         level 0..1 bottom to top): a wait at silence over DELAY, a rise over
         ATTACK, a stretch at the top over HOLD, a fall over DECAY to the
         SUSTAIN level, a stretch there while the key is down, and a fall to
-        silence over RELEASE. Each stage's width follows its dial's position
+        silence over RELEASE. Each stage's length follows its dial's position
         (the dial's own, skewed, 0..1), so a turn of the dial visibly
-        stretches it; the times themselves are in the readout. The top sits
-        at OUTPUT's level on a -24..+6 dB scale. */
+        stretches it; the times themselves are in the readout.
+
+        The envelope fills the well, whatever its size: the stages are
+        scaled to span its whole width (see naturalWidth), and the top is
+        the top of the well (OUTPUT's level is in the readout), so the shape
+        looks the same in a small well as in a tall one. */
     struct Envelope
     {
         float delayEnd   = 0.0f;   // x where the rise starts
@@ -136,7 +141,7 @@ struct Synth2VisualModel
         float decayEnd   = 0.0f;   // x where it reaches the sustain level
         float sustainEnd = 0.0f;   // x where the release starts
         float releaseEnd = 0.0f;   // x where it reaches silence
-        float peak       = 0.0f;   // the top's height
+        float peak       = 1.0f;   // the top's height: the top of the well
         float sustain    = 0.0f;   // the sustain level's height
     };
 
@@ -151,36 +156,51 @@ struct Synth2VisualModel
         float release = 0.0f;
     };
 
-    static constexpr float minDb = -24.0f;
-    static constexpr float maxDb = 6.0f;
-
-    /** How high a level in dB sits on the AMP well's scale (0 = -24 dB, 1 = +6 dB). */
-    static float heightForDb (float db) noexcept { return clamp01 ((db - minDb) / (maxDb - minDb)); }
-
     /** The corners of the AMP well's envelope that can be dragged: each
         stretches its stage sideways, and DECAY's corner also sets SUSTAIN
         up and down. */
     enum class Handle { delay, attack, hold, decay, release };
     static constexpr int numHandles = 5;
 
-    /** How much of the well's width each handle's stage takes, from its
-        dial at 0 to its dial at 1. */
+    /** How long each handle's stage grows, from its dial at 0 to its dial
+        at 1, in the units the stages are laid out in before they are scaled
+        to fit the well (see naturalWidth). */
     static constexpr std::array<float, numHandles> handleSpans { 0.10f, 0.17f, 0.08f, 0.15f, 0.20f };
 
-    static Envelope envelope (const EnvelopeDials& dials, float outputDb) noexcept
+    // The least a ramp takes (so a time of 0 still slopes), and the sustain
+    // stretch, in the same units.
+    static constexpr float minRamp      = 0.03f;
+    static constexpr float sustainWidth = 0.14f;
+
+    /** How long the whole envelope is laid out, before it is scaled to fit
+        the well: the stretch `envelope` fits to the well's width. */
+    static float naturalWidth (const EnvelopeDials& dials) noexcept
     {
-        const auto span = [] (Handle h) { return handleSpans[(size_t) h]; };
+        float width = 3.0f * minRamp + sustainWidth;
+        const std::array<float, numHandles> dial { dials.delay, dials.attack, dials.hold, dials.decay, dials.release };
+        for (size_t h = 0; h < handleSpans.size(); ++h)
+            width += handleSpans[h] * clamp01 (dial[h]);
+        return width;
+    }
+
+    /** The envelope for `dials`, `fullWidth` of its natural length spanning
+        the well (by default its own, so it fills the well exactly). */
+    static Envelope envelope (const EnvelopeDials& dials, float fullWidth) noexcept
+    {
+        const auto span  = [] (Handle h) { return handleSpans[(size_t) h]; };
+        const float to01 = 1.0f / std::max (fullWidth, 1.0e-6f);
         Envelope e;
-        e.delayEnd   = span (Handle::delay) * clamp01 (dials.delay);
-        e.attackEnd  = e.delayEnd + 0.03f + span (Handle::attack) * clamp01 (dials.attack);
-        e.holdEnd    = e.attackEnd + span (Handle::hold) * clamp01 (dials.hold);
-        e.decayEnd   = e.holdEnd + 0.03f + span (Handle::decay) * clamp01 (dials.decay);
-        e.sustainEnd = e.decayEnd + 0.14f;
-        e.releaseEnd = e.sustainEnd + 0.03f + span (Handle::release) * clamp01 (dials.release);
-        e.peak       = heightForDb (outputDb);
+        e.delayEnd   = to01 * span (Handle::delay) * clamp01 (dials.delay);
+        e.attackEnd  = e.delayEnd + to01 * (minRamp + span (Handle::attack) * clamp01 (dials.attack));
+        e.holdEnd    = e.attackEnd + to01 * span (Handle::hold) * clamp01 (dials.hold);
+        e.decayEnd   = e.holdEnd + to01 * (minRamp + span (Handle::decay) * clamp01 (dials.decay));
+        e.sustainEnd = e.decayEnd + to01 * sustainWidth;
+        e.releaseEnd = e.sustainEnd + to01 * (minRamp + span (Handle::release) * clamp01 (dials.release));
         e.sustain    = e.peak * clamp01 (dials.sustain);
         return e;
     }
+
+    static Envelope envelope (const EnvelopeDials& dials) noexcept { return envelope (dials, naturalWidth (dials)); }
 
     /** Where a sounding note's dot rides the envelope: x across the well,
         y its height (both 0..1). It walks each stage's stretch as far as the
@@ -249,21 +269,49 @@ struct Synth2VisualModel
         return best;
     }
 
-    /** A time dial's position after its handle moved `dx` of the well's
-        width: the handle stays under the pointer, as only the stages after
-        it move. */
-    static float dragDial (float startDial, float dx, Handle h) noexcept
+    /** The time dial handle `h` moves. */
+    static float& dialOf (EnvelopeDials& dials, Handle h) noexcept
     {
-        return clamp01 (startDial + dx / handleSpans[(size_t) h]);
+        switch (h)
+        {
+            case Handle::delay:   return dials.delay;
+            case Handle::attack:  return dials.attack;
+            case Handle::hold:    return dials.hold;
+            case Handle::decay:   return dials.decay;
+            case Handle::release: break;
+        }
+        return dials.release;
+    }
+
+    /** The dial that puts handle `h`'s corner at `x` (0..1 across the well)
+        in the envelope fitted to the well, the other dials as in `dials`:
+        so a dragged corner follows the pointer, the stages after it making
+        room. Not for RELEASE, whose corner is always the right edge (see
+        dragDial). */
+    static float dialAt (const EnvelopeDials& dials, Handle h, float x) noexcept
+    {
+        auto at0 = dials;
+        const float current = std::exchange (dialOf (at0, h), 0.0f);
+        const float before  = handlePosition (envelope (at0, 1.0f), h).x;   // up to the corner, with the dial at 0
+        const float after   = naturalWidth (at0) - before;                  // from the corner on
+        if (after <= 0.0f)
+            return current;
+        const float to      = std::clamp (x, 0.0f, 0.999f);
+        return clamp01 ((to * after / (1.0f - to) - before) / handleSpans[(size_t) h]);
+    }
+
+    /** A time dial's position after its handle moved `dx` of the well's
+        width, with `fullWidth` of the natural length spanning the well (see
+        envelope) when the drag began. RELEASE's corner stays on the right
+        edge, so this is how it is dragged: the stages before it make room. */
+    static float dragDial (float startDial, float dx, Handle h, float fullWidth) noexcept
+    {
+        return clamp01 (startDial + dx * fullWidth / handleSpans[(size_t) h]);
     }
 
     /** The SUSTAIN level for DECAY's handle dragged to height `y` (0..1 up
-        the well). With OUTPUT at the bottom of the scale the top has no
-        height to measure against, so SUSTAIN stays at `current`. */
-    static float sustainAt (const Envelope& e, float y, float current) noexcept
-    {
-        return e.peak > 0.0f ? clamp01 (y / e.peak) : current;
-    }
+        the well). */
+    static float sustainAt (const Envelope& e, float y) noexcept { return clamp01 (y / e.peak); }
 
     // ---- EFFECTS -----------------------------------------------------------
 
