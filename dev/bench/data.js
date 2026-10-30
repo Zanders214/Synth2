@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793371260474,
+  "lastUpdate": 1793373322122,
   "repoUrl": "https://github.com/Zanders214/Synth2",
   "entries": {
     "ZandersSynth2 DSP": [
@@ -1151,6 +1151,80 @@ window.BENCHMARK_DATA = {
           {
             "name": "DSP load 16x16 4-osc + effects @48k/512",
             "value": 18.443,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "152227414+Zanders214@users.noreply.github.com",
+            "name": "Dennis Zanders",
+            "username": "Zanders214"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6eeef3ea6a9aa204e7ded0304909484e755dce5f",
+          "message": "Merge pull request #18 from Zanders214/claude/effects-rack\n\nLay the EFFECTS tab out like the bench: add, move, remove and reorder effects",
+          "timestamp": "2026-10-30T16:12:47+01:00",
+          "tree_id": "1ef8f9ca173ab6e82d376c27722b64f79f47fc11",
+          "url": "https://github.com/Zanders214/Synth2/commit/6eeef3ea6a9aa204e7ded0304909484e755dce5f"
+        },
+        "date": 1793373321338,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "processBlock 8x7",
+            "value": 104702.463,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 8x7 @48k/512",
+            "value": 0.982,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16",
+            "value": 404686.059,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 @48k/512",
+            "value": 3.794,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 2-osc",
+            "value": 829318.039,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 2-osc @48k/512",
+            "value": 7.775,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 4-osc",
+            "value": 1584743.778,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 4-osc @48k/512",
+            "value": 14.857,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 4-osc + effects",
+            "value": 1807702.394,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 4-osc + effects @48k/512",
+            "value": 16.947,
             "unit": "%"
           }
         ]
