@@ -1017,6 +1017,73 @@ void testEditor()
     const float aspect = (float) editor->getWidth() / (float) editor->getHeight();
     check (approx (aspect, 1040.0f / 916.0f, 0.02f), "resizing keeps the design's proportions");
 }
+void testBypass()
+{
+    std::printf ("Bypass:\n");
+
+    Synth2AudioProcessor p;
+    p.prepareToPlay (48000.0, 512);
+    bool allOn = true;
+    for (size_t k = 0; k < std::size (ParamID::oscillators); ++k)
+        for (const auto* id : { ParamID::oscillators[k].active, ParamID::envelopes[k].active })
+            allOn = allOn && p.getState().getParameter (id) != nullptr && param (p, id) >= 0.5f;
+    check (allOn, "every oscillator and envelope has a power switch, on to start with");
+
+    // ENV 1 shapes OSC 1 with a slow attack; switched off, OSC 1 plays at once.
+    fillBench (p);
+    setParam (p, ParamID::attack, 3.0f);
+    setParam (p, ParamID::release, 2.0f);
+    check (holdAndMeasure (p) < 0.01f && approx ((float) p.getTailLengthSeconds(), 2.0f, 0.01f),
+           "ENV 1's slow ATTACK fades OSC 1 in, and its RELEASE is the tail");
+    releaseAll (p);
+    setParam (p, ParamID::env1Active, 0.0f);
+    check (p.currentSettings().oscillators[0].envelope == -1 && holdAndMeasure (p) > 0.02f,
+           "ENV 1 switched off: OSC 1 plays unshaped, at once");
+    check (approx ((float) p.getTailLengthSeconds(), Synth2Engine::gateReleaseSeconds, 1e-4f), "and the tail is the short gate");
+    releaseAll (p);
+    setParam (p, ParamID::env1Active, 1.0f);
+    setParam (p, ParamID::attack, 0.005f);
+
+    setParam (p, ParamID::osc1Active, 0.0f);
+    check (holdAndMeasure (p) < 1e-4f, "OSC 1 switched off is silent");
+    releaseAll (p);
+    setParam (p, ParamID::osc1Active, 1.0f);
+    check (holdAndMeasure (p) > 0.02f, "and plays again switched back on");
+    releaseAll (p);
+
+    // On the bench: each module's power switch, at the left of its header.
+    std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
+    auto* editor = dynamic_cast<Synth2AudioProcessorEditor*> (base.get());
+    if (editor == nullptr)
+        return;
+    auto& osc1 = editor->getBench().getOscillator (0);
+    auto& env1 = editor->getBench().getEnvelope (0);
+    check (pumpUntil ([&] { return osc1.getAlpha() >= 1.0f && env1.getAlpha() >= 1.0f; }) && ! osc1.isDimmed() && ! env1.isDimmed(),
+           "OSC 1 and ENV 1 are on the bench, both on");
+    check (osc1.getPower().getBounds().getRight() < 40 && osc1.headerBounds().contains (osc1.getPower().getBounds().toFloat()),
+           "the power switch sits at the left of the header");
+
+    osc1.getPower().triggerClick();
+    check (pumpUntil ([&] { return param (p, ParamID::osc1Active) < 0.5f; }) && osc1.isDimmed() && osc1.isVisible(),
+           "clicking OSC 1's power switches it off, greyed out but still on the bench");
+    check (osc1.getDial (0).getAlpha() < 0.5f && osc1.getPower().getAlpha() >= 1.0f
+               && osc1.getDial (0).getTooltip().startsWith ("Switched off"),
+           "its insides grey out, saying why, but not the switch");
+    check (holdAndMeasure (p) < 1e-4f, "and it is silent");
+    releaseAll (p);
+    snapshot (render (*editor), "14-switched-off");
+    setParam (p, ParamID::osc1Active, 1.0f);
+    check (pumpUntil ([&] { return ! osc1.isDimmed() && osc1.getDial (0).getAlpha() >= 1.0f; }),
+           "a host switching it back on lights it again");
+
+    env1.getPower().triggerClick();
+    check (pumpUntil ([&] { return param (p, ParamID::env1Active) < 0.5f; }) && env1.isDimmed() && ! osc1.isDimmed(),
+           "clicking ENV 1's power switches it off, leaving OSC 1 lit");
+    check (env1.getDial (0).getTooltip().contains ("no envelope"), "saying OSC 1 plays as if it had no envelope");
+    env1.getPower().triggerClick();
+    check (pumpUntil ([&] { return param (p, ParamID::env1Active) >= 0.5f; }) && ! env1.isDimmed(), "and back on");
+}
+
 // Drags `card` by its header sideways by `dx`.
 void dragCard (EffectCard& card, float dx)
 {
@@ -1314,6 +1381,7 @@ int main()
     testStateRoundTrip();
     testPresets();
     testEditor();
+    testBypass();
     testEffectsTab();
 
     std::printf ("\n%s\n", failures == 0 ? "ALL TESTS PASSED" : "SOME TESTS FAILED");

@@ -517,6 +517,31 @@ void testModules()
     unrouted.oscillators[2].routed = true;
     check (approx (levelOf (unrouted), one, one * 0.02f), "an oscillator not routed to the output is silent");
 
+    // Switched off (bypassed), an oscillator stays on the bench but is silent.
+    auto bypassed = four;
+    for (auto& oscillator : bypassed.oscillators)
+        oscillator.active = false;
+    bypassed.oscillators[2].active = true;
+    check (approx (levelOf (bypassed), one, one * 0.02f), "an oscillator switched off is silent");
+    {
+        // Switching it off mid-note fades it out over 20 ms, without a click.
+        auto engine = makeEngine (settings);
+        auto out = run (*engine, blockSize * 4, { { 0, on (60) } });
+        auto off = settings;
+        off.oscillators[0].active = false;
+        engine->setSettings (off);
+        const auto after = run (*engine, blockSize * 4);
+        float largestStep = std::abs (after.getSample (0, 0) - out.getSample (0, out.getNumSamples() - 1));
+        for (int i = 1; i < after.getNumSamples(); ++i)
+            largestStep = juce::jmax (largestStep, std::abs (after.getSample (0, i) - after.getSample (0, i - 1)));
+        const int faded = (int) (0.03 * sampleRate);
+        check (rms (after, 0, faded, after.getNumSamples()) < 1e-6f && largestStep < 0.05f,
+               "switching it off mid-note fades it out without a click");
+        engine->setSettings (settings);
+        check (rms (run (*engine, blockSize * 4), 0, blockSize * 2, blockSize * 4) > 0.5f * one,
+               "and switching it back on brings the held note back");
+    }
+
     // No envelope: the note opens in a few milliseconds and stops soon after
     // the key goes up, whatever the envelopes say.
     auto gate = settings;

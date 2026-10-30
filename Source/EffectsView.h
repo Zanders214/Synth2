@@ -278,8 +278,8 @@ private:
 };
 
 /**
-    EffectCard — one effect on the EFFECTS tab: its place in the chain and
-    name in the header with its ON switch, its well, a row of dials and any
+    EffectCard — one effect on the EFFECTS tab: its power switch, its place
+    in the chain and its name in the header, its well, a row of dials and any
     switches of its own. Off, everything but the switch greys out. Drag the
     header sideways to move the card to the other place in the chain.
 */
@@ -289,7 +289,7 @@ public:
     EffectCard (const juce::String& cardTitle, const char* onParam, juce::Colour cardColour, Synth2LookAndFeel& looksToUse,
                 juce::AudioProcessorValueTreeState& stateToUse)
         : title (cardTitle), colour (cardColour), looks (looksToUse), state (stateToUse),
-          power ("ON", cardColour, stateToUse, onParam)
+          power (cardColour, stateToUse, onParam)
     {
         addAndMakeVisible (power);
         power.onClick = [this] { showPower(); };
@@ -307,7 +307,6 @@ public:
     void setUiScale (float newScale)
     {
         uiScale = newScale;
-        power.setUiScale (newScale);
         resized();
         repaint();
     }
@@ -316,7 +315,7 @@ public:
     int  getPlace() const noexcept { return place; }
     const juce::String& getTitle() const noexcept { return title; }
     juce::Colour getColour() const noexcept { return colour; }
-    PillToggle& getPower() noexcept { return power; }
+    PowerSwitch& getPower() noexcept { return power; }
     bool isBeingDragged() const noexcept { return dragging; }
 
     juce::Slider& getDial (int index) { return dials[(size_t) index]->slider; }
@@ -338,16 +337,16 @@ public:
         g.setColour (dragging ? Palette::accent.withAlpha (0.6f) : Palette::strongLine);
         g.drawRoundedRectangle (card, radius, juce::jmax (1.0f, s));
 
-        // Header: its place in the chain in a ring, then its name.
+        // Header: the power switch, its place in the chain in a ring, then its name.
         const auto header = headerBounds();
-        const auto ring   = juce::Rectangle<float> (18.0f * s, 18.0f * s).withCentre ({ header.getX() + 21.0f * s, header.getCentreY() });
+        const auto ring   = juce::Rectangle<float> (18.0f * s, 18.0f * s).withCentre ({ header.getX() + 47.0f * s, header.getCentreY() });
         g.setColour (colour.withAlpha (on() ? 0.9f : 0.4f));
         g.drawEllipse (ring, juce::jmax (1.0f, 1.4f * s));
         g.setFont (Fonts::mono (10.0f * s));
         g.drawText (juce::String (place), ring, juce::Justification::centred, false);
         g.setFont (Fonts::sans (11.0f * s, true, 0.18f));
         g.setColour (Palette::textStrong);
-        g.drawText (title, header.withTrimmedLeft (38.0f * s), juce::Justification::centredLeft, false);
+        g.drawText (title, header.withTrimmedLeft (64.0f * s), juce::Justification::centredLeft, false);
 
         // A grip, saying the card can be dragged.
         g.setColour (Palette::textFaint);
@@ -372,8 +371,7 @@ public:
         const auto px = [s] (float v) { return juce::roundToInt (v * s); };
 
         const auto header = getLocalBounds().removeFromTop (px (30.0f));
-        power.setBounds (header.withTrimmedLeft (header.getWidth() - px (64.0f)).withTrimmedRight (px (10.0f))
-                               .withSizeKeepingCentre (px (54.0f), px (20.0f)));
+        power.setBounds (header.getX() + px (12.0f), header.getY() + px (6.0f), px (18.0f), px (18.0f));
 
         auto area = getLocalBounds().withTrimmedTop (px (30.0f)).reduced (px (12.0f), 0);
         area.removeFromTop (px (10.0f));
@@ -488,7 +486,7 @@ private:
     juce::Colour colour;
     Synth2LookAndFeel& looks;
     juce::AudioProcessorValueTreeState& state;
-    PillToggle power;
+    PowerSwitch power;
     std::vector<std::unique_ptr<Dial>> dials;
     std::function<void (int)> droppedHandler;
     juce::Point<int> dragStart;

@@ -25,7 +25,14 @@ and a tray offers what can go there:
 The module lands where you clicked. Drag a module by its header to move it anywhere
 on the bench; drop it on another and it slides off to the nearest free spot, so
 modules never stack. The cross in its header takes it off the bench (its settings are
-kept for when it comes back). What is on the bench, where, and any cables are saved
+kept for when it comes back).
+
+The **power switch** at the left of every module's header bypasses it without taking
+it off the bench: the module greys out and keeps its place, its cables and its
+settings. An oscillator switched off falls silent (fading out over 20 ms, so held
+notes don't click); an envelope switched off lets its oscillator through unshaped,
+starting and stopping with the key as if it had no envelope. The switches are
+automatable, so a DAW can bring a layer in and out during a song. What is on the bench, where, and any cables are saved
 with your set. A set saved before the bench existed opens with OSC 1 (and OSC 2, if it
 was on) along the top and an envelope under each, sounding as it did: the unison stack
 and the envelope they used to share are copied into each. A set from the first bench,
@@ -42,8 +49,8 @@ chain read left to right: by default the delay, then the reverb. Drag a card by 
 header past the middle to swap the order (a reverb into a delay smears each repeat;
 a delay into a reverb sends the repeats into the room).
 
-Each effect has its own **ON** switch (both start off, so older sets sound as they
-did) and a **MIX**: up to the middle the dry sound stays at full level and the effect
+Each effect has the same power switch at the left of its header (both start off, so
+older sets sound as they did) and a **MIX**: up to the middle the dry sound stays at full level and the effect
 is added underneath; from there the dry sound fades out until only the effect is left.
 Switching an effect on or off fades it over 20 ms; once it is off it costs nothing,
 and switching it back on starts clean.
