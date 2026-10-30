@@ -1054,7 +1054,8 @@ void testEffectsTab()
     auto& delay  = effects.getDelay();
     auto& reverb = effects.getReverb();
     check (delay.getPlace() == 1 && reverb.getPlace() == 2 && delay.getX() < reverb.getX(), "the delay comes first, then the reverb");
-    check (delay.getNumDials() == 5 && reverb.getNumDials() == 4, "TIME (or its note), FEEDBACK, TONE and MIX; SIZE, DAMPING, WIDTH and MIX");
+    check (delay.getNumDials() == 5 && reverb.getNumDials() == 5,
+           "TIME (or its note), FEEDBACK, TONE and MIX; SIZE, PRE-DELAY, DAMPING, WIDTH and MIX");
     check (delay.getDial (0).getAlpha() < 0.5f && reverb.getDial (0).getAlpha() < 0.5f, "both off, so both greyed out");
     snapshot (render (*editor), "11-effects-off");
 

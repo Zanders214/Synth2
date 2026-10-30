@@ -54,15 +54,25 @@ and switching it back on starts clean.
 | **Feedback**  | How loud each repeat comes back against the one before, 0 to 95%.    |
 | **Tone**      | How bright the repeats stay: each one passes a lowpass from 1 kHz (low) up to 18 kHz (high), so they darken as they fade. |
 | **Ping-Pong** | The repeats bounce from left to right.                               |
-| **Size**      | How big the reverb's room is, and so how long it rings.              |
+| **Size**      | How long the reverb rings before it falls 60 dB: 0.3 s for a small room, about 2 s in the middle, 12 s for a hall. The dial reads the time. |
+| **Pre-Delay** | How long the room waits before it starts, 0 to 250 ms, so each note's attack stays clear of it. |
 | **Damping**   | How quickly the room's highs die away.                               |
 | **Width**     | How wide the room spreads: 0% is the same on both sides.             |
+
+Like tape, each repeat of the delay also loses its deepest lows (so they don't pile up
+into mud), rounds off gently when driven hard, and wavers very slightly in pitch, so
+the repeats sit behind the sound rather than copying it.
 
 The DELAY card's well shows the dry sound and each repeat where it falls across two
 seconds, the left side above the line and the right below; the REVERB card's shows the
 room ringing away over six seconds, and how long it rings to -60 dB. Your DAW is told
-how long the effects ring on after the notes stop, so a bounce isn't cut short. The
-reverb is JUCE's Freeverb.
+how long the effects ring on after the notes stop, so a bounce isn't cut short.
+
+The reverb is a feedback delay network rather than the classic Freeverb, whose few
+comb filters ring metallic on held synth chords: a low cut and the pre-delay, then four
+steps of diffusion that multiply each sound into a dense cloud, then eight feedback
+lines mixed into one another, each drifting very slightly in length so no pitch rings
+out. Its tail is levelled, so a long room is longer rather than louder.
 
 ### Presets
 
@@ -240,6 +250,7 @@ Source/
   Presets.h                  the factory presets, and loading one onto the bench
   Synth2Engine.h             host-agnostic DSP core: 16 voices, up to four oscillators, MIDI, smoothing, effects, output
   Effects.h                  the delay and the reverb after the mix, in either order
+  Room.h                     the reverb's room: pre-delay, diffusion and an eight-line feedback delay network
   EffectSettings.h           the effects' settings and sums (note lengths, tails, MIX), shared with the displays
   SynthVoice.h               one note: each oscillator's unison copies, under that oscillator's envelope
   Envelope.h                 the delay / attack / hold / decay / sustain / release envelope

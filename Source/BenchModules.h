@@ -36,8 +36,10 @@ namespace BenchStyle
                 return Format::seconds (value);
         if (id == ParamID::output)
             return Format::decibels (value);
-        if (id == ParamID::delayTime)
+        if (id == ParamID::delayTime || id == ParamID::reverbPreDelay)
             return juce::String (juce::roundToInt (value)) + " ms";
+        if (id == ParamID::reverbSize)
+            return Format::seconds ((float) Effects::reverbSeconds (value));
         if (id == ParamID::delayNote)
             return Effects::divisions[(size_t) juce::jlimit (0, (int) Effects::divisions.size() - 1, juce::roundToInt (value))].name;
         return Format::percent (value);   // the levels, WIDTH, SUSTAIN and the effects' amounts

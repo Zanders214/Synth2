@@ -181,22 +181,24 @@ private:
 /** What the REVERB well shows. */
 struct ReverbDisplayState
 {
-    float size    = 0.0f;
-    float damping = 0.0f;
-    float width   = 0.0f;
-    float mix     = 0.0f;
+    float size       = 0.0f;
+    float damping    = 0.0f;
+    float width      = 0.0f;
+    float mix        = 0.0f;
+    float preDelayMs = 0.0f;
 
     bool operator== (const ReverbDisplayState& other) const noexcept
     {
         return juce::exactlyEqual (size, other.size) && juce::exactlyEqual (damping, other.damping)
-            && juce::exactlyEqual (width, other.width) && juce::exactlyEqual (mix, other.mix);
+            && juce::exactlyEqual (width, other.width) && juce::exactlyEqual (mix, other.mix)
+            && juce::exactlyEqual (preDelayMs, other.preDelayMs);
     }
     bool operator!= (const ReverbDisplayState& other) const noexcept { return ! (*this == other); }
 };
 
-/** The REVERB well: the dry sound, then the room ringing away across six
-    seconds (on a 60 dB scale), the left side above the line and the right
-    below. The wider the room, the more the two sides differ; the more
+/** The REVERB well: the dry sound, then (after PRE-DELAY) the room ringing
+    away across six seconds (on a 60 dB scale), the left side above the line
+    and the right below. The wider the room, the more the two sides differ; the more
     DAMPING, the sooner it dulls (see Synth2VisualModel::roomHeight). */
 class RoomDisplay final : public DisplayWell
 {
@@ -244,9 +246,9 @@ public:
         for (int i = 1; i < columns; ++i)
         {
             const float x      = (float) i / (float) columns;
-            const float height = Synth2VisualModel::roomHeight (reverb.size, reverb.mix, x);
+            const float height = Synth2VisualModel::roomHeight (reverb.size, reverb.mix, x, reverb.preDelayMs);
             if (height <= 0.0f)
-                break;
+                continue;
             const float bright = Synth2VisualModel::roomBrightness (reverb.size, reverb.damping, x);
             const auto  tint   = ColourMath::lerp (Palette::textDim, colour, 0.3f + 0.7f * bright);
             const float left   = height * (1.0f - 0.45f * reverb.width * grain (2 * i));
@@ -570,7 +572,8 @@ private:
     PillToggle  pingPong;
 };
 
-/** The REVERB card: the room in the well over SIZE, DAMPING, WIDTH and MIX. */
+/** The REVERB card: the room in the well over SIZE (how long it rings),
+    PRE-DELAY, DAMPING, WIDTH and MIX. */
 class ReverbCard final : public EffectCard
 {
 public:
@@ -579,17 +582,18 @@ public:
     {
         addAndMakeVisible (display);
         display.setColour (Synth2::Palette::violet);
-        addDial (ParamID::reverbSize,    "SIZE",    BenchStyle::dialColour (0.0f),  0);
-        addDial (ParamID::reverbDamping, "DAMPING", BenchStyle::dialColour (0.33f), 1);
-        addDial (ParamID::reverbWidth,   "WIDTH",   BenchStyle::dialColour (0.66f), 2);
-        addDial (ParamID::reverbMix,     "MIX",     BenchStyle::dialColour (1.0f),  3);
+        addDial (ParamID::reverbSize,     "SIZE",      BenchStyle::dialColour (0.0f),  0);
+        addDial (ParamID::reverbPreDelay, "PRE-DELAY", BenchStyle::dialColour (0.25f), 1);
+        addDial (ParamID::reverbDamping,  "DAMPING",   BenchStyle::dialColour (0.5f),  2);
+        addDial (ParamID::reverbWidth,    "WIDTH",     BenchStyle::dialColour (0.75f), 3);
+        addDial (ParamID::reverbMix,      "MIX",       BenchStyle::dialColour (1.0f),  4);
     }
 
     RoomDisplay& getDisplay() noexcept { return display; }
 
     void refresh (const Effects::ReverbSettings& reverb)
     {
-        display.setReverbState ({ reverb.size, reverb.damping, reverb.width, reverb.mix });
+        display.setReverbState ({ reverb.size, reverb.damping, reverb.width, reverb.mix, reverb.preDelayMs });
     }
 
     void setUiScale (float newScale)

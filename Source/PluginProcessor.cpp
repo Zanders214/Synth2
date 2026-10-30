@@ -175,10 +175,21 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::delayPingPong, 6 }, "Delay Ping-Pong", effects.delay.pingPong));
 
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::reverbOn, 6 }, "Reverb On", effects.reverb.on));
-    percent (ParamID::reverbSize,    "Reverb Size",    1.0f, effects.reverb.size);
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { ParamID::reverbSize, 6 }, "Reverb Size", NormalisableRange<float> (0.0f, 1.0f), effects.reverb.size,
+        AudioParameterFloatAttributes().withStringFromValueFunction ([timeFromValue] (float value, int maximumLength)
+        {
+            return timeFromValue ((float) Effects::reverbSeconds (value), maximumLength);
+        })));
     percent (ParamID::reverbDamping, "Reverb Damping", 1.0f, effects.reverb.damping);
     percent (ParamID::reverbWidth,   "Reverb Width",   1.0f, effects.reverb.width);
     percent (ParamID::reverbMix,     "Reverb Mix",     1.0f, effects.reverb.mix);
+    NormalisableRange<float> preDelayRange (0.0f, Effects::maxPreDelayMs, 1.0f);
+    preDelayRange.setSkewForCentre (40.0f);
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { ParamID::reverbPreDelay, 6 }, "Reverb Pre-Delay", preDelayRange, effects.reverb.preDelayMs,
+        AudioParameterFloatAttributes().withLabel ("ms")
+            .withStringFromValueFunction ([] (float value, int) { return String (roundToInt (value)) + " ms"; })));
 
     layout.add (std::make_unique<AudioParameterChoice> (
         ParameterID { ParamID::effectsOrder, 6 }, "Effects Order", StringArray { "Delay, then reverb", "Reverb, then delay" },
@@ -254,6 +265,7 @@ Synth2Engine::Settings Synth2AudioProcessor::currentSettings() const noexcept
     reverb.damping = param (ParamID::reverbDamping);
     reverb.width   = param (ParamID::reverbWidth);
     reverb.mix     = param (ParamID::reverbMix);
+    reverb.preDelayMs = param (ParamID::reverbPreDelay);
 
     settings.effects.reverbFirst = param (ParamID::effectsOrder) >= 0.5f;
     settings.effects.bpm         = hostBpm.load (std::memory_order_relaxed);

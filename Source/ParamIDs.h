@@ -123,6 +123,7 @@ namespace ParamID
     inline constexpr const char* reverbDamping = "reverbDamping";
     inline constexpr const char* reverbWidth   = "reverbWidth";
     inline constexpr const char* reverbMix     = "reverbMix";
+    inline constexpr const char* reverbPreDelay = "reverbPreDelay";
     inline constexpr const char* effectsOrder  = "effectsOrder";   // 0: delay first, 1: reverb first
 
     // Retired with the first bench's shared unison and envelope modules; only

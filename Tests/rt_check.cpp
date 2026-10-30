@@ -122,6 +122,8 @@ int main()
             set (ParamID::delayFeedback, 0.95f);
             set (ParamID::delayPingPong, (float) ((b / 48) % 2));
             set (ParamID::reverbSize,    0.2f * (float) ((b / 24) % 6));
+            set (ParamID::reverbPreDelay, 40.0f * (float) ((b / 24) % 7));
+            set (ParamID::reverbDamping, 0.25f * (float) ((b / 24) % 5));
             set (ParamID::effectsOrder,  (float) ((b / 72) % 2));
         }
 

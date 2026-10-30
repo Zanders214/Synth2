@@ -58,12 +58,15 @@ namespace Effects
 
     struct ReverbSettings
     {
-        bool  on      = false;
-        float size    = 0.5f;
-        float damping = 0.4f;
-        float width   = 1.0f;
-        float mix     = 0.25f;
+        bool  on         = false;
+        float size       = 0.5f;
+        float damping    = 0.4f;
+        float width      = 1.0f;
+        float mix        = 0.25f;
+        float preDelayMs = 20.0f;
     };
+
+    inline constexpr float maxPreDelayMs = 250.0f;
 
     struct Settings
     {
@@ -82,18 +85,16 @@ namespace Effects
         return std::clamp (division.beats * 60.0 / std::clamp (bpm, 20.0, 999.0), 0.001, maxSeconds);
     }
 
-    /** How long the reverb rings, near enough, before it falls 60 dB: how
-        many trips round Freeverb's longest comb that takes at its feedback. */
+    /** How long the reverb rings before it falls 60 dB, from SIZE: 0.3 s
+        for the smallest room, about 2 s in the middle, 12 s for the largest. */
     inline double reverbSeconds (float size) noexcept
     {
-        constexpr double combSeconds = 1617.0 / 44100.0;
-        const double feedback = 0.7 + 0.28 * std::clamp ((double) size, 0.0, 1.0);
-        return combSeconds * std::log (0.001) / std::log (feedback);
+        return 0.3 * std::pow (40.0, std::clamp ((double) size, 0.0, 1.0));
     }
 
     /** How long the effects ring on after the notes stop: the delay's
         repeats until they fall 60 dB (at most half a minute) and the
-        reverb's ring, one after the other. */
+        reverb's wait and ring, one after the other. */
     inline double tailSeconds (const Settings& settings) noexcept
     {
         double tail = 0.0;
@@ -104,7 +105,8 @@ namespace Effects
             tail += std::min (30.0, delaySeconds (settings.delay, settings.bpm) * (1.0 + repeats));
         }
         if (settings.reverb.on)
-            tail += reverbSeconds (settings.reverb.size);
+            tail += std::clamp ((double) settings.reverb.preDelayMs, 0.0, (double) maxPreDelayMs) / 1000.0
+                  + reverbSeconds (settings.reverb.size);
         return tail;
     }
 

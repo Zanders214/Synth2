@@ -373,6 +373,10 @@ void testEffects()
     check (approx (VM::roomHeight (0.5f, 1.0f, 0.0f), 0.0f, 1e-6f) && VM::roomHeight (0.5f, 1.0f, 0.01f) > 0.5f, "it swells in quickly");
     check (VM::roomHeight (0.0f, 1.0f, 0.5f) <= 0.0f, "and the smallest room is gone within three seconds");
     check (VM::roomBrightness (0.5f, 1.0f, 0.1f) < VM::roomBrightness (0.5f, 0.0f, 0.1f), "DAMPING dulls it sooner");
+    check (approx (VM::roomHeight (0.5f, 1.0f, 0.01f, 100.0f), 0.0f, 1e-6f) && VM::roomHeight (0.5f, 1.0f, 0.03f, 100.0f) > 0.5f,
+           "PRE-DELAY holds the room back, then it swells in");
+    check (std::abs (Effects::reverbSeconds (0.5f) - 1.897) < 0.01 && std::abs (Effects::reverbSeconds (1.0f) - 12.0) < 1e-6,
+           "SIZE rings about 2 s in the middle, 12 s at the top");
 
     Effects::DelaySettings synced;
     synced.sync     = true;

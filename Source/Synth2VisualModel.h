@@ -257,11 +257,14 @@ struct Synth2VisualModel
     static constexpr float roomSpanSeconds = 6.0f;   // the REVERB well's width
 
     /** How high the REVERB well's room stands at x (0..1 across its six
-        seconds), on a 60 dB scale: it swells in over its first 40 ms, then
-        falls away in a straight line (in dB) over its ring, scaled by MIX. */
-    static float roomHeight (float size, float mix, float x) noexcept
+        seconds), on a 60 dB scale: silent through PRE-DELAY, it swells in
+        over 40 ms, then falls away in a straight line (in dB) over its ring,
+        scaled by MIX. */
+    static float roomHeight (float size, float mix, float x, float preDelayMs = 0.0f) noexcept
     {
-        const double seconds = (double) clamp01 (x) * (double) roomSpanSeconds;
+        const double seconds = (double) clamp01 (x) * (double) roomSpanSeconds - (double) std::max (0.0f, preDelayMs) / 1000.0;
+        if (seconds <= 0.0)
+            return 0.0f;
         const double ring    = Effects::reverbSeconds (size);
         const double swell   = std::min (1.0, seconds / 0.04);
         return (float) (swell * std::max (0.0, 1.0 - seconds / ring)) * Effects::wetGain (mix);
