@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793376886549,
+  "lastUpdate": 1793381017142,
   "repoUrl": "https://github.com/Zanders214/Synth2",
   "entries": {
     "ZandersSynth2 DSP": [
@@ -1373,6 +1373,80 @@ window.BENCHMARK_DATA = {
           {
             "name": "DSP load 16x16 4-osc + effects @48k/512",
             "value": 16.685,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "152227414+Zanders214@users.noreply.github.com",
+            "name": "Dennis Zanders",
+            "username": "Zanders214"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a2380b0b5552e2ed91b8502aa0bac098f83958b1",
+          "message": "Merge pull request #21 from Zanders214/claude/envelope-fill\n\nFit the AMP envelope to its graph so it looks the same at every size",
+          "timestamp": "2026-10-30T18:20:55+01:00",
+          "tree_id": "4db36784f9be91ab08c4819f1ed4eed4984a0f82",
+          "url": "https://github.com/Zanders214/Synth2/commit/a2380b0b5552e2ed91b8502aa0bac098f83958b1"
+        },
+        "date": 1793381016271,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "processBlock 8x7",
+            "value": 99956.526,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 8x7 @48k/512",
+            "value": 0.937,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16",
+            "value": 393625.99,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 @48k/512",
+            "value": 3.69,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 2-osc",
+            "value": 815839.325,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 2-osc @48k/512",
+            "value": 7.648,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 4-osc",
+            "value": 1585236.581,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 4-osc @48k/512",
+            "value": 14.862,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 4-osc + effects",
+            "value": 1761037.361,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 4-osc + effects @48k/512",
+            "value": 16.51,
             "unit": "%"
           }
         ]
