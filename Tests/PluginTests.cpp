@@ -1160,9 +1160,34 @@ void testViews()
            "dragging DECAY's corner down and right lowers SUSTAIN and lengthens DECAY");
     check (well.handleCentre (Handle::decay).getDistanceFrom (decayAt.translated (10.0f, 20.0f)) < 1.5f, "and it follows the pointer");
 
-    well.mouseDoubleClick (mouseAt (well, well.handleCentre (Handle::attack)));
+    // A double-click as JUCE sends it: down, up, down, up, then the double-click.
+    const auto corner = well.handleCentre (Handle::attack);
+    gestures.begun = 0;
+    gestures.ended = 0;
+    for (int click = 0; click < 2; ++click)
+    {
+        well.mouseDown (mouseAt (well, corner));
+        well.mouseUp (mouseAt (well, corner, corner));
+    }
+    well.mouseDoubleClick (mouseAt (well, corner, corner));
     check (approx (attack->getValue(), attack->getDefaultValue(), 1e-6f), "double-clicking ATTACK's corner puts it back");
+    check (gestures.begun == 3 && gestures.ended == 3, "with every gesture closed before the next begins");
+    well.mouseDown (mouseAt (well, corner));
+    well.mouseDoubleClick (mouseAt (well, corner, corner));
+    well.mouseUp (mouseAt (well, corner, corner));
+    check (gestures.begun == gestures.ended, "even if a double-click arrives while a click is still down");
     p.removeListener (&gestures);
+
+    // With OUTPUT at -24 dB the top has no height: a sideways drag of
+    // DECAY's corner changes DECAY and leaves SUSTAIN alone.
+    setParam (p, ParamID::output, -24.0f);
+    setParam (p, ParamID::env1Sustain, 0.6f);
+    check (pumpUntil ([&] { return approx (well.getAmpState().outputDb, -24.0f, 1e-3f) && approx (well.getAmpState().dials.sustain, 0.6f, 1e-4f); }),
+           "the well shows OUTPUT at the bottom");
+    const auto flatDecay = well.handleCentre (Handle::decay);
+    dragOn (well, flatDecay, flatDecay.translated (-8.0f, 0.0f));
+    check (approx (sustain->convertFrom0to1 (sustain->getValue()), 0.6f, 1e-4f), "DECAY's corner dragged then leaves SUSTAIN where it was");
+    setParam (p, ParamID::output, 0.0f);
     snapshot (render (*editor), "15-envelope-graph");
 
     // The gear menu's views.

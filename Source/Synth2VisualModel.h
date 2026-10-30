@@ -257,10 +257,12 @@ struct Synth2VisualModel
         return clamp01 (startDial + dx / handleSpans[(size_t) h]);
     }
 
-    /** The SUSTAIN level for DECAY's handle dragged to height `y` (0..1 up the well). */
-    static float sustainAt (const Envelope& e, float y) noexcept
+    /** The SUSTAIN level for DECAY's handle dragged to height `y` (0..1 up
+        the well). With OUTPUT at the bottom of the scale the top has no
+        height to measure against, so SUSTAIN stays at `current`. */
+    static float sustainAt (const Envelope& e, float y, float current) noexcept
     {
-        return e.peak > 0.0f ? clamp01 (y / e.peak) : 0.0f;
+        return e.peak > 0.0f ? clamp01 (y / e.peak) : current;
     }
 
     // ---- EFFECTS -----------------------------------------------------------

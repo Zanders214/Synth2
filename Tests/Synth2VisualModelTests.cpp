@@ -325,9 +325,12 @@ void testEnvelope()
     M::EnvelopeDials moved = none;
     moved.attack = M::dragDial (none.attack, 0.05f, Handle::attack);
     check (approx (M::envelope (moved, 0.0f).attackEnd - shortest.attackEnd, 0.05f, 1e-6f), "so the corner follows the pointer");
-    check (approx (M::sustainAt (e, 0.5f * e.peak), 0.5f, 1e-6f) && approx (M::sustainAt (e, 2.0f), 1.0f, 1e-6f)
-               && approx (M::sustainAt (e, -1.0f), 0.0f, 1e-6f),
+    check (approx (M::sustainAt (e, 0.5f * e.peak, 1.0f), 0.5f, 1e-6f) && approx (M::sustainAt (e, 2.0f, 0.5f), 1.0f, 1e-6f)
+               && approx (M::sustainAt (e, -1.0f, 0.5f), 0.0f, 1e-6f),
            "DECAY's corner dragged up and down sets SUSTAIN as a share of the top");
+    const auto flat = M::envelope (all, M::minDb);
+    check (approx (flat.peak, 0.0f, 1e-6f) && approx (M::sustainAt (flat, 0.3f, 0.7f), 0.7f, 1e-6f),
+           "with OUTPUT at the bottom of the scale (no height to measure), SUSTAIN is left where it was");
 }
 } // namespace
 

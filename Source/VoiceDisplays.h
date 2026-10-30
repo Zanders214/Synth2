@@ -384,7 +384,7 @@ public:
                 time (dials.decay);
                 const auto start = Synth2VisualModel::envelope (drag->dials, amp.outputDb);
                 const float dy   = fine * (drag->from.y - e.position.y) / height;
-                dials.sustain = Synth2VisualModel::sustainAt (start, start.sustain + dy);
+                dials.sustain = Synth2VisualModel::sustainAt (start, start.sustain + dy, drag->dials.sustain);
                 break;
             }
         }
@@ -395,18 +395,21 @@ public:
     {
         if (! drag.has_value())
             return;
-        for (auto* p : parametersFor (drag->handle))
-            p->endChangeGesture();
-        drag.reset();
+        endDrag();
         setHot (handleAt (e.position));
         repaint();
     }
 
+    // JUCE sends a double-click after the second click's mouseUp, which has
+    // already ended that click's gesture; should a drag still be open (from
+    // another event order), it is closed first, so gestures never nest.
     void mouseDoubleClick (const juce::MouseEvent& e) override
     {
         const int h = handleAt (e.position);
         if (h < 0)
             return;
+        if (drag.has_value())
+            endDrag();
         for (auto* p : parametersFor ((Handle) h))
         {
             p->beginChangeGesture();
@@ -533,6 +536,13 @@ private:
     };
 
     Synth2VisualModel::Envelope shape() const noexcept { return Synth2VisualModel::envelope (amp.dials, amp.outputDb); }
+
+    void endDrag()
+    {
+        for (auto* p : parametersFor (drag->handle))
+            p->endChangeGesture();
+        drag.reset();
+    }
 
     juce::Point<float> toPlot (float x, float y) const noexcept
     {
