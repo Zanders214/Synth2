@@ -38,9 +38,9 @@ int main()
         auto* p = proc.getState().getParameter (id);
         p->setValueNotifyingHost (p->convertTo0to1 (value));
     };
-    set (ParamID::voices, 16.0f);
-    set (ParamID::detune, 30.0f);
-    set (ParamID::width, 1.0f);
+    set (ParamID::osc1Voices, 16.0f);
+    set (ParamID::osc1Detune, 30.0f);
+    set (ParamID::osc1Width, 1.0f);
     set (ParamID::osc1On, 1.0f);   // a new instance opens on an empty bench
     set (ParamID::osc2On, 1.0f);
     set (ParamID::osc2Voices, 16.0f);
@@ -75,10 +75,10 @@ int main()
         // Settings move while notes sound, between callbacks, as the editor does.
         if (b % 12 == 0)
         {
-            set (ParamID::wave,    (float) ((b / 12) % 4));
-            set (ParamID::voices,  (float) (1 + (b / 12) % 16));
-            set (ParamID::attack,  0.001f + 0.01f * (float) ((b / 12) % 5));
-            set (ParamID::release, 0.05f + 0.1f * (float) ((b / 12) % 5));
+            set (ParamID::osc1Wave,    (float) ((b / 12) % 4));
+            set (ParamID::osc1Voices,  (float) (1 + (b / 12) % 16));
+            set (ParamID::env1Attack,  0.001f + 0.01f * (float) ((b / 12) % 5));
+            set (ParamID::env1Release, 0.05f + 0.1f * (float) ((b / 12) % 5));
             set (ParamID::env1Delay,   0.005f * (float) ((b / 12) % 3));
             set (ParamID::env1Hold,    0.01f * (float) ((b / 12 + 1) % 3));
             set (ParamID::env1Decay,   0.02f + 0.05f * (float) ((b / 12) % 4));

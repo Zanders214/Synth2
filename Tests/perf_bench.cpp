@@ -36,10 +36,10 @@ double benchChord (const char* name, int notes, int voices, ankerl::nanobench::B
     // Each oscillator in use plays the whole stack under its own envelope.
     for (int k = 0; k < 4; ++k)
     {
-        set (ParamID::oscillators[k].on, k < numOscillators ? 1.0f : 0.0f);
-        set (ParamID::oscillators[k].voices, (float) voices);
-        set (ParamID::envelopes[k].on, k < numOscillators ? 1.0f : 0.0f);
-        set (ParamID::envelopes[k].release, 10.0f);
+        set (ParamID::oscillator (k).on, k < numOscillators ? 1.0f : 0.0f);
+        set (ParamID::oscillator (k).voices, (float) voices);
+        set (ParamID::envelope (k).on, k < numOscillators ? 1.0f : 0.0f);
+        set (ParamID::envelope (k).release, 10.0f);
     }
     set (ParamID::driveInChain,  effects ? 1.0f : 0.0f);
     set (ParamID::delayInChain,  effects ? 1.0f : 0.0f);

@@ -41,12 +41,12 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
     : AudioProcessorEditor (&p),
       processorRef (p),
       model (p.getState()),
-      bench (p.getState(), looks),
-      effects (p.getState(), looks),
+      benchView (p.getState(), looks),
+      effectsView (p.getState(), looks),
       keyboard (p.getKeyboardState())
 {
-    addAndMakeVisible (bench);
-    addChildComponent (effects);
+    addAndMakeVisible (benchView);
+    addChildComponent (effectsView);
     addAndMakeVisible (keyboard);
     setWantsKeyboardFocus (playsTypedKeys());
     keyboard.setShowsTypingKeys (playsTypedKeys());
@@ -59,22 +59,22 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
     addAndMakeVisible (cables);
 
     // A click on an empty spot offers modules to add there.
-    bench.onEmptyClick ([this] (juce::Point<float> benchAt, juce::Point<int> viewAt)
+    benchView.onEmptyClick ([this] (juce::Point<float> benchAt, juce::Point<int> viewAt)
     {
-        openAddTray (benchAt, viewAt + bench.getPosition());
+        openAddTray (benchAt, viewAt + benchView.getPosition());
     });
     // And on the EFFECTS tab, offers the effects not yet in the chain.
-    effects.onEmptyClick ([this] (juce::Point<float> rackAt, juce::Point<int> viewAt)
+    effectsView.onEmptyClick ([this] (juce::Point<float> rackAt, juce::Point<int> viewAt)
     {
-        openEffectTray (rackAt, viewAt + effects.getPosition());
+        openEffectTray (rackAt, viewAt + effectsView.getPosition());
     });
 
     for (int slot = 0; slot < Bench::numOscillators; ++slot)
     {
-        auto& module = bench.getOscillator (slot);
+        auto& card = benchView.getOscillator (slot);
         auto& menu   = waveMenus[(size_t) slot];
-        auto& picker = module.getPicker();
-        auto& well   = module.getDisplay();
+        auto& picker = card.getPicker();
+        auto& well   = card.getDisplay();
 
         // Each well opens its tray of shapes under it; hovering one previews
         // it in the well, picking one sets that oscillator's shape.
@@ -95,17 +95,17 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
     }
 
     for (const auto& id : Bench::allModules)
-        bench.getModule (id).onJack ([this, id] (BenchModule::Jack which, const juce::MouseEvent& e, int phase)
+        benchView.getModule (id).onJack ([this, id] (BenchModule::Jack which, const juce::MouseEvent& e, BenchModule::JackPhase phase)
         {
             patch (id, which, e, phase);
         });
 
-    addTray.onChoose ([this] (int choice)
+    trays.add.onChoose ([this] (int choice)
     {
-        bench.add (choice == 0 ? Bench::Kind::oscillator : Bench::Kind::envelope, addAt);
+        benchView.add (choice == 0 ? Bench::Kind::oscillator : Bench::Kind::envelope, trays.addAt);
         shown.cables.clear();
     });
-    settingsTray.onChoose ([this] (int choice)
+    trays.settings.onChoose ([this] (int choice)
     {
         if (choice >= firstEnvelopeView)
         {
@@ -124,8 +124,8 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
         flow->endChangeGesture();
         showFlow();
     });
-    effectTray.onChoose ([this] (int choice) { effects.add (Rack::allEffects[(size_t) choice], effectAt); });
-    presetTray.onChoose ([this] (int choice) { processorRef.loadPreset (choice); });
+    trays.effect.onChoose ([this] (int choice) { effectsView.add (Rack::allEffects[(size_t) choice], trays.effectAt); });
+    trays.preset.onChoose ([this] (int choice) { processorRef.loadPreset (choice); });
 
     setResizable (true, true);
     if (auto* constrainer = getConstrainer())
@@ -136,10 +136,10 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
     setSize ((int) designWidth, (int) designHeight);
     for (auto& menu : waveMenus)
         addChildComponent (menu);   // last, so the trays open over everything
-    addChildComponent (addTray);
-    addChildComponent (effectTray);
-    addChildComponent (settingsTray);
-    addChildComponent (presetTray);
+    addChildComponent (trays.add);
+    addChildComponent (trays.effect);
+    addChildComponent (trays.settings);
+    addChildComponent (trays.preset);
     resized();
     timerCallback();
     startTimerHz (30);
@@ -159,7 +159,7 @@ AmpDisplayState Synth2AudioProcessorEditor::ampState (const Synth2Engine::Settin
                                                       const std::array<int, Bench::numOscillators>& shapedBy) const
 {
     const auto& parameters = processorRef.getState();
-    const auto& ids        = ParamID::envelopes[envelope];
+    const auto& ids        = ParamID::envelope (envelope);
     const auto& times      = settings.envelopes[(size_t) envelope];
 
     const auto position = [&parameters] (const char* id) { return parameters.getParameter (id)->getValue(); };
@@ -190,7 +190,7 @@ void Synth2AudioProcessorEditor::showView()
     if (const auto view = model.view(); view != shown.view)
     {
         shown.view = view;
-        bench.setView (view);
+        benchView.setView (view);
     }
 }
 
@@ -204,12 +204,13 @@ void Synth2AudioProcessorEditor::showFlow()
     {
         int place = 0;
         for (const auto& id : model.readingOrder())
-            for (size_t i = 0; i < Bench::allModules.size(); ++i)
-                if (Bench::allModules[i] == id)
-                    places[i] = ++place;
+        {
+            const auto found = std::find (Bench::allModules.begin(), Bench::allModules.end(), id);
+            places[(size_t) std::distance (Bench::allModules.begin(), found)] = ++place;
+        }
     }
     for (size_t i = 0; i < Bench::allModules.size(); ++i)
-        bench.getModule (Bench::allModules[i]).setOrder (places[i]);
+        benchView.getModule (Bench::allModules[i]).setOrder (places[i]);
 
     if (flow == Synth2AudioProcessor::SignalFlow::cables)
     {
@@ -220,14 +221,14 @@ void Synth2AudioProcessorEditor::showFlow()
         const auto shapedBy = model.envelopeAssignment (flow);
         for (int slot = 0; slot < Bench::numOscillators; ++slot)
         {
-            auto& osc = bench.getOscillator (slot);
+            auto& osc = benchView.getOscillator (slot);
             osc.setJacksShown (false, false);
             osc.setDimmed (false);
         }
         for (int e = 0; e < Bench::numEnvelopes; ++e)
         {
             const auto shaped = std::find (shapedBy.begin(), shapedBy.end(), e);
-            auto& env = bench.getEnvelope (e);
+            auto& env = benchView.getEnvelope (e);
             env.setJacksShown (false, false);
             env.setTag (shaped != shapedBy.end() ? "> OSC " + juce::String (shaped - shapedBy.begin() + 1) : juce::String());
             env.setDimmed (shaped == shapedBy.end(), "Not shaping an oscillator: put one before it, or add the one with its number");
@@ -249,14 +250,14 @@ void Synth2AudioProcessorEditor::showCables()
     const auto heard = model.heardThroughCables();
     for (int slot = 0; slot < Bench::numOscillators; ++slot)
     {
-        auto& osc = bench.getOscillator (slot);
+        auto& osc = benchView.getOscillator (slot);
         osc.setJacksShown (true, false);
         osc.setPlugged (model.destinationOf (osc.getId()).has_value(), false);
         osc.setDimmed (! heard[(size_t) slot], "Not connected: patch a cable from OUT to an envelope or the output to hear it");
     }
     for (int e = 0; e < Bench::numEnvelopes; ++e)
     {
-        auto& env = bench.getEnvelope (e);
+        auto& env = benchView.getEnvelope (e);
         const bool fed  = model.inputOf (env.getId()).has_value();
         const bool out  = model.isPatchedToOutput (env.getId());
         env.setJacksShown (true, true);
@@ -271,18 +272,18 @@ void Synth2AudioProcessorEditor::timerCallback()
     // The modules follow the parameters, however they change (dials, host
     // automation, a restored session), and the envelope the notes as they
     // play; each display repaints only when its state moved.
-    bench.sync();
-    effects.sync();
+    benchView.sync();
+    effectsView.sync();
     const auto settings = processorRef.currentSettings();
-    effects.refresh (settings.effects);
+    effectsView.refresh (settings.effects);
     std::array<int, Bench::numOscillators> shapedBy {};
     for (int slot = 0; slot < Bench::numOscillators; ++slot)
     {
-        bench.getOscillator (slot).refresh (settings.oscillators[(size_t) slot]);
+        benchView.getOscillator (slot).refresh (settings.oscillators[(size_t) slot]);
         shapedBy[(size_t) slot] = settings.oscillators[(size_t) slot].envelope;
     }
     for (int e = 0; e < Bench::numEnvelopes; ++e)
-        bench.getEnvelope (e).refresh (ampState (settings, e, shapedBy));
+        benchView.getEnvelope (e).refresh (ampState (settings, e, shapedBy));
     showView();
     showFlow();
 
@@ -339,8 +340,8 @@ void Synth2AudioProcessorEditor::showTab (Tab which)
     if (which == tab)
         return;
     tab = which;
-    bench.setVisible (tab == Tab::bench);
-    effects.setVisible (tab == Tab::effects);
+    benchView.setVisible (tab == Tab::bench);
+    effectsView.setVisible (tab == Tab::effects);
     cables.repaint();
     repaint();
 }
@@ -349,7 +350,7 @@ void Synth2AudioProcessorEditor::showTab (Tab which)
 
 void Synth2AudioProcessorEditor::openAddTray (juce::Point<float> benchAt, juce::Point<int> editorAt)
 {
-    addAt = benchAt;
+    trays.addAt = benchAt;
     const int oscillatorsLeft = model.left (Bench::Kind::oscillator);
     const int envelopesLeft   = model.left (Bench::Kind::envelope);
     std::vector<ChoiceTray::Choice> choices {
@@ -357,13 +358,13 @@ void Synth2AudioProcessorEditor::openAddTray (juce::Point<float> benchAt, juce::
                                             : juce::String ("All four are on the bench"), oscillatorsLeft > 0 },
         { "Envelope",   envelopesLeft > 0 ? juce::String (envelopesLeft) + " of 4 left: one oscillator's attack and release"
                                           : juce::String ("All four are on the bench"), envelopesLeft > 0 } };
-    addTray.setBounds (getLocalBounds());
-    addTray.open ("ADD TO THE BENCH", std::move (choices), editorAt);
+    trays.add.setBounds (getLocalBounds());
+    trays.add.open ("ADD TO THE BENCH", std::move (choices), editorAt);
 }
 
 void Synth2AudioProcessorEditor::openEffectTray (juce::Point<float> rackAt, juce::Point<int> editorAt)
 {
-    effectAt = rackAt;
+    trays.effectAt = rackAt;
     const Rack::Model rack (processorRef.getState());
     std::vector<ChoiceTray::Choice> choices {
         { "Drive",  "Grit and warmth: WARM, TUBE or HARD" },
@@ -375,8 +376,8 @@ void Synth2AudioProcessorEditor::openEffectTray (juce::Point<float> rackAt, juce
             choices[i].detail  = "Already in the chain";
             choices[i].enabled = false;
         }
-    effectTray.setBounds (getLocalBounds());
-    effectTray.open ("ADD AN EFFECT", std::move (choices), editorAt);
+    trays.effect.setBounds (getLocalBounds());
+    trays.effect.open ("ADD AN EFFECT", std::move (choices), editorAt);
 }
 
 void Synth2AudioProcessorEditor::openSettings()
@@ -388,9 +389,9 @@ void Synth2AudioProcessorEditor::openSettings()
     choices[(size_t) signalFlow()].ticked = true;
     choices[(size_t) (firstEnvelopeView + (int) view.envelopes)].ticked     = true;
     choices[(size_t) (firstOscillatorView + (int) view.oscillators)].ticked = true;
-    settingsTray.setBounds (getLocalBounds());
+    trays.settings.setBounds (getLocalBounds());
     const auto gear = layout.gear;
-    settingsTray.open ("SIGNAL FLOW", std::move (choices),
+    trays.settings.open ("SIGNAL FLOW", std::move (choices),
                        { gear.getRight() - juce::roundToInt (260.0f * uiScale), gear.getBottom() + juce::roundToInt (8.0f * uiScale) });
     repaint (layout.gear);
 }
@@ -401,9 +402,9 @@ void Synth2AudioProcessorEditor::openPresets()
     for (const auto& preset : Presets::factory)
         choices.push_back ({ preset.name, preset.detail });
     choices[(size_t) processorRef.getCurrentProgram()].ticked = true;
-    presetTray.setBounds (getLocalBounds());
+    trays.preset.setBounds (getLocalBounds());
     const auto picker = layout.preset;
-    presetTray.open ("PRESETS", std::move (choices),
+    trays.preset.open ("PRESETS", std::move (choices),
                      { picker.getCentreX() - juce::roundToInt (130.0f * uiScale), picker.getBottom() + juce::roundToInt (8.0f * uiScale) });
     repaint (layout.preset);
 }
@@ -424,30 +425,30 @@ juce::Rectangle<float> Synth2AudioProcessorEditor::outputJackBounds() const noex
 
 juce::Point<float> Synth2AudioProcessorEditor::jackCentre (const Bench::ModuleId& id, BenchModule::Jack which)
 {
-    auto& module = bench.getModule (id);
-    return getLocalPoint (&module, module.jackBounds (which).getCentre());
+    const auto& card = benchView.getModule (id);
+    return getLocalPoint (&card, card.jackBounds (which).getCentre());
 }
 
-void Synth2AudioProcessorEditor::patch (const Bench::ModuleId& module, BenchModule::Jack which, const juce::MouseEvent& e, int phase)
+void Synth2AudioProcessorEditor::patch (const Bench::ModuleId& owner, BenchModule::Jack which, const juce::MouseEvent& e, BenchModule::JackPhase phase)
 {
     const auto at = e.getEventRelativeTo (this).position;
-    if (phase == BenchModule::jackDown)
+    if (phase == BenchModule::JackPhase::down)
     {
         // Picking up a patched jack unplugs its cable, to drop elsewhere: an
         // OUT jack's own, or the one coming into an envelope's IN (which
         // then hangs from the oscillator it came from).
-        auto from = std::optional<Bench::ModuleId> (module);
+        auto from = std::optional<Bench::ModuleId> (owner);
         if (which == BenchModule::Jack::in)
-            from = model.inputOf (module);
+            from = model.inputOf (owner);
         if (! from.has_value())
             return;
         model.disconnect (*from);
-        patchingFrom = from;
-        patchingTo   = at;
+        patching.from = from;
+        patching.to   = at;
     }
-    else if (phase == BenchModule::jackDrag)
+    else if (phase == BenchModule::JackPhase::drag)
     {
-        patchingTo = at;
+        patching.to = at;
     }
     else
     {
@@ -463,11 +464,11 @@ void Synth2AudioProcessorEditor::patch (const Bench::ModuleId& module, BenchModu
 // stays unplugged.
 void Synth2AudioProcessorEditor::dropCable (juce::Point<float> at)
 {
-    if (! patchingFrom.has_value())
+    if (! patching.from.has_value())
         return;
-    const auto from  = *patchingFrom;
+    const auto from  = *patching.from;
     const auto reach = 10.0f * uiScale;
-    patchingFrom.reset();
+    patching.from.reset();
 
     if (outputJackBounds().expanded (reach).contains (at))
     {
@@ -476,7 +477,7 @@ void Synth2AudioProcessorEditor::dropCable (juce::Point<float> at)
     }
     for (int e = 0; e < Bench::numEnvelopes; ++e)
     {
-        auto& env = bench.getEnvelope (e);
+        const auto& env = benchView.getEnvelope (e);
         if (env.isVisible() && env.isJackShown (BenchModule::Jack::in)
             && getLocalArea (&env, env.jackBounds (BenchModule::Jack::in)).expanded (reach).contains (at))
         {
@@ -501,8 +502,7 @@ void Synth2AudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
     }
     if (layout.preset.toFloat().contains (e.position))
     {
-        const float arrow = kPresetArrowWidth * uiScale;
-        if (e.position.x < (float) layout.preset.getX() + arrow)
+        if (const float arrow = kPresetArrowWidth * uiScale; e.position.x < (float) layout.preset.getX() + arrow)
             stepPreset (-1);
         else if (e.position.x > (float) layout.preset.getRight() - arrow)
             stepPreset (1);
@@ -519,8 +519,8 @@ void Synth2AudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
         {
             const auto from = patched.back();
             model.disconnect (from);
-            patchingFrom = from;
-            patchingTo   = e.position;
+            patching.from = from;
+            patching.to   = e.position;
             showFlow();
             cables.repaint();
         }
@@ -529,15 +529,15 @@ void Synth2AudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
 
 void Synth2AudioProcessorEditor::mouseDrag (const juce::MouseEvent& e)
 {
-    if (! patchingFrom.has_value())
+    if (! patching.from.has_value())
         return;
-    patchingTo = e.position;
+    patching.to = e.position;
     cables.repaint();
 }
 
 void Synth2AudioProcessorEditor::mouseUp (const juce::MouseEvent& e)
 {
-    if (! patchingFrom.has_value())
+    if (! patching.from.has_value())
         return;
     dropCable (e.position);
     showFlow();
@@ -587,15 +587,15 @@ void Synth2AudioProcessorEditor::paintCables (juce::Graphics& g)
     const auto output = outputJackBounds().getCentre();
     for (const auto& [from, to] : model.cables())
     {
-        auto& source = bench.getModule (from);
-        if (! source.isVisible() || (to.has_value() && ! bench.getModule (*to).isVisible()))
+        const auto& source = benchView.getModule (from);
+        if (! source.isVisible() || (to.has_value() && ! benchView.getModule (*to).isVisible()))
             continue;
         const auto end = to.has_value() ? jackCentre (*to, BenchModule::Jack::in) : output;
         paintCable (g, jackCentre (from), end, source.getJackColour());
     }
 
-    if (patchingFrom.has_value())
-        paintCable (g, jackCentre (*patchingFrom), patchingTo, bench.getModule (*patchingFrom).getJackColour().withAlpha (0.8f));
+    if (patching.from.has_value())
+        paintCable (g, jackCentre (*patching.from), patching.to, benchView.getModule (*patching.from).getJackColour().withAlpha (0.8f));
 }
 
 // ---- Painting ---------------------------------------------------------------------------
@@ -680,9 +680,9 @@ void Synth2AudioProcessorEditor::paintHeader (juce::Graphics& g, float s) const
     // The preset picker: the loaded preset's name in a pill, with arrows to
     // step either way, lit while its tray is open.
     const auto picker = layout.preset.toFloat();
-    g.setColour (presetTray.isOpen() ? Palette::idleFill.withMultipliedAlpha (1.6f) : Palette::idleFill);
+    g.setColour (trays.preset.isOpen() ? Palette::idleFill.withMultipliedAlpha (1.6f) : Palette::idleFill);
     g.fillRoundedRectangle (picker, picker.getHeight() * 0.5f);
-    g.setColour (presetTray.isOpen() ? Palette::strongLine : Palette::hairline);
+    g.setColour (trays.preset.isOpen() ? Palette::strongLine : Palette::hairline);
     g.drawRoundedRectangle (picker, picker.getHeight() * 0.5f, juce::jmax (1.0f, s));
 
     const float arrowWidth = kPresetArrowWidth * s;
@@ -723,7 +723,7 @@ void Synth2AudioProcessorEditor::paintHeader (juce::Graphics& g, float s) const
         teeth.applyTransform (juce::AffineTransform::rotation (juce::MathConstants<float>::twoPi / 8.0f));
     }
     teeth.applyTransform (juce::AffineTransform::translation (gear.getCentre()));
-    g.setColour (settingsTray.isOpen() ? Palette::textStrong : Palette::textDim);
+    g.setColour (trays.settings.isOpen() ? Palette::textStrong : Palette::textDim);
     g.fillPath (teeth);
     g.drawEllipse (juce::Rectangle<float> (inner * 2.0f, inner * 2.0f).withCentre (gear.getCentre()), juce::jmax (1.0f, 2.2f * s));
 }
@@ -760,7 +760,7 @@ void Synth2AudioProcessorEditor::resized()
     auto& animator = juce::Desktop::getInstance().getAnimator();
     for (auto& menu : waveMenus)
         animator.cancelAnimation (&menu, true);
-    for (auto* tray : { &addTray, &effectTray, &settingsTray, &presetTray })
+    for (auto* tray : { &trays.add, &trays.effect, &trays.settings, &trays.preset })
         animator.cancelAnimation (tray, true);
 
     uiScale = (float) getWidth() / designWidth;
@@ -774,7 +774,7 @@ void Synth2AudioProcessorEditor::resized()
         menu.setUiScale (s);
         menu.setBounds (getLocalBounds());
     }
-    for (auto* tray : { &addTray, &effectTray, &settingsTray, &presetTray })
+    for (auto* tray : { &trays.add, &trays.effect, &trays.settings, &trays.preset })
     {
         tray->setUiScale (s);
         tray->setBounds (getLocalBounds());
@@ -793,13 +793,13 @@ void Synth2AudioProcessorEditor::resized()
     layout.effectsTab = layout.benchTab.translated (px (84.0f), 0);
 
     // The bench, and in the same place the effects.
-    bench.setUiScale (s);
-    bench.setBounds (px (kPanelPad), px (kBenchTop), px (Bench::areaWidth), px (Bench::areaHeight));
-    effects.setUiScale (s);
-    effects.setBounds (bench.getBounds());
+    benchView.setUiScale (s);
+    benchView.setBounds (px (kPanelPad), px (kBenchTop), px (Bench::areaWidth), px (Bench::areaHeight));
+    effectsView.setUiScale (s);
+    effectsView.setBounds (benchView.getBounds());
 
     // Hairline, then the keyboard with OUTPUT (and, patching, its IN jack) at its right.
-    area.setTop (bench.getBottom() + px (12.0f));
+    area.setTop (benchView.getBottom() + px (12.0f));
     layout.stripSeparatorY = area.getY();
     area.removeFromTop (px (14.0f));
     layout.outputColumn = area.removeFromRight (px (108.0f));

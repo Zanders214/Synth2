@@ -70,7 +70,7 @@ private:
 
 /** A time mark under an effect's well: the first one starts at its line,
     the last ends at it, the others centre on theirs. */
-inline void paintMark (juce::Graphics& g, const juce::String& text, float x, int mark, int last, juce::Rectangle<float> row)
+inline void paintMark (const juce::Graphics& g, const juce::String& text, float x, int mark, int last, juce::Rectangle<float> row)
 {
     const float width = 40.0f * row.getHeight() / 10.0f;
     if (mark == 0)
@@ -92,14 +92,14 @@ struct DelayDisplayState
     bool   sync     = false;
     int    division = 0;
 
-    bool operator== (const DelayDisplayState& other) const noexcept
+    friend bool operator== (const DelayDisplayState& a, const DelayDisplayState& b) noexcept
     {
-        return ! (seconds < other.seconds) && ! (seconds > other.seconds)
-            && juce::exactlyEqual (feedback, other.feedback) && juce::exactlyEqual (tone, other.tone)
-            && juce::exactlyEqual (mix, other.mix) && pingPong == other.pingPong && sync == other.sync
-            && division == other.division;
+        return juce::exactlyEqual (a.seconds, b.seconds)
+            && juce::exactlyEqual (a.feedback, b.feedback) && juce::exactlyEqual (a.tone, b.tone)
+            && juce::exactlyEqual (a.mix, b.mix) && a.pingPong == b.pingPong && a.sync == b.sync
+            && a.division == b.division;
     }
-    bool operator!= (const DelayDisplayState& other) const noexcept { return ! (*this == other); }
+    friend bool operator!= (const DelayDisplayState& a, const DelayDisplayState& b) noexcept { return ! (a == b); }
 };
 
 /** The DELAY well: the dry sound, then each repeat where it falls across two
@@ -110,7 +110,7 @@ class EchoDisplay final : public DisplayWell
 public:
     EchoDisplay() { setInterceptsMouseClicks (false, false); }
 
-    void setColour (juce::Colour newColour) { colour = newColour; repaint(); }
+    void setTint (juce::Colour newColour) { colour = newColour; repaint(); }
 
     void setDelayState (const DelayDisplayState& newState)
     {
@@ -163,7 +163,7 @@ public:
                 if (height <= 0.0f)
                     return;
                 const float h = juce::jmax (1.5f * s, height * reach);
-                const juce::Rectangle<float> r (x, up ? middle - h : middle, barWidth, h);
+                const juce::Rectangle r (x, up ? middle - h : middle, barWidth, h);
                 g.setColour (tint.withAlpha (0.25f));
                 g.fillRoundedRectangle (r.expanded (2.0f * s, 0.0f), 2.0f * s);
                 g.setColour (tint);
@@ -188,13 +188,13 @@ struct ReverbDisplayState
     float mix        = 0.0f;
     float preDelayMs = 0.0f;
 
-    bool operator== (const ReverbDisplayState& other) const noexcept
+    friend bool operator== (const ReverbDisplayState& a, const ReverbDisplayState& b) noexcept
     {
-        return juce::exactlyEqual (size, other.size) && juce::exactlyEqual (damping, other.damping)
-            && juce::exactlyEqual (width, other.width) && juce::exactlyEqual (mix, other.mix)
-            && juce::exactlyEqual (preDelayMs, other.preDelayMs);
+        return juce::exactlyEqual (a.size, b.size) && juce::exactlyEqual (a.damping, b.damping)
+            && juce::exactlyEqual (a.width, b.width) && juce::exactlyEqual (a.mix, b.mix)
+            && juce::exactlyEqual (a.preDelayMs, b.preDelayMs);
     }
-    bool operator!= (const ReverbDisplayState& other) const noexcept { return ! (*this == other); }
+    friend bool operator!= (const ReverbDisplayState& a, const ReverbDisplayState& b) noexcept { return ! (a == b); }
 };
 
 /** The REVERB well: the dry sound, then (after PRE-DELAY) the room ringing
@@ -206,7 +206,7 @@ class RoomDisplay final : public DisplayWell
 public:
     RoomDisplay() { setInterceptsMouseClicks (false, false); }
 
-    void setColour (juce::Colour newColour) { colour = newColour; repaint(); }
+    void setTint (juce::Colour newColour) { colour = newColour; repaint(); }
 
     void setReverbState (const ReverbDisplayState& newState)
     {
@@ -303,7 +303,7 @@ class CurveDisplay final : public DisplayWell
 public:
     CurveDisplay() { setInterceptsMouseClicks (false, false); }
 
-    void setColour (juce::Colour newColour) { colour = newColour; repaint(); }
+    void setTint (juce::Colour newColour) { colour = newColour; repaint(); }
 
     void setDriveState (const DriveDisplayState& newState)
     {
@@ -336,8 +336,8 @@ public:
         juce::Path straight;
         straight.startNewSubPath (at (-1.0f, -1.0f));
         straight.lineTo (at (1.0f, 1.0f));
-        const float dashes[] { 3.0f * s, 3.0f * s };
-        juce::PathStrokeType (line).createDashedStroke (straight, straight, dashes, 2);
+        const std::array dashes { 3.0f * s, 3.0f * s };
+        juce::PathStrokeType (line).createDashedStroke (straight, straight, dashes.data(), (int) dashes.size());
         g.setColour (Palette::strongLine.withMultipliedAlpha (2.0f));
         g.fillPath (straight);
 
@@ -463,7 +463,7 @@ public:
 
     ~EffectCard() override
     {
-        for (auto& dial : dials)
+        for (const auto& dial : dials)
             dial->slider.setLookAndFeel (nullptr);
     }
 
@@ -475,7 +475,7 @@ public:
     /** Where in its parent the card can be dragged (all of it, if empty). */
     void setDragArea (juce::Rectangle<int> area) { dragArea = area; }
 
-    void setUiScale (float newScale)
+    virtual void setUiScale (float newScale)
     {
         uiScale = newScale;
         resized();
@@ -484,7 +484,7 @@ public:
 
     void setPlace (int newPlace) { if (place != newPlace) { place = newPlace; repaint(); } }
     int  getPlace() const noexcept { return place; }
-    const juce::String& getTitle() const noexcept { return title; }
+    const juce::String& getCaption() const noexcept { return title; }
     juce::Colour getColour() const noexcept { return colour; }
     PowerSwitch& getPower() noexcept { return power; }
     bool isBeingDragged() const noexcept { return dragging; }
@@ -542,7 +542,7 @@ public:
 
         for (const auto& dial : dials)
             if (dial->slider.isVisible())
-                BenchStyle::paintDialLabel (g, dial->column.toFloat(), dial->slider.getBounds().toFloat().getBottom(), dial->name,
+                BenchStyle::paintDialLabel (g, dial->column.toFloat().withTop (dial->slider.getBounds().toFloat().getBottom()), dial->name,
                                             BenchStyle::dialText (dial->paramId, state.getRawParameterValue (dial->paramId)->load()),
                                             dial->colour, on() ? 1.0f : 0.4f, s);
     }
@@ -733,7 +733,7 @@ public:
           pingPong ("PING-PONG", Synth2::Palette::cyan, stateToUse, ParamID::delayPingPong)
     {
         addAndMakeVisible (display);
-        display.setColour (Synth2::Palette::cyan);
+        display.setTint (Synth2::Palette::cyan);
         addDial (ParamID::delayTime,     "TIME",     BenchStyle::dialColour (0.0f),  0);
         addDial (ParamID::delayNote,     "TIME",     BenchStyle::dialColour (0.0f),  0);
         addDial (ParamID::delayFeedback, "FEEDBACK", BenchStyle::dialColour (0.33f), 1);
@@ -769,7 +769,7 @@ public:
         }
     }
 
-    void setUiScale (float newScale)
+    void setUiScale (float newScale) override
     {
         sync.setUiScale (newScale);
         pingPong.setUiScale (newScale);
@@ -805,7 +805,7 @@ public:
         : EffectCard ("REVERB", ParamID::reverbOn, Synth2::Palette::violet, looksToUse, stateToUse)
     {
         addAndMakeVisible (display);
-        display.setColour (Synth2::Palette::violet);
+        display.setTint (Synth2::Palette::violet);
         addDial (ParamID::reverbSize,     "SIZE",      BenchStyle::dialColour (0.0f),  0);
         addDial (ParamID::reverbPreDelay, "PRE-DELAY", BenchStyle::dialColour (0.25f), 1);
         addDial (ParamID::reverbDamping,  "DAMPING",   BenchStyle::dialColour (0.5f),  2);
@@ -820,7 +820,7 @@ public:
         display.setReverbState ({ reverb.size, reverb.damping, reverb.width, reverb.mix, reverb.preDelayMs });
     }
 
-    void setUiScale (float newScale)
+    void setUiScale (float newScale) override
     {
         display.setUiScale (newScale);
         EffectCard::setUiScale (newScale);
@@ -846,7 +846,7 @@ public:
           shape (*stateToUse.getParameter (ParamID::driveShape), { "WARM", "TUBE", "HARD" }, Synth2::Palette::amber)
     {
         addAndMakeVisible (display);
-        display.setColour (Synth2::Palette::amber);
+        display.setTint (Synth2::Palette::amber);
         addDial (ParamID::driveAmount, "DRIVE", BenchStyle::dialColour (0.0f), 0);
         addDial (ParamID::driveTone,   "TONE",  BenchStyle::dialColour (0.5f), 1);
         addDial (ParamID::driveMix,    "MIX",   BenchStyle::dialColour (1.0f), 2);
@@ -861,7 +861,7 @@ public:
         display.setDriveState ({ drive.amount, drive.shape, drive.mix });
     }
 
-    void setUiScale (float newScale)
+    void setUiScale (float newScale) override
     {
         shape.setUiScale (newScale);
         display.setUiScale (newScale);
@@ -997,8 +997,7 @@ public:
         for (const auto kind : Rack::allEffects)
         {
             auto& card = getCard (kind);
-            const bool inChain = model.isInChain (kind);
-            if (inChain && ! card.isVisible())
+            if (const bool inChain = model.isInChain (kind); inChain && ! card.isVisible())
                 show (kind);
             else if (! inChain && card.isVisible())
                 hide (kind);
@@ -1062,7 +1061,7 @@ public:
         {
             const auto& card = getCard (kind);
             words.append (arrow, font, Palette::textDim);
-            words.append (card.getTitle(), font, card.getColour());
+            words.append (card.getCaption(), font, card.getColour());
         }
         words.append (arrow + "OUTPUT", font, Palette::textDim);
         words.setJustification (juce::Justification::centredLeft);
@@ -1074,17 +1073,8 @@ public:
             g.drawText ("Drag a card to move it along the chain", line, juce::Justification::centredRight, false);
         }
 
-        // The area, like the bench: a faint dot grid, texture only.
-        g.setColour (Palette::well.withAlpha (0.55f));
-        g.fillRoundedRectangle (area, 16.0f * s);
-        g.setColour (Palette::hairline);
-        g.drawRoundedRectangle (area.reduced (0.5f), 16.0f * s, juce::jmax (1.0f, s));
-        g.setColour (Palette::gridLine.withMultipliedAlpha (1.6f));
-        const float spacing = 24.0f * s;
-        const float dot     = juce::jmax (1.5f, 2.0f * s);
-        for (float y = area.getY() + spacing; y < area.getBottom() - spacing * 0.5f; y += spacing)
-            for (float x = area.getX() + spacing; x < area.getRight() - spacing * 0.5f; x += spacing)
-                g.fillEllipse (x - dot * 0.5f, y - dot * 0.5f, dot, dot);
+        // The area, like the bench's.
+        BenchStyle::paintArea (g, area, s);
 
         if (model.isEmpty())
         {
@@ -1124,7 +1114,16 @@ public:
     }
 
 private:
-    const EffectCard& getCard (Rack::Kind kind) const noexcept { return const_cast<EffectsView*> (this)->getCard (kind); }
+    const EffectCard& getCard (Rack::Kind kind) const noexcept
+    {
+        switch (kind)
+        {
+            case Rack::Kind::delay:  return delay;
+            case Rack::Kind::reverb: return reverb;
+            case Rack::Kind::drive:  break;
+        }
+        return drive;
+    }
 
     void show (Rack::Kind kind)
     {
@@ -1137,8 +1136,7 @@ private:
 
     void hide (Rack::Kind kind)
     {
-        auto& card = getCard (kind);
-        if (card.isVisible())
+        if (auto& card = getCard (kind); card.isVisible())
             juce::Desktop::getInstance().getAnimator().fadeOut (&card, 150);
         repaint();
     }
@@ -1148,8 +1146,7 @@ private:
         const auto wanted = (topLeft - rackArea().getPosition()).toFloat() / uiScale;
         const auto landed = model.move (kind, wanted);
         auto& card = getCard (kind);
-        const auto target = boundsFor (kind);
-        if (landed != wanted && card.getBounds() != target)
+        if (const auto target = boundsFor (kind); landed != wanted && card.getBounds() != target)
             juce::Desktop::getInstance().getAnimator().animateComponent (&card, target, 1.0f, 150, false, 0.4, 0.0);
         else
             card.setBounds (target);

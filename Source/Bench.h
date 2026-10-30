@@ -130,7 +130,7 @@ namespace Bench
     {
         const auto clamp = [size, area] (juce::Point<float> topLeft)
         {
-            return juce::Point<float> (juce::jlimit (0.0f, area.x - size.x, topLeft.x), juce::jlimit (0.0f, area.y - size.y, topLeft.y));
+            return juce::Point (juce::jlimit (0.0f, area.x - size.x, topLeft.x), juce::jlimit (0.0f, area.y - size.y, topLeft.y));
         };
         wanted = clamp (wanted);
         const auto isFree = [&others, size] (juce::Point<float> topLeft)
@@ -146,8 +146,8 @@ namespace Bench
         constexpr float step = 8.0f;
         std::vector<float> xs;
         std::vector<float> ys;
-        for (float x = 0.0f; x <= area.x - size.x; x += step) xs.push_back (x);
-        for (float y = 0.0f; y <= area.y - size.y; y += step) ys.push_back (y);
+        for (int i = 0; (float) i * step <= area.x - size.x; ++i) xs.push_back ((float) i * step);
+        for (int i = 0; (float) i * step <= area.y - size.y; ++i) ys.push_back ((float) i * step);
         xs.push_back (area.x - size.x);
         ys.push_back (area.y - size.y);
         for (const auto& other : others)
@@ -161,9 +161,8 @@ namespace Bench
         for (const float x : xs)
             for (const float y : ys)
             {
-                const juce::Point<float> candidate (x, y);
-                const auto inside = clamp (candidate);
-                if (! juce::exactlyEqual (inside.x, x) || ! juce::exactlyEqual (inside.y, y))
+                const juce::Point candidate (x, y);
+                if (const auto inside = clamp (candidate); ! juce::exactlyEqual (inside.x, x) || ! juce::exactlyEqual (inside.y, y))
                     continue;
                 const float distance = candidate.getDistanceSquaredFrom (wanted);
                 if ((! best.has_value() || distance < bestDistance) && isFree (candidate))
@@ -320,8 +319,7 @@ namespace Bench
             oscillator) gets each oscillator its own of both. */
         void migrate (const juce::ValueTree& saved)
         {
-            const auto savedBench = saved.getChildWithName (benchType);
-            if (! savedBench.isValid())
+            if (const auto savedBench = saved.getChildWithName (benchType); ! savedBench.isValid())
                 adoptClassicLayout (saved);
             else if ((int) savedBench.getProperty (versionProperty, 1) < currentVersion)
                 adoptFirstBench (saved);
@@ -343,7 +341,7 @@ namespace Bench
             if (! hasSaved (saved, ParamID::osc1On))
                 setPresent ({ Kind::oscillator, 0 }, true);
             const bool shaped = savedValue (saved, ParamID::envelopeOn, 1.0f) >= 0.5f;
-            if (! hasSaved (saved, ParamID::envelopes[0].on))
+            if (! hasSaved (saved, ParamID::envelope (0).on))
                 setPresent ({ Kind::envelope, 0 }, shaped);
 
             shareUnison (savedValue (saved, ParamID::unisonOn, 1.0f) >= 0.5f);
@@ -370,10 +368,10 @@ namespace Bench
 
         juce::Point<float> positionOf (const ModuleId& id) const
         {
-            const auto module = findModule (id);
-            if (! module.isValid())
+            const auto node = findModule (id);
+            if (! node.isValid())
                 return defaultPosition (id);
-            return clampToArea ({ (float) module.getProperty (xProperty), (float) module.getProperty (yProperty) }, id.kind);
+            return clampToArea ({ (float) node.getProperty (xProperty), (float) node.getProperty (yProperty) }, id.kind);
         }
 
         juce::Rectangle<float> boundsOf (const ModuleId& id) const { return boundsAt (positionOf (id), id.kind); }
@@ -436,8 +434,8 @@ namespace Bench
             ensureBench();
             for (const auto& id : present())
                 setPosition (id, defaultPosition (id));
-            for (const auto& cable : cables())
-                disconnect (cable.first);
+            for (const auto& [from, to] : cables())
+                disconnect (from);
         }
 
         /** The modules on the bench in reading order. */
@@ -502,14 +500,14 @@ namespace Bench
         }
 
         /** Unplugs `from`'s cable. */
-        void disconnect (const ModuleId& from)
+        void disconnect (const ModuleId& from)   // NOSONAR(cpp:S5817): it changes the bench, through a ValueTree handle
         {
             if (auto cable = findCableFrom (from); cable.isValid())
                 bench().removeChild (cable, nullptr);
         }
 
         /** Unplugs the cable into envelope `env`'s IN. */
-        void disconnectInto (const ModuleId& env)
+        void disconnectInto (const ModuleId& env)   // NOSONAR(cpp:S5817): it changes the bench, through a ValueTree handle
         {
             for (auto child : bench())
                 if (child.hasType (cableType) && child[toProperty].toString() == env.toString())
@@ -524,10 +522,14 @@ namespace Bench
         {
             std::vector<std::pair<ModuleId, Destination>> all;
             for (const auto& child : bench())
-                if (child.hasType (cableType))
-                    if (const auto from = ModuleId::fromString (child[fromProperty].toString()))
-                        if (const auto to = destinationFrom (child[toProperty].toString()))
-                            all.emplace_back (*from, *to);
+            {
+                if (! child.hasType (cableType))
+                    continue;
+                const auto from = ModuleId::fromString (child[fromProperty].toString());
+                const auto to   = destinationFrom (child[toProperty].toString());
+                if (from.has_value() && to.has_value())
+                    all.emplace_back (*from, *to);
+            }
             return all;
         }
 
@@ -651,18 +653,18 @@ namespace Bench
         void setPosition (const ModuleId& id, juce::Point<float> topLeft)
         {
             ensureBench();
-            auto module = findModule (id);
-            if (! module.isValid())
+            auto node = findModule (id);
+            if (! node.isValid())
             {
-                module = juce::ValueTree (moduleType);
-                module.setProperty (idProperty, id.toString(), nullptr);
-                bench().appendChild (module, nullptr);
+                node = juce::ValueTree (moduleType);
+                node.setProperty (idProperty, id.toString(), nullptr);
+                bench().appendChild (node, nullptr);
             }
-            module.setProperty (xProperty, topLeft.x, nullptr);
-            module.setProperty (yProperty, topLeft.y, nullptr);
+            node.setProperty (xProperty, topLeft.x, nullptr);
+            node.setProperty (yProperty, topLeft.y, nullptr);
         }
 
-        void setPresent (const ModuleId& id, bool shouldBePresent)
+        void setPresent (const ModuleId& id, bool shouldBePresent)   // NOSONAR(cpp:S5817): it changes a parameter
         {
             if (isPresent (id) == shouldBePresent)
                 return;
@@ -672,7 +674,7 @@ namespace Bench
             parameter->endChangeGesture();
         }
 
-        void setValue (const char* id, float value)
+        void setValue (const char* id, float value)   // NOSONAR(cpp:S5817): it changes a parameter
         {
             auto* parameter = state.getParameter (id);
             parameter->setValueNotifyingHost (parameter->convertTo0to1 (value));
@@ -695,13 +697,12 @@ namespace Bench
         // now) becomes each oscillator's own; without it, each plays one voice.
         void shareUnison (bool stacked)
         {
-            const float voices = stacked ? valueOf (ParamID::voices) : 1.0f;
-            for (int k = 0; k < numOscillators; ++k)
+            const float voices = stacked ? valueOf (ParamID::osc1Voices) : 1.0f;
+            for (const auto& ids : ParamID::oscillators)
             {
-                const auto& ids = ParamID::oscillators[k];
                 setValue (ids.voices, voices);
-                setValue (ids.detune, valueOf (ParamID::detune));
-                setValue (ids.width, valueOf (ParamID::width));
+                setValue (ids.detune, valueOf (ParamID::osc1Detune));
+                setValue (ids.width, valueOf (ParamID::osc1Width));
             }
         }
 
@@ -714,8 +715,8 @@ namespace Bench
                 const ModuleId env { Kind::envelope, k };
                 if (! isPresent ({ Kind::oscillator, k }) || isPresent (env))
                     continue;
-                const auto& from = ParamID::envelopes[0];
-                const auto& to   = ParamID::envelopes[k];
+                const auto& from = ParamID::envelope (0);
+                const auto& to   = ParamID::envelope (k);
                 for (const auto& [target, source] : { std::pair (to.delay, from.delay), std::pair (to.attack, from.attack),
                                                       std::pair (to.hold, from.hold), std::pair (to.decay, from.decay),
                                                       std::pair (to.sustain, from.sustain), std::pair (to.release, from.release) })

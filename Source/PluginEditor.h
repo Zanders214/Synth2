@@ -84,19 +84,19 @@ public:
 
     // For the tests: the bench, the trays, the OUTPUT dial and keyboard, and
     // where the gear and the output's IN jack sit (in the editor).
-    BenchView&    getBench() noexcept                  { return bench; }
-    EffectsView&  getEffects() noexcept                { return effects; }
-    ChoiceTray&   getAddTray() noexcept                { return addTray; }
-    ChoiceTray&   getEffectTray() noexcept             { return effectTray; }
-    ChoiceTray&   getSettingsTray() noexcept           { return settingsTray; }
-    ChoiceTray&   getPresetTray() noexcept             { return presetTray; }
+    BenchView&    getBench() noexcept                  { return benchView; }
+    EffectsView&  getEffects() noexcept                { return effectsView; }
+    ChoiceTray&   getAddTray() noexcept                { return trays.add; }
+    ChoiceTray&   getEffectTray() noexcept             { return trays.effect; }
+    ChoiceTray&   getSettingsTray() noexcept           { return trays.settings; }
+    ChoiceTray&   getPresetTray() noexcept             { return trays.preset; }
     WaveMenu&     getWaveMenu (int slot) noexcept      { return waveMenus[(size_t) slot]; }
     juce::Slider& getOutputDial() noexcept             { return outputDial; }
     NeonKeyboard& getKeyboard() noexcept               { return keyboard; }
     juce::Rectangle<float> gearBounds() const noexcept { return layout.gear.toFloat(); }
     juce::Rectangle<float> presetBounds() const noexcept { return layout.preset.toFloat(); }
     juce::Rectangle<float> outputJackBounds() const noexcept;
-    bool isPatching() const noexcept                   { return patchingFrom.has_value(); }
+    bool isPatching() const noexcept                   { return patching.from.has_value(); }
 
     /** Where one of module `id`'s jacks sits, in the editor. */
     juce::Point<float> jackCentre (const Bench::ModuleId& id, BenchModule::Jack which = BenchModule::Jack::out);
@@ -128,7 +128,7 @@ private:
     void openSettings();
     void openPresets();
     void stepPreset (int delta);
-    void patch (const Bench::ModuleId& module, BenchModule::Jack which, const juce::MouseEvent& e, int phase);
+    void patch (const Bench::ModuleId& owner, BenchModule::Jack which, const juce::MouseEvent& e, BenchModule::JackPhase phase);
     void dropCable (juce::Point<float> at);
     void showCables();
     juce::String cableSignature();
@@ -138,19 +138,25 @@ private:
     Synth2LookAndFeel looks;
     Bench::Model model;
 
-    BenchView    bench;
-    EffectsView  effects;
+    BenchView    benchView;
+    EffectsView  effectsView;
     NeonKeyboard keyboard;
     juce::Slider outputDial;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment;
     CableLayer   cables { *this };
     std::array<WaveMenu, Bench::numOscillators> waveMenus;
-    ChoiceTray   addTray;
-    ChoiceTray   effectTray;
-    ChoiceTray   settingsTray;
-    ChoiceTray   presetTray;
-    juce::Point<float> addAt;      // where on the bench the add tray was opened
-    juce::Point<float> effectAt;   // and on the EFFECTS tab, the effect tray
+    // The trays opened over everything: add a module, add an effect, the
+    // gear's settings and the presets; and where the add trays were opened.
+    struct Trays
+    {
+        ChoiceTray add;
+        ChoiceTray effect;
+        ChoiceTray settings;
+        ChoiceTray preset;
+        juce::Point<float> addAt;      // on the bench
+        juce::Point<float> effectAt;   // on the EFFECTS tab
+    };
+    Trays trays;
 
     // Painted regions computed by resized() and read back by paint().
     struct Layout
@@ -166,9 +172,13 @@ private:
     };
     Layout layout;
 
-    // A cable being dragged: from which oscillator, to where the mouse is.
-    std::optional<Bench::ModuleId> patchingFrom;
-    juce::Point<float> patchingTo;
+    // A cable being dragged: from which module, to where the mouse is.
+    struct Patching
+    {
+        std::optional<Bench::ModuleId> from;
+        juce::Point<float> to;
+    };
+    Patching patching;
 
     // What was last shown, to repaint only what changed.
     struct Shown

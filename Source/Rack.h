@@ -275,7 +275,7 @@ namespace Rack
             effect.setProperty (yProperty, topLeft.y, nullptr);
         }
 
-        void setParameter (const char* id, bool on)
+        void setParameter (const char* id, bool on)   // NOSONAR(cpp:S5817): it changes a parameter
         {
             auto* parameter = state.getParameter (id);
             if ((parameter->getValue() >= 0.5f) == on)

@@ -33,10 +33,10 @@ public:
 
         for (const auto& id : Bench::allModules)
         {
-            auto& module = getModule (id);
-            addChildComponent (module);
-            module.onRemove ([this, id] { remove (id); });
-            module.onMoved ([this, id] (juce::Point<int> topLeft) { land (id, topLeft); });
+            auto& card = getModule (id);
+            addChildComponent (card);
+            card.onRemove ([this, id] { remove (id); });
+            card.onMoved ([this, id] (juce::Point<int> topLeft) { land (id, topLeft); });
         }
         setRepaintsOnMouseActivity (false);
     }
@@ -60,10 +60,10 @@ public:
         uiScale = newScale;
         for (const auto& id : Bench::allModules)
         {
-            auto& module = getModule (id);
-            juce::Desktop::getInstance().getAnimator().cancelAnimation (&module, true);
-            module.setUiScale (uiScale);
-            module.setBounds (boundsFor (id));
+            auto& card = getModule (id);
+            juce::Desktop::getInstance().getAnimator().cancelAnimation (&card, true);
+            card.setUiScale (uiScale);
+            card.setBounds (boundsFor (id));
         }
         repaint();
     }
@@ -81,10 +81,10 @@ public:
     {
         for (const auto& id : Bench::allModules)
         {
-            auto& module = getModule (id);
-            module.setView (view);
-            if (! juce::Desktop::getInstance().getAnimator().isAnimating (&module))
-                module.setBounds (boundsFor (id));
+            auto& card = getModule (id);
+            card.setView (view);
+            if (! juce::Desktop::getInstance().getAnimator().isAnimating (&card))
+                card.setBounds (boundsFor (id));
         }
     }
 
@@ -107,18 +107,18 @@ public:
         dragged, or gliding or fading, is left to finish first. */
     void sync()
     {
-        auto& animator = juce::Desktop::getInstance().getAnimator();
+        const auto& animator = juce::Desktop::getInstance().getAnimator();
         for (const auto& id : Bench::allModules)
         {
-            auto& module = getModule (id);
+            auto& card = getModule (id);
             const bool present = model.isPresent (id);
-            if (present && ! module.isVisible())
+            if (present && ! card.isVisible())
                 show (id, true);
-            else if (! present && module.isVisible())
+            else if (! present && card.isVisible())
                 hide (id);
-            else if (present && ! module.isBeingDragged() && ! animator.isAnimating (&module))
-                if (const auto bounds = boundsFor (id); module.getBounds() != bounds)
-                    module.setBounds (bounds);
+            else if (present && ! card.isBeingDragged() && ! animator.isAnimating (&card))
+                if (const auto bounds = boundsFor (id); card.getBounds() != bounds)
+                    card.setBounds (bounds);
         }
 
         const bool empty = model.isEmpty();
@@ -137,18 +137,7 @@ public:
         const float s    = uiScale;
         const auto  area = getLocalBounds().toFloat();
 
-        g.setColour (Palette::well.withAlpha (0.55f));
-        g.fillRoundedRectangle (area, 16.0f * s);
-        g.setColour (Palette::hairline);
-        g.drawRoundedRectangle (area.reduced (0.5f), 16.0f * s, juce::jmax (1.0f, s));
-
-        // A faint dot grid: texture only, nothing snaps to it.
-        g.setColour (Palette::gridLine.withMultipliedAlpha (1.6f));
-        const float spacing = 24.0f * s;
-        const float dot     = juce::jmax (1.5f, 2.0f * s);
-        for (float y = spacing; y < area.getHeight() - spacing * 0.5f; y += spacing)
-            for (float x = spacing; x < area.getWidth() - spacing * 0.5f; x += spacing)
-                g.fillEllipse (x - dot * 0.5f, y - dot * 0.5f, dot, dot);
+        BenchStyle::paintArea (g, area, s);
 
         if (model.isEmpty())
         {
@@ -177,33 +166,31 @@ public:
 private:
     void show (const Bench::ModuleId& id, bool fadeIn)
     {
-        auto& module = getModule (id);
-        module.setBounds (boundsFor (id));
-        module.toFront (false);
+        auto& card = getModule (id);
+        card.setBounds (boundsFor (id));
+        card.toFront (false);
         if (fadeIn)
-            juce::Desktop::getInstance().getAnimator().fadeIn (&module, 150);   // --dur-base
+            juce::Desktop::getInstance().getAnimator().fadeIn (&card, 150);   // --dur-base
         else
-            module.setVisible (true);
+            card.setVisible (true);
         repaint();
     }
 
     void hide (const Bench::ModuleId& id)
     {
-        auto& module = getModule (id);
-        if (module.isVisible())
-            juce::Desktop::getInstance().getAnimator().fadeOut (&module, 150);
+        if (auto& card = getModule (id); card.isVisible())
+            juce::Desktop::getInstance().getAnimator().fadeOut (&card, 150);
         repaint();
     }
 
     void land (const Bench::ModuleId& id, juce::Point<int> topLeft)
     {
         const auto landed = model.move (id, topLeft.toFloat() / uiScale);
-        auto& module = getModule (id);
-        const auto target = boundsFor (id);
-        if (landed != topLeft.toFloat() / uiScale && module.getBounds() != target)
-            juce::Desktop::getInstance().getAnimator().animateComponent (&module, target, 1.0f, 150, false, 0.4, 0.0);
+        auto& card = getModule (id);
+        if (const auto target = boundsFor (id); landed != topLeft.toFloat() / uiScale && card.getBounds() != target)
+            juce::Desktop::getInstance().getAnimator().animateComponent (&card, target, 1.0f, 150, false, 0.4, 0.0);
         else
-            module.setBounds (target);
+            card.setBounds (target);
     }
 
     juce::AudioProcessorValueTreeState& state;

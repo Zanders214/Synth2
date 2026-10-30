@@ -32,10 +32,14 @@ public:
         appProperties.setStorageParameters (options);
     }
 
-    const juce::String getApplicationName() override           { return juce::CharPointer_UTF8 (JucePlugin_Name); }
-    const juce::String getApplicationVersion() override        { return JucePlugin_VersionString; }
+    const juce::String getApplicationName() override    { return juce::CharPointer_UTF8 (JucePlugin_Name); }   // NOSONAR(cpp:S5951): signature fixed by juce::JUCEApplication
+    const juce::String getApplicationVersion() override { return JucePlugin_VersionString; }                 // NOSONAR(cpp:S5951): signature fixed by juce::JUCEApplication
     bool moreThanOneInstanceAllowed() override                 { return true; }
-    void anotherInstanceStarted (const juce::String&) override {}
+    void anotherInstanceStarted (const juce::String&) override
+    {
+        // Each launch is its own instance (moreThanOneInstanceAllowed), so
+        // there is nothing to hand over to this one.
+    }
 
     void initialise (const juce::String&) override
     {
