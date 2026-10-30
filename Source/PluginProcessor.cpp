@@ -68,7 +68,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
     const auto onOff = [] (bool automatable) { return AudioParameterBoolAttributes().withAutomatable (automatable); };
     const auto addOscillator = [&] (int index, int version)
     {
-        const auto& ids      = ParamID::oscillators[index];
+        const auto& ids      = ParamID::oscillator (index);
         const auto  defaults = Synth2Engine::Settings {}.oscillators[(size_t) index];
         const String name    = "Osc " + String (index + 1) + " ";
 
@@ -86,13 +86,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
             ParameterID { ids.fine, version }, name + "Fine",
             NormalisableRange<float> (-Synth2Engine::maxFineCents, Synth2Engine::maxFineCents, 0.1f), defaults.fineCents,
             AudioParameterFloatAttributes().withStringFromValueFunction (centsFromValue)));
+    };
+    const auto addLevelAndStack = [&] (int index, int version)
+    {
+        const auto& ids       = ParamID::oscillator (index);
+        const auto  defaults  = Synth2Engine::Settings {}.oscillators[(size_t) index];
+        const int   stackVersion = index == 0 ? 1 : 4;
+        const String stackName   = index == 0 ? String() : "Osc " + String (index + 1) + " ";
         layout.add (std::make_unique<AudioParameterFloat> (
-            ParameterID { ids.level, version }, name + "Level",
+            ParameterID { ids.level, version }, "Osc " + String (index + 1) + " Level",
             NormalisableRange<float> (0.0f, 1.0f), defaults.level,
             AudioParameterFloatAttributes().withStringFromValueFunction (percentFromValue)));
-
-        const int    stackVersion = index == 0 ? 1 : 4;
-        const String stackName    = index == 0 ? String() : name;
         layout.add (std::make_unique<AudioParameterInt> (
             ParameterID { ids.voices, stackVersion }, stackName + "Voices", 1, Unison::maxVoices, defaults.voices));
         layout.add (std::make_unique<AudioParameterFloat> (
@@ -106,44 +110,44 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
             AudioParameterFloatAttributes().withStringFromValueFunction (percentFromValue)));
     };
 
-    addOscillator (0, 2);
-    addOscillator (1, 2);
-    addOscillator (2, 3);
-    addOscillator (3, 3);
+    for (int index = 0; index < Synth2Engine::numOscillators; ++index)
+    {
+        addOscillator (index, index < 2 ? 2 : 3);
+        addLevelAndStack (index, index < 2 ? 2 : 3);
+    }
 
     // Each oscillator's and envelope's power switch (version 7), on to start
     // with. Unlike whether a module is on the bench, these can be automated.
     for (int index = 0; index < Synth2Engine::numOscillators; ++index)
         layout.add (std::make_unique<AudioParameterBool> (
-            ParameterID { ParamID::oscillators[index].active, 7 }, "Osc " + String (index + 1) + " Active", true));
+            ParameterID { ParamID::oscillator (index).active, 7 }, "Osc " + String (index + 1) + " Active", true));
     for (int index = 0; index < Synth2Engine::numEnvelopes; ++index)
         layout.add (std::make_unique<AudioParameterBool> (
-            ParameterID { ParamID::envelopes[index].active, 7 }, "Env " + String (index + 1) + " Active", true));
+            ParameterID { ParamID::envelope (index).active, 7 }, "Env " + String (index + 1) + " Active", true));
 
     // The four envelopes: each on the bench or not, its times in seconds,
     // skewed so the short times, where the ear is fussiest, get most of the
     // knob, and its sustain level. (ENV 1's attack and release keep their
     // original IDs; the DAHDSR stages came in version 5, set so that older
     // sessions sound as they did: no delay or hold, sustaining at the top.)
+    const auto time = [&] (const char* id, int idVersion, const String& timeName, float from, float to, float centre, float value)
+    {
+        NormalisableRange range (from, to);
+        range.setSkewForCentre (centre);
+        layout.add (std::make_unique<AudioParameterFloat> (
+            ParameterID { id, idVersion }, timeName, range, value,
+            AudioParameterFloatAttributes().withStringFromValueFunction (timeFromValue)));
+    };
     const auto addEnvelope = [&] (int index)
     {
-        const auto& ids      = ParamID::envelopes[index];
+        const auto& ids      = ParamID::envelope (index);
         const auto  defaults = Synth2Engine::Settings {}.envelopes[(size_t) index];
         const String name    = index == 0 ? String() : "Env " + String (index + 1) + " ";
         const int    version = index == 0 ? 1 : 4;
+        const String stageName = "Env " + String (index + 1) + " ";
 
         layout.add (std::make_unique<AudioParameterBool> (
-            ParameterID { ids.on, 4 }, "Env " + String (index + 1) + " On", false, onOff (false)));
-
-        const String stageName = "Env " + String (index + 1) + " ";
-        const auto time = [&] (const char* id, int idVersion, const String& timeName, float from, float to, float centre, float value)
-        {
-            NormalisableRange range (from, to);
-            range.setSkewForCentre (centre);
-            layout.add (std::make_unique<AudioParameterFloat> (
-                ParameterID { id, idVersion }, timeName, range, value,
-                AudioParameterFloatAttributes().withStringFromValueFunction (timeFromValue)));
-        };
+            ParameterID { ids.on, 4 }, stageName + "On", false, onOff (false)));
         time (ids.delay,   5,       stageName + "Delay",   0.0f,   5.0f,  0.2f, defaults.delaySeconds);
         time (ids.attack,  version, name + "Attack",       0.001f, 5.0f,  0.2f, defaults.attackSeconds);
         time (ids.hold,    5,       stageName + "Hold",    0.0f,   5.0f,  0.2f, defaults.holdSeconds);
@@ -177,7 +181,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
 
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::delayOn, 6 }, "Delay On", effects.delay.on));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::delaySync, 6 }, "Delay Sync", effects.delay.sync));
-    NormalisableRange<float> delayRange (Effects::minTimeMs, Effects::maxTimeMs, 1.0f);
+    NormalisableRange delayRange (Effects::minTimeMs, Effects::maxTimeMs, 1.0f);
     delayRange.setSkewForCentre (300.0f);
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { ParamID::delayTime, 6 }, "Delay Time", delayRange, effects.delay.timeMs,
@@ -200,7 +204,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
     percent (ParamID::reverbDamping, "Reverb Damping", 1.0f, effects.reverb.damping);
     percent (ParamID::reverbWidth,   "Reverb Width",   1.0f, effects.reverb.width);
     percent (ParamID::reverbMix,     "Reverb Mix",     1.0f, effects.reverb.mix);
-    NormalisableRange<float> preDelayRange (0.0f, Effects::maxPreDelayMs, 1.0f);
+    NormalisableRange preDelayRange (0.0f, Effects::maxPreDelayMs, 1.0f);
     preDelayRange.setSkewForCentre (40.0f);
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { ParamID::reverbPreDelay, 6 }, "Reverb Pre-Delay", preDelayRange, effects.reverb.preDelayMs,
@@ -272,7 +276,7 @@ Synth2Engine::Settings Synth2AudioProcessor::currentSettings() const noexcept
 
         // A switched-off envelope lets its oscillator through unshaped.
         const int shapedBy  = envelopeFor[(size_t) flow][k].load (std::memory_order_relaxed);
-        oscillator.envelope = shapedBy >= 0 && param (ParamID::envelopes[shapedBy].active) >= 0.5f ? shapedBy : -1;
+        oscillator.envelope = shapedBy >= 0 && param (ParamID::envelope (shapedBy).active) >= 0.5f ? shapedBy : -1;
     }
     for (size_t e = 0; e < settings.envelopes.size(); ++e)
     {
@@ -312,8 +316,8 @@ Synth2Engine::Settings Synth2AudioProcessor::currentSettings() const noexcept
     reverb.mix     = param (ParamID::reverbMix);
     reverb.preDelayMs = param (ParamID::reverbPreDelay);
 
-    settings.effects.order = Effects::decode (effectsChain.load (std::memory_order_relaxed));
-    settings.effects.bpm   = hostBpm.load (std::memory_order_relaxed);
+    settings.effects.order = Effects::decode (effectsChain.load());
+    settings.effects.bpm   = hostBpm.load();
     settings.outputDb = param (ParamID::output);
     return settings;
 }
@@ -342,10 +346,10 @@ void Synth2AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     juce::ScopedNoDenormals noDenormals;
 
     // A synced delay follows the host's tempo (or keeps the last one it had).
-    if (auto* playHead = getPlayHead())
-        if (const auto position = playHead->getPosition())
+    if (const auto* host = getPlayHead())
+        if (const auto position = host->getPosition())
             if (const auto bpm = position->getBpm(); bpm.hasValue() && *bpm > 0.0)
-                hostBpm.store (*bpm, std::memory_order_relaxed);
+                hostBpm.store (*bpm);
 
     engine.setSettings (currentSettings());
     playOnScreenKeys();
@@ -557,7 +561,7 @@ void Synth2AudioProcessor::followBench()
 
 void Synth2AudioProcessor::followRack()
 {
-    effectsChain.store (Effects::encode (Rack::Model (apvts).chain()), std::memory_order_relaxed);
+    effectsChain.store (Effects::encode (Rack::Model (apvts).chain()));
 }
 
 void Synth2AudioProcessor::valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTree&)

@@ -269,11 +269,13 @@ struct AmpDisplayState
 
     friend bool operator== (const AmpDisplayState& a, const AmpDisplayState& b) noexcept
     {
-        const auto same = [] (float x, float y) { return juce::exactlyEqual (x, y); };
-        const auto& x = a.dials;
-        const auto& y = b.dials;
-        if (! (same (x.delay, y.delay) && same (x.attack, y.attack) && same (x.hold, y.hold) && same (x.decay, y.decay)
-               && same (x.sustain, y.sustain) && same (x.release, y.release)
+        const auto same      = [] (float x, float y) { return juce::exactlyEqual (x, y); };
+        const auto sameDials = [&same] (const auto& x, const auto& y)
+        {
+            return same (x.delay, y.delay) && same (x.attack, y.attack) && same (x.hold, y.hold) && same (x.decay, y.decay)
+                && same (x.sustain, y.sustain) && same (x.release, y.release);
+        };
+        if (! (sameDials (a.dials, b.dials)
                && same (a.attackSeconds, b.attackSeconds) && same (a.releaseSeconds, b.releaseSeconds)
                && same (a.outputDb, b.outputDb)))
             return false;
@@ -478,8 +480,8 @@ public:
             { at (e.releaseEnd, 0.0f), Stage::release } } };
         juce::Path fill;
         fill.startNewSubPath (corners.front().first);
-        for (const auto& corner : corners)
-            fill.lineTo (corner.first);
+        for (const auto& [corner, stage] : corners)
+            fill.lineTo (corner);
         fill.closeSubPath();
         const auto washColour = colourFor (Stage::sustain);
         juce::ColourGradient wash (washColour.withAlpha (0.18f), 0.0f, at (0.0f, e.peak).y,
@@ -613,7 +615,7 @@ private:
         if (h < 0 || parameters[0] == nullptr)
             return Synth2::Format::decibels (amp.outputDb);
         juce::String text (names[(size_t) h]);
-        for (auto* p : parametersFor ((Handle) h))
+        for (const auto* p : parametersFor ((Handle) h))
             text << "  " << p->getCurrentValueAsText();
         return text;
     }

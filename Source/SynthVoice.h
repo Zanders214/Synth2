@@ -242,7 +242,7 @@ private:
 
     // Adds one oscillator's chunk into left / right: its sounding copies, one
     // row each, already under the part's envelope, then each faded and panned.
-    void renderPart (Part& part, const VoiceSettings::Oscillator& osc, float* left, float* right, int numSamples, float ramp) noexcept
+    void renderPart (Part& part, const VoiceSettings::Oscillator& osc, float* left, float* right, int numSamples, float ramp) const noexcept
     {
         const int count = Unison::clampVoices (osc.voices);
 
@@ -327,7 +327,9 @@ private:
     }
 
     // Adds copy `index`'s chunk (already levelled) into left / right, faded and panned.
-    void mix (Copy& copy, bool wanted, int count, int index, float width, bool relayout, const float* samples,
+    // (Its arguments stay apart: bundling the output into a struct measured
+    // about 1% slower, and this runs for every copy of every note.)
+    void mix (Copy& copy, bool wanted, int count, int index, float width, bool relayout, const float* samples,   // NOSONAR(cpp:S107): hot path, see above
               float* left, float* right, int numSamples, float ramp) const noexcept
     {
         const float target = wanted ? 1.0f : 0.0f;

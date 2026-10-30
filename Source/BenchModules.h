@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <cmath>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -19,6 +20,27 @@ namespace BenchStyle
 {
     // Each module's dials run part of the spectrum, cyan to amber.
     inline juce::Colour dialColour (float position) { return Synth2::ColourMath::spectrum (position); }
+
+    /** The bench's (and the effects') area: a dark rounded well with a faint
+        dot grid, texture only, nothing snaps to it. */
+    inline void paintArea (juce::Graphics& g, juce::Rectangle<float> area, float s)
+    {
+        using namespace Synth2;
+        g.setColour (Palette::well.withAlpha (0.55f));
+        g.fillRoundedRectangle (area, 16.0f * s);
+        g.setColour (Palette::hairline);
+        g.drawRoundedRectangle (area.reduced (0.5f), 16.0f * s, juce::jmax (1.0f, s));
+
+        g.setColour (Palette::gridLine.withMultipliedAlpha (1.6f));
+        const float spacing = 24.0f * s;
+        const float dot     = juce::jmax (1.5f, 2.0f * s);
+        const int   rows    = (int) std::ceil ((area.getHeight() - spacing * 1.5f) / spacing);
+        const int   columns = (int) std::ceil ((area.getWidth()  - spacing * 1.5f) / spacing);
+        for (int row = 0; row < rows; ++row)
+            for (int column = 0; column < columns; ++column)
+                g.fillEllipse (area.getX() + spacing * (float) (column + 1) - dot * 0.5f,
+                               area.getY() + spacing * (float) (row + 1) - dot * 0.5f, dot, dot);
+    }
 
     /** A dial's value as it reads under the dial. */
     inline juce::String dialText (const juce::String& id, float value)
@@ -47,13 +69,15 @@ namespace BenchStyle
         return Format::percent (value);   // the levels, WIDTH, SUSTAIN and the effects' amounts
     }
 
-    /** A dial's name and value, stacked under it in `column`: the name in
-        grey, the value in the dial's own colour. */
-    inline void paintDialLabel (juce::Graphics& g, juce::Rectangle<float> column, float dialBottom, const juce::String& name,
+    /** A dial's name and value, stacked in `under` (its column, from the
+        dial's bottom down): the name in grey, the value in the dial's own
+        colour. */
+    inline void paintDialLabel (juce::Graphics& g, juce::Rectangle<float> under, const juce::String& name,
                                 const juce::String& value, juce::Colour colour, float alpha, float s)
     {
         using namespace Synth2;
-        const float textTop = dialBottom + 6.0f * s;
+        const auto  column  = under;
+        const float textTop = under.getY() + 6.0f * s;
         g.setFont (Fonts::sans (10.0f * s, true, 0.10f));
         g.setColour (Palette::textMid.withMultipliedAlpha (alpha));
         g.drawText (name, juce::Rectangle (column.getX(), textTop, column.getWidth(), 12.0f * s),
@@ -67,7 +91,7 @@ namespace BenchStyle
 
     /** A dial in the house style, tied to its parameter. */
     inline void setUpDial (juce::Slider& dial, juce::Colour colour, juce::LookAndFeel& looks,
-                           juce::AudioProcessorValueTreeState& state, const char* paramId)
+                           const juce::AudioProcessorValueTreeState& state, const char* paramId)
     {
         dial.setSliderStyle (juce::Slider::RotaryVerticalDrag);
         // 270 degree sweep from 7:30 to 4:30. JUCE wants non-negative angles, so
@@ -198,7 +222,7 @@ public:
     bool isOpen() const noexcept { return isVisible(); }
     int  getNumChoices() const noexcept { return (int) choices.size(); }
     const Choice& getChoice (int index) const { return choices[(size_t) index]; }
-    const juce::String& getTitle() const noexcept { return title; }
+    const juce::String& getCaption() const noexcept { return title; }
 
     juce::Rectangle<float> trayBounds() const noexcept
     {
@@ -239,8 +263,7 @@ public:
         if (key == juce::KeyPress::escapeKey)
             close();
         else if (key == juce::KeyPress::downKey || key == juce::KeyPress::upKey)
-            setHighlighted ((juce::jmax (0, highlighted) + (key == juce::KeyPress::downKey ? (highlighted < 0 ? 0 : 1) : -1)
-                             + (int) choices.size()) % juce::jmax (1, (int) choices.size()));
+            setHighlighted (stepHighlight (key == juce::KeyPress::downKey ? 1 : -1));
         else if (key == juce::KeyPress::returnKey && highlighted >= 0)
             pick (highlighted);
         else
@@ -320,6 +343,16 @@ private:
         return top;
     }
 
+    // The choice `direction` (1 down, -1 up) from the highlighted one,
+    // wrapping round; down from none is the first.
+    int stepHighlight (int direction) const noexcept
+    {
+        const int count = juce::jmax (1, (int) choices.size());
+        if (highlighted < 0 && direction > 0)
+            return 0;
+        return (juce::jmax (0, highlighted) + direction + count) % count;
+    }
+
     void setHighlighted (int index)
     {
         if (index == highlighted)
@@ -377,22 +410,22 @@ public:
 
     ~BenchModule() override
     {
-        for (auto& dial : dials)
+        for (const auto& dial : dials)
             dial->slider.setLookAndFeel (nullptr);
     }
 
     const Bench::ModuleId& getId() const noexcept { return id; }
-    const juce::String& getTitle() const noexcept { return title; }
+    const juce::String& getCaption() const noexcept { return title; }
 
     enum class Jack { out, in };
-    enum JackPhase { jackDown, jackDrag, jackUp };
+    enum class JackPhase { down, drag, up };
 
     /** The cross was clicked. */
     void onRemove (std::function<void()> handler) { removeHandler = std::move (handler); }
     /** The header was dragged and let go, the module's top left now here (in its parent). */
     void onMoved (std::function<void (juce::Point<int>)> handler) { movedHandler = std::move (handler); }
     /** A jack was pressed, dragged or let go (the event is the module's). */
-    void onJack (std::function<void (Jack, const juce::MouseEvent&, int phase)> handler) { jackHandler = std::move (handler); }
+    void onJack (std::function<void (Jack, const juce::MouseEvent&, JackPhase)> handler) { jackHandler = std::move (handler); }
 
     void setUiScale (float newScale)
     {
@@ -409,7 +442,7 @@ public:
             return;
         view = newView;
         const bool withDials = Bench::showsDials (id.kind, view);
-        for (auto& dial : dials)
+        for (const auto& dial : dials)
             dial->slider.setVisible (withDials);
         resized();
         repaint();
@@ -525,7 +558,7 @@ public:
             {
                 heldJack = which;
                 if (jackHandler != nullptr)
-                    jackHandler (which, e, jackDown);
+                    jackHandler (which, e, JackPhase::down);
                 return;
             }
         if (closeBounds().contains (e.position))
@@ -548,13 +581,13 @@ public:
         if (heldJack.has_value())
         {
             if (jackHandler != nullptr)
-                jackHandler (*heldJack, e, jackDrag);
+                jackHandler (*heldJack, e, JackPhase::drag);
             return;
         }
         if (! dragging)
             return;
 
-        auto* parent = getParentComponent();
+        const auto* parent = getParentComponent();
         auto topLeft = dragStart + e.getOffsetFromDragStart();
         if (parent != nullptr)
             topLeft = juce::Point<int> (juce::jlimit (0, juce::jmax (0, parent->getWidth() - getWidth()), topLeft.x),
@@ -569,7 +602,7 @@ public:
             const auto which = *heldJack;
             heldJack.reset();
             if (jackHandler != nullptr)
-                jackHandler (which, e, jackUp);
+                jackHandler (which, e, JackPhase::up);
             return;
         }
         if (! dragging)
@@ -699,7 +732,7 @@ private:
     {
         for (const auto& dial : dials)
             if (dial->slider.isVisible())
-                BenchStyle::paintDialLabel (g, dial->column.toFloat(), dial->slider.getBounds().toFloat().getBottom(), dial->name,
+                BenchStyle::paintDialLabel (g, dial->column.toFloat().withTop (dial->slider.getBounds().toFloat().getBottom()), dial->name,
                                             BenchStyle::dialText (dial->paramId, state.getRawParameterValue (dial->paramId)->load()),
                                             dial->colour, dim.shown ? 0.4f : 1.0f, uiScale);
     }
@@ -712,7 +745,7 @@ private:
 
     std::function<void()> removeHandler;
     std::function<void (juce::Point<int>)> movedHandler;
-    std::function<void (Jack, const juce::MouseEvent&, int)> jackHandler;
+    std::function<void (Jack, const juce::MouseEvent&, JackPhase)> jackHandler;
 
     // Why the module is greyed out: switched off, or left out of the flow.
     struct Dim
@@ -739,7 +772,7 @@ private:
         for (auto* child : getChildren())
             if (child != &power)
                 child->setAlpha (now ? 0.4f : 1.0f);
-        for (auto& dial : dials)
+        for (const auto& dial : dials)
             dial->slider.setTooltip (now ? why : state.getParameter (dial->paramId)->getName (64));
         repaint();
     }
@@ -763,13 +796,13 @@ class OscillatorModule final : public BenchModule
 public:
     OscillatorModule (int slot, Synth2LookAndFeel& looksToUse, juce::AudioProcessorValueTreeState& stateToUse)
         : BenchModule ({ Bench::Kind::oscillator, slot }, "OSC " + juce::String (slot + 1), looksToUse, stateToUse,
-                       ParamID::oscillators[slot].active, "Switched off: silent until you switch it back on"),
-          picker (*stateToUse.getParameter (ParamID::oscillators[slot].wave))
+                       ParamID::oscillator (slot).active, "Switched off: silent until you switch it back on"),
+          picker (*stateToUse.getParameter (ParamID::oscillator (slot).wave))
     {
         display.setCaption ("WAVE");
         addAndMakeVisible (display);
         addAndMakeVisible (picker);
-        const auto& ids = ParamID::oscillators[slot];
+        const auto& ids = ParamID::oscillator (slot);
         addDial (ids.pitch,  "PITCH",  BenchStyle::dialColour (0.0f));
         addDial (ids.fine,   "FINE",   BenchStyle::dialColour (0.2f));
         addDial (ids.level,  "LEVEL",  BenchStyle::dialColour (0.4f));
@@ -818,10 +851,10 @@ class EnvelopeModule final : public BenchModule
 public:
     EnvelopeModule (int slot, Synth2LookAndFeel& looksToUse, juce::AudioProcessorValueTreeState& stateToUse)
         : BenchModule ({ Bench::Kind::envelope, slot }, "ENV " + juce::String (slot + 1), looksToUse, stateToUse,
-                       ParamID::envelopes[slot].active, "Switched off: its oscillator plays as if it had no envelope")
+                       ParamID::envelope (slot).active, "Switched off: its oscillator plays as if it had no envelope")
     {
         addAndMakeVisible (display);
-        const auto& ids = ParamID::envelopes[slot];
+        const auto& ids = ParamID::envelope (slot);
         const std::array<std::pair<const char*, const char*>, 6> stages { {
             { ids.delay, "DELAY" }, { ids.attack, "ATTACK" }, { ids.hold, "HOLD" },
             { ids.decay, "DECAY" }, { ids.sustain, "SUSTAIN" }, { ids.release, "RELEASE" } } };

@@ -42,7 +42,6 @@ namespace Effects
         static constexpr double diffusionMs   = 70.0;   // the four diffusion steps together
         static constexpr double shortestMs    = 55.0;   // the feedback lines run from here to twice it
         static constexpr double driftMs       = 0.35;   // how far each line's length drifts
-        static constexpr double maxPreDelayMs = 250.0;
         static constexpr double lowCutHz      = 140.0;
 
         /** The room to aim for: how long it rings (to -60 dB), how dull it
@@ -101,7 +100,7 @@ namespace Effects
                 meanLength += line.length / (double) channels;
 
             for (auto& line : pre)
-                line.resize ((size_t) (maxPreDelayMs * 0.001 * sampleRate) + 4);
+                line.resize ((size_t) ((double) Effects::maxPreDelayMs * 0.001 * sampleRate) + 4);
 
             drift    = driftMs * 0.001 * sampleRate;
             lowCut   = (float) (1.0 - std::exp (-6.283185307179586 * lowCutHz / sampleRate));
@@ -115,7 +114,7 @@ namespace Effects
             target.seconds    = std::clamp (shape.seconds, 0.1, 30.0);
             target.damping    = std::clamp (shape.damping, 0.0f, 1.0f);
             target.width      = std::clamp (shape.width, 0.0f, 1.0f);
-            target.preDelayMs = std::clamp (shape.preDelayMs, 0.0, maxPreDelayMs);
+            target.preDelayMs = std::clamp (shape.preDelayMs, 0.0, (double) Effects::maxPreDelayMs);
         }
 
         /** Replaces the pair with the room's sound, in place. */

@@ -208,7 +208,8 @@ namespace Effects
             // TIME glides with a 50 ms time constant.
             wow.prepare (sampleRate);
             time.glide   = 1.0 - std::exp (-1.0 / (0.05 * sampleRate));
-            time.current = time.target = targetSamples();
+            time.target  = targetSamples();
+            time.current = time.target;
             clear();
         }
 

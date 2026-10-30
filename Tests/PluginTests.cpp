@@ -142,8 +142,8 @@ void testProcessorBasics()
     check (p.acceptsMidi() && ! p.producesMidi() && ! p.isMidiEffect(), "takes MIDI in, makes none");
     check (p.hasEditor(), "has an editor");
 
-    for (const auto* id : { ParamID::wave, ParamID::voices, ParamID::detune, ParamID::width,
-                            ParamID::attack, ParamID::release, ParamID::output,
+    for (const auto* id : { ParamID::osc1Wave, ParamID::osc1Voices, ParamID::osc1Detune, ParamID::osc1Width,
+                            ParamID::env1Attack, ParamID::env1Release, ParamID::output,
                             ParamID::osc1Pitch, ParamID::osc1Fine, ParamID::osc1Level,
                             ParamID::osc2On, ParamID::osc2Wave, ParamID::osc2Pitch, ParamID::osc2Fine, ParamID::osc2Level,
                             ParamID::osc4Voices, ParamID::osc4Detune, ParamID::osc4Width,
@@ -154,9 +154,9 @@ void testProcessorBasics()
     check (p.getState().getParameter (ParamID::unisonOn) == nullptr && p.getState().getParameter (ParamID::envelopeOn) == nullptr,
            "the first bench's shared unison and envelope switches are gone");
 
-    check (approx (param (p, ParamID::wave), (float) Waveform::saw, 1e-6f), "starts on the saw");
-    check (approx (param (p, ParamID::voices), 1.0f, 1e-6f), "starts with one voice");
-    check (approx (param (p, ParamID::detune), 15.0f, 1e-4f) && approx (param (p, ParamID::width), 0.5f, 1e-6f),
+    check (approx (param (p, ParamID::osc1Wave), (float) Waveform::saw, 1e-6f), "starts on the saw");
+    check (approx (param (p, ParamID::osc1Voices), 1.0f, 1e-6f), "starts with one voice");
+    check (approx (param (p, ParamID::osc1Detune), 15.0f, 1e-4f) && approx (param (p, ParamID::osc1Width), 0.5f, 1e-6f),
            "DETUNE and WIDTH start at 15 ct and 50%, ready for when VOICES goes up");
     check (approx (param (p, ParamID::env2Delay), 0.0f, 1e-6f) && approx (param (p, ParamID::env2Hold), 0.0f, 1e-6f)
                && approx (param (p, ParamID::env2Sustain), 1.0f, 1e-6f) && approx (param (p, ParamID::env2Decay), 0.3f, 1e-4f),
@@ -166,7 +166,7 @@ void testProcessorBasics()
     check (sustain->getText (sustain->convertTo0to1 (0.4f), 32) == "40 %" && hold->getText (hold->convertTo0to1 (0.25f), 32) == "250 ms",
            "SUSTAIN reads as a level, HOLD as a time");
 
-    setParam (p, ParamID::release, 2.0f);
+    setParam (p, ParamID::env1Release, 2.0f);
     setParam (p, ParamID::osc1On, 1.0f);
     check (approx ((float) p.getTailLengthSeconds(), Synth2Engine::gateReleaseSeconds, 1e-4f), "without an envelope, the tail is a few ms");
     setParam (p, ParamID::env1On, 1.0f);
@@ -238,9 +238,9 @@ void testProcessorBasics()
     setParam (p, ParamID::delayTime, 375.0f);
     setParam (p, ParamID::delayFeedback, 0.35f);
 
-    auto* detune = p.getState().getParameter (ParamID::detune);
+    auto* detune = p.getState().getParameter (ParamID::osc1Detune);
     check (detune->getText (detune->convertTo0to1 (12.5f), 32) == "12.5 ct", "DETUNE reads in cents");
-    auto* attack = p.getState().getParameter (ParamID::attack);
+    auto* attack = p.getState().getParameter (ParamID::env1Attack);
     check (attack->getText (attack->convertTo0to1 (0.25f), 32) == "250 ms"
                && attack->getText (attack->convertTo0to1 (1.5f), 32) == "1.50 s",
            "times read in ms below a second, s above");
@@ -394,7 +394,7 @@ void testPlaying()
     juce::MidiBuffer note;
     note.addEvent (juce::MidiMessage::noteOn (1, 57, 1.0f), 0);
     const float oneVoice = playAndMeasure (p, note, 20);
-    setParam (p, ParamID::voices, 9.0f);
+    setParam (p, ParamID::osc1Voices, 9.0f);
     const float nineVoices = playAndMeasure (p, {}, 20);
     check (nineVoices > 0.5f * oneVoice && nineVoices < 2.0f * oneVoice,
            "turning VOICES up mid-note keeps the level steady");
@@ -430,12 +430,12 @@ void testStateRoundTrip()
     std::printf ("State round trip:\n");
 
     Synth2AudioProcessor a;
-    setParam (a, ParamID::wave, (float) Waveform::square);
-    setParam (a, ParamID::voices, 7.0f);
-    setParam (a, ParamID::detune, 33.0f);
-    setParam (a, ParamID::width, 0.8f);
-    setParam (a, ParamID::attack, 0.5f);
-    setParam (a, ParamID::release, 3.0f);
+    setParam (a, ParamID::osc1Wave, (float) Waveform::square);
+    setParam (a, ParamID::osc1Voices, 7.0f);
+    setParam (a, ParamID::osc1Detune, 33.0f);
+    setParam (a, ParamID::osc1Width, 0.8f);
+    setParam (a, ParamID::env1Attack, 0.5f);
+    setParam (a, ParamID::env1Release, 3.0f);
     setParam (a, ParamID::output, -4.0f);
 
     juce::MemoryBlock saved;
@@ -443,12 +443,12 @@ void testStateRoundTrip()
 
     Synth2AudioProcessor b;
     b.setStateInformation (saved.getData(), (int) saved.getSize());
-    check (approx (param (b, ParamID::wave), (float) Waveform::square, 1e-6f), "WAVE comes back");
-    check (approx (param (b, ParamID::voices), 7.0f, 1e-6f), "VOICES comes back");
-    check (approx (param (b, ParamID::detune), 33.0f, 0.01f), "DETUNE comes back");
-    check (approx (param (b, ParamID::width), 0.8f, 0.001f), "WIDTH comes back");
-    check (approx (param (b, ParamID::attack), 0.5f, 0.001f), "ATTACK comes back");
-    check (approx (param (b, ParamID::release), 3.0f, 0.001f), "RELEASE comes back");
+    check (approx (param (b, ParamID::osc1Wave), (float) Waveform::square, 1e-6f), "WAVE comes back");
+    check (approx (param (b, ParamID::osc1Voices), 7.0f, 1e-6f), "VOICES comes back");
+    check (approx (param (b, ParamID::osc1Detune), 33.0f, 0.01f), "DETUNE comes back");
+    check (approx (param (b, ParamID::osc1Width), 0.8f, 0.001f), "WIDTH comes back");
+    check (approx (param (b, ParamID::env1Attack), 0.5f, 0.001f), "ATTACK comes back");
+    check (approx (param (b, ParamID::env1Release), 3.0f, 0.001f), "RELEASE comes back");
     check (approx (param (b, ParamID::output), -4.0f, 0.01f), "OUTPUT comes back");
 
     // The bench comes back as it was left: what is on it, where, and the cables.
@@ -488,12 +488,12 @@ void testStateRoundTrip()
         auto older = a.getState().copyState().createCopy();
         older.removeChild (older.getChildWithName (Bench::benchType), nullptr);
         std::vector<juce::String> newer { ParamID::osc1On, ParamID::signalFlow };
-        for (const auto& osc : { ParamID::oscillators[1], ParamID::oscillators[2], ParamID::oscillators[3] })
+        for (const auto& osc : { ParamID::oscillator (1), ParamID::oscillator (2), ParamID::oscillator (3) })
             newer.insert (newer.end(), { osc.voices, osc.detune, osc.width });
         for (const auto& env : ParamID::envelopes)
             newer.insert (newer.end(), { env.on, env.attack, env.release });
         for (const auto& id : newer)
-            if (id != ParamID::attack && id != ParamID::release)
+            if (id != ParamID::env1Attack && id != ParamID::env1Release)
                 older.removeChild (older.getChildWithProperty ("id", id), nullptr);
         for (const auto& [id, value] : values)
         {
@@ -536,7 +536,7 @@ void testStateRoundTrip()
     const Bench::Model benchF (f->getState());
     check (benchF.isPresent (osc1) && ! benchF.isPresent (env1) && benchF.present().size() == 1,
            "one that saved its modules' switches, but no layout, keeps the switches as saved");
-    check (approx (param (*f, ParamID::voices), 1.0f, 1e-6f), "with unison off, each oscillator plays one voice");
+    check (approx (param (*f, ParamID::osc1Voices), 1.0f, 1e-6f), "with unison off, each oscillator plays one voice");
 
     // One from the first bench: its unison module goes into the oscillators,
     // its envelope becomes ENV 1 and a copy for OSC 2, and the cables run
@@ -575,7 +575,7 @@ void testStateRoundTrip()
     // Junk is ignored rather than resetting the sound.
     const char junk[] = "not a synth state";
     b.setStateInformation (junk, (int) sizeof (junk));
-    check (approx (param (b, ParamID::voices), 7.0f, 1e-6f), "a bad state is ignored");
+    check (approx (param (b, ParamID::osc1Voices), 7.0f, 1e-6f), "a bad state is ignored");
 }
 
 // ---- The editor ------------------------------------------------------------------
@@ -682,7 +682,7 @@ void testEditor()
     };
 
     clickBench ({ 150.0f, 40.0f });
-    check (tray.isOpen() && tray.getTitle() == "ADD TO THE BENCH" && tray.getNumChoices() == 2, "a click on the bench opens the add tray");
+    check (tray.isOpen() && tray.getCaption() == "ADD TO THE BENCH" && tray.getNumChoices() == 2, "a click on the bench opens the add tray");
     check (tray.getChoice (0).name == "Oscillator" && tray.getChoice (0).detail.startsWith ("4 of 4 left")
                && tray.getChoice (1).name == "Envelope" && tray.getChoice (1).detail.startsWith ("4 of 4 left"),
            "offering an oscillator and an envelope, four of each");
@@ -701,7 +701,7 @@ void testEditor()
     Bench::Model model (p.getState());
     check (! tray.isOpen() && param (p, ParamID::osc1On) >= 0.5f, "picking Oscillator puts OSC 1 on the bench");
     check (pumpUntil ([&osc1] { return osc1.isVisible() && osc1.getAlpha() >= 1.0f; }), "which fades in");
-    check (osc1.getTitle() == "OSC 1" && model.positionOf (osc1.getId()) == juce::Point<float> (32.0f, 25.0f)
+    check (osc1.getCaption() == "OSC 1" && model.positionOf (osc1.getId()) == juce::Point<float> (32.0f, 25.0f)
                && osc1.getBounds() == juce::Rectangle<int> (32, 25, 236, 336),
            "under the click, its header where the click was");
     check (osc1.getNumDials() == 6, "with its own unison stack under PITCH / FINE / LEVEL");
@@ -745,7 +745,7 @@ void testEditor()
     check (tray.isOpen(), "and picking it does nothing");
     tray.mouseDown (mouseAt (tray, tray.choiceBounds (1).getCentre()));   // ENV 1 at (0, 352)
     auto& env1 = bench.getEnvelope (0);
-    check (pumpUntil ([&env1] { return env1.isVisible() && env1.getAlpha() >= 1.0f; }) && env1.getTitle() == "ENV 1"
+    check (pumpUntil ([&env1] { return env1.isVisible() && env1.getAlpha() >= 1.0f; }) && env1.getCaption() == "ENV 1"
                && env1.getBounds() == juce::Rectangle<int> (0, 352, 236, 336),
            "picking Envelope puts ENV 1 on the bench");
     addAt (1, { 370.0f, 367.0f });    // ENV 2 at (252, 352)
@@ -789,11 +789,11 @@ void testEditor()
            "OSC 3's dials set its own PITCH and LEVEL");
     check (pumpUntil ([&osc3] { return approx (osc3.getDisplay().getOsc().level, 0.5f, 1e-6f) && osc3.getDisplay().getOsc().cycles > 3.9f; }),
            "and its well shows twice the cycles, half as tall");
-    const float osc1Voices = param (p, ParamID::voices);
+    const float osc1VoicesBefore = param (p, ParamID::osc1Voices);
     osc3.getDial (3).setValue (5.0, juce::sendNotificationSync);
     osc3.getDial (4).setValue (40.0, juce::sendNotificationSync);
     check (approx (param (p, ParamID::osc3Voices), 5.0f, 1e-6f) && approx (param (p, ParamID::osc3Detune), 40.0f, 0.01f)
-               && approx (param (p, ParamID::voices), osc1Voices, 1e-6f),
+               && approx (param (p, ParamID::osc1Voices), osc1VoicesBefore, 1e-6f),
            "its VOICES and DETUNE stack OSC 3 alone");
     check (pumpUntil ([&osc3] { return osc3.getDisplay().getState().voices == 5; }), "and its well shows a copy per voice");
 
@@ -805,7 +805,7 @@ void testEditor()
            "OSC 1's picker sits over its well");
     check (picker.getSelected() == 2, "its pill shows SAW, the default");
     picker.mouseDown (mouseAt (picker, picker.nextArrow().getCentre()));
-    check (approx (param (p, ParamID::wave), (float) Waveform::square, 1e-6f) && picker.getSelected() == 3,
+    check (approx (param (p, ParamID::osc1Wave), (float) Waveform::square, 1e-6f) && picker.getSelected() == 3,
            "the right arrow steps SAW to SQUARE");
     picker.mouseDown (mouseAt (picker, picker.nextArrow().getCentre()));
     picker.mouseDown (mouseAt (picker, picker.previousArrow().getCentre()));
@@ -830,15 +830,15 @@ void testEditor()
     snapshot (render (*editor), "4-wave-tray");
     menu.mouseMove (mouseAt (menu, menu.tileBounds (1).getCentre()));
     check (menu.getHighlighted() == 1 && well.getShownWave() == Waveform::triangle
-               && approx (param (p, ParamID::wave), (float) Waveform::square, 1e-6f),
+               && approx (param (p, ParamID::osc1Wave), (float) Waveform::square, 1e-6f),
            "hovering TRIANGLE previews it in the well, changing nothing");
     menu.mouseDown (mouseAt (menu, menu.tileBounds (0).getCentre()));
-    check (approx (param (p, ParamID::wave), (float) Waveform::sine, 1e-6f) && ! menu.isOpen(), "clicking SINE picks it and closes the tray");
+    check (approx (param (p, ParamID::osc1Wave), (float) Waveform::sine, 1e-6f) && ! menu.isOpen(), "clicking SINE picks it and closes the tray");
     auto& osc4Picker = bench.getOscillator (3).getPicker();
     osc4Picker.mouseDown (mouseAt (osc4Picker, osc4Picker.nextArrow().getCentre()));
-    check (approx (param (p, ParamID::osc4Wave), (float) Waveform::saw, 1e-6f) && approx (param (p, ParamID::wave), (float) Waveform::sine, 1e-6f),
+    check (approx (param (p, ParamID::osc4Wave), (float) Waveform::saw, 1e-6f) && approx (param (p, ParamID::osc1Wave), (float) Waveform::sine, 1e-6f),
            "OSC 4's arrows step its own shape (TRIANGLE to SAW), not OSC 1's");
-    setParam (p, ParamID::wave, (float) Waveform::square);
+    setParam (p, ParamID::osc1Wave, (float) Waveform::square);
     check (pumpUntil ([&picker] { return picker.getSelected() == 3; }), "a host change of WAVE shows in the pill");
 
     // Keyboard: the keys the host plays light up, without being played twice.
@@ -858,7 +858,7 @@ void testEditor()
 
     // An envelope's well: a dot rides the envelope for each note.
     auto& amp = env1.getDisplay();
-    setParam (p, ParamID::attack, 0.5f);
+    setParam (p, ParamID::env1Attack, 0.5f);
     check (pumpUntil ([&amp] { return approx (amp.getAmpState().attackSeconds, 0.5f, 0.001f); }), "ENV 1's well shows its ATTACK");
     setParam (p, ParamID::env2Attack, 1.5f);
     check (pumpUntil ([&] { return approx (bench.getEnvelope (1).getDisplay().getAmpState().attackSeconds, 1.5f, 0.001f); })
@@ -875,7 +875,7 @@ void testEditor()
     playAndMeasure (p, chordOff, 4);
     playAndMeasure (p, {}, 100);
     check (pumpUntil ([&amp] { return amp.getAmpState().numSounding() == 0; }), "which leave once the notes have faded");
-    setParam (p, ParamID::attack, 0.005f);
+    setParam (p, ParamID::env1Attack, 0.005f);
     setParam (p, ParamID::env2Attack, 0.005f);
 
     // An envelope's six dials, DELAY / ATTACK / HOLD over DECAY / SUSTAIN /
@@ -902,7 +902,7 @@ void testEditor()
     // and each envelope shapes the first oscillator before it without one.
     auto& settings = editor->getSettingsTray();
     editor->mouseDown (mouseAt (*editor, editor->gearBounds().getCentre()));
-    check (settings.isOpen() && settings.getTitle() == "SIGNAL FLOW" && settings.getNumChoices() == 8
+    check (settings.isOpen() && settings.getCaption() == "SIGNAL FLOW" && settings.getNumChoices() == 8
                && settings.getChoice (0).ticked && ! settings.getChoice (1).ticked,
            "the gear opens the signal-flow settings, Fixed order ticked");
     check (settings.getChoice (3).heading == "ENVELOPES" && settings.getChoice (5).name == "Both" && settings.getChoice (5).ticked
@@ -976,13 +976,13 @@ void testEditor()
 
     // ENV 1 shapes only OSC 1: a slow attack on it leaves OSC 2, patched
     // straight to the output, sounding at once.
-    setParam (p, ParamID::attack, 3.0f);
+    setParam (p, ParamID::env1Attack, 3.0f);
     check (holdAndMeasure (p) < 0.01f, "a slow ATTACK on ENV 1 fades OSC 1 in");
     releaseAll (p);
     drag (osc2, Jack::out, outputIn);
     check (model.isPatchedToOutput (o2) && holdAndMeasure (p) > 0.02f, "while OSC 2, straight to the output, sounds at once");
     releaseAll (p);
-    setParam (p, ParamID::attack, 0.005f);
+    setParam (p, ParamID::env1Attack, 0.005f);
     snapshot (render (*editor), "8-cables");
 
     // Picking a cable up: by its oscillator, an envelope's IN or the output's IN.
@@ -1051,8 +1051,8 @@ void testBypass()
 
     // ENV 1 shapes OSC 1 with a slow attack; switched off, OSC 1 plays at once.
     fillBench (p);
-    setParam (p, ParamID::attack, 3.0f);
-    setParam (p, ParamID::release, 2.0f);
+    setParam (p, ParamID::env1Attack, 3.0f);
+    setParam (p, ParamID::env1Release, 2.0f);
     check (holdAndMeasure (p) < 0.01f && approx ((float) p.getTailLengthSeconds(), 2.0f, 0.01f),
            "ENV 1's slow ATTACK fades OSC 1 in, and its RELEASE is the tail");
     releaseAll (p);
@@ -1062,7 +1062,7 @@ void testBypass()
     check (approx ((float) p.getTailLengthSeconds(), Synth2Engine::gateReleaseSeconds, 1e-4f), "and the tail is the short gate");
     releaseAll (p);
     setParam (p, ParamID::env1Active, 1.0f);
-    setParam (p, ParamID::attack, 0.005f);
+    setParam (p, ParamID::env1Attack, 0.005f);
 
     setParam (p, ParamID::osc1Active, 0.0f);
     check (holdAndMeasure (p) < 1e-4f, "OSC 1 switched off is silent");
@@ -1143,7 +1143,7 @@ void testViews()
 
     // Dragging the graph's corners.
     using Handle = AmpDisplay::Handle;
-    auto* attack  = p.getState().getParameter (ParamID::attack);
+    auto* attack  = p.getState().getParameter (ParamID::env1Attack);
     auto* hold    = p.getState().getParameter (ParamID::env1Hold);
     auto* sustain = p.getState().getParameter (ParamID::env1Sustain);
     GestureCount gestures;
@@ -1232,7 +1232,7 @@ void testViews()
            "Compact: the oscillator shows just its shape's pill over its dials");
     check (osc1.getPosition() == oscAt && env1.getPosition() == envAt, "the cards keep their places");
     osc1.getPicker().mouseDown (mouseAt (osc1.getPicker(), osc1.getPicker().nextArrow().getCentre()));
-    check (approx (param (p, ParamID::wave), (float) Waveform::square, 1e-6f), "the pill still steps the shape");
+    check (approx (param (p, ParamID::osc1Wave), (float) Waveform::square, 1e-6f), "the pill still steps the shape");
     snapshot (render (*editor), "16-graph-compact");
 
     // The view is kept with the set, and presets leave it alone.
@@ -1312,7 +1312,7 @@ void testEffectsTab()
     };
 
     clickFor (Rack::defaultPosition (0));
-    check (tray.isOpen() && tray.getTitle() == "ADD AN EFFECT" && tray.getNumChoices() == 3
+    check (tray.isOpen() && tray.getCaption() == "ADD AN EFFECT" && tray.getNumChoices() == 3
                && tray.getChoice (0).name == "Drive" && tray.getChoice (1).name == "Delay" && tray.getChoice (2).name == "Reverb",
            "a click on the area offers a drive, a delay and a reverb");
     check (tray.getChoice (0).enabled && tray.getChoice (1).enabled && tray.getChoice (2).enabled, "all three free");
@@ -1644,7 +1644,7 @@ void testPresets()
     }
 
     // Loading one resets what it doesn't set, and lays the bench out afresh.
-    setParam (p, ParamID::voices, 9.0f);
+    setParam (p, ParamID::osc1Voices, 9.0f);
     setParam (p, ParamID::osc3Voices, 5.0f);
     setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::cables);
     Bench::Model bench (p.getState());
@@ -1654,7 +1654,7 @@ void testPresets()
     bench.connect ({ Bench::Kind::envelope, 0 });
     const int sub = names.indexOf ("Sub Bass");
     p.setCurrentProgram (sub);
-    check (approx (param (p, ParamID::voices), 1.0f, 1e-6f) && approx (param (p, ParamID::osc3Voices), 1.0f, 1e-6f)
+    check (approx (param (p, ParamID::osc1Voices), 1.0f, 1e-6f) && approx (param (p, ParamID::osc3Voices), 1.0f, 1e-6f)
                && approx (param (p, ParamID::signalFlow), 0.0f, 1e-6f),
            "a preset puts back what it doesn't set (each stack's VOICES, the flow)");
     check (bench.cables().empty() && bench.positionOf ({ Bench::Kind::oscillator, 0 }) == juce::Point<float> (0.0f, 0.0f)
@@ -1721,7 +1721,7 @@ void testPresets()
 
     auto& tray = editor->getPresetTray();
     editor->mouseDown (mouseAt (*editor, picker.getCentre()));
-    check (tray.isOpen() && tray.getTitle() == "PRESETS" && tray.getNumChoices() == Presets::numPresets
+    check (tray.isOpen() && tray.getCaption() == "PRESETS" && tray.getNumChoices() == Presets::numPresets
                && tray.getChoice (Presets::numPresets - 1).ticked && ! tray.getChoice (0).ticked,
            "its name opens a tray of them all, the loaded one ticked");
     check (editor->getLocalBounds().toFloat().contains (tray.trayBounds()), "which fits on the face");

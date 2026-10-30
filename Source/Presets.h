@@ -111,10 +111,18 @@ namespace Presets
         std::optional<Drive>  drive {};
     };
 
-    // Note lengths, by name.
-    enum Note { sixteenth = 2, eighth = 5, dottedEighth = 6, quarter = 8, half = 10 };
+    // Note lengths, by name (their place in Effects::divisions).
+    inline constexpr int sixteenth    = 2;
+    inline constexpr int eighth       = 5;
+    inline constexpr int dottedEighth = 6;
+    inline constexpr int quarter      = 8;
+    inline constexpr int half         = 10;
 
-    enum Wave { sine, triangle, saw, square };
+    // The wave shapes, by name (their place in Waveform).
+    inline constexpr int sine     = (int) Waveform::sine;
+    inline constexpr int triangle = (int) Waveform::triangle;
+    inline constexpr int saw      = (int) Waveform::saw;
+    inline constexpr int square   = (int) Waveform::square;
 
     inline const std::array<Preset, 16> factory {{
         { "Empty Bench", "Nothing on it yet: build your own", {}, 0.0f },

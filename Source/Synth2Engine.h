@@ -448,9 +448,7 @@ private:
             }
 
             auto& applied = appliedEnvelopes[k];
-            const auto same = [] (float a, float b) { return juce::exactlyEqual (a, b); };
-            if (same (envelope.delay, applied.delay) && same (envelope.attack, applied.attack) && same (envelope.hold, applied.hold)
-                && same (envelope.decay, applied.decay) && same (envelope.sustain, applied.sustain) && same (envelope.release, applied.release))
+            if (sameStages (envelope, applied))
                 continue;
 
             applied = envelope;
@@ -474,6 +472,13 @@ private:
     Smoothed smoothed;
 
     std::array<Envelope::Parameters, numOscillators> appliedEnvelopes {};
+
+    static bool sameStages (const Envelope::Parameters& a, const Envelope::Parameters& b) noexcept
+    {
+        const auto same = [] (float x, float y) { return juce::exactlyEqual (x, y); };
+        return same (a.delay, b.delay) && same (a.attack, b.attack) && same (a.hold, b.hold)
+            && same (a.decay, b.decay) && same (a.sustain, b.sustain) && same (a.release, b.release);
+    }
     juce::Random  random { 0x5eed };
     std::uint64_t noteCounter = 0;
     std::array<bool, 16> sustainDown {};   // per MIDI channel
