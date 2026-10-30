@@ -297,6 +297,8 @@ namespace Bench
     /** Where a cable goes: the output, or an envelope's IN. */
     using Destination = std::optional<ModuleId>;   // nullopt = the output
 
+    class Migration;
+
     /** The bench in `state`: its modules, where they sit and the cables
         between them. Message thread only. */
     class Model
@@ -310,43 +312,6 @@ namespace Bench
             auto bench = state.state.getOrCreateChildWithName (benchType, nullptr);
             if (! bench.hasProperty (versionProperty))
                 bench.setProperty (versionProperty, currentVersion, nullptr);
-        }
-
-        /** Brings a restored session up to date. `saved` is the state as it
-            was saved (before the parameters it lacked were filled in): one
-            from before the bench is set out as it looked then, and one from
-            the first bench (one unison stack and one envelope for every
-            oscillator) gets each oscillator its own of both. */
-        void migrate (const juce::ValueTree& saved)
-        {
-            if (const auto savedBench = saved.getChildWithName (benchType); ! savedBench.isValid())
-                adoptClassicLayout (saved);
-            else if ((int) savedBench.getProperty (versionProperty, 1) < currentVersion)
-                adoptFirstBench (saved);
-            ensureBench();
-            bench().setProperty (versionProperty, currentVersion, nullptr);
-        }
-
-        /** Sets out a session from before the bench as it looked then: OSC 1
-            (and the other oscillators that were on) along the top, each under
-            its own envelope, and each with the unison stack it shared then.
-            OSC 1 and the envelope were always there, so they go on the bench,
-            unless `saved` already switched them on or off itself. */
-        void adoptClassicLayout (const juce::ValueTree& saved = {})
-        {
-            ensureBench();
-            for (const auto& id : allModules)
-                setPosition (id, defaultPosition (id));
-
-            if (! hasSaved (saved, ParamID::osc1On))
-                setPresent ({ Kind::oscillator, 0 }, true);
-            const bool shaped = savedValue (saved, ParamID::envelopeOn, 1.0f) >= 0.5f;
-            if (! hasSaved (saved, ParamID::envelope (0).on))
-                setPresent ({ Kind::envelope, 0 }, shaped);
-
-            shareUnison (savedValue (saved, ParamID::unisonOn, 1.0f) >= 0.5f);
-            if (isPresent ({ Kind::envelope, 0 }))
-                shareEnvelope();
         }
 
         bool isPresent (const ModuleId& id) const
@@ -674,6 +639,66 @@ namespace Bench
             parameter->endChangeGesture();
         }
 
+        std::vector<juce::Rectangle<float>> othersThan (const ModuleId& id) const
+        {
+            std::vector<juce::Rectangle<float>> others;
+            for (const auto& other : present())
+                if (other != id)
+                    others.push_back (boundsOf (other));
+            return others;
+        }
+
+        juce::AudioProcessorValueTreeState& state;
+
+        friend class Migration;   // moves modules and switches them on as a restored session needs
+    };
+
+    /** Brings the bench in a restored session up to date (see migrate), or
+        sets one out as it looked before there was a bench. Message thread
+        only. */
+    class Migration
+    {
+    public:
+        explicit Migration (juce::AudioProcessorValueTreeState& stateToUse) : state (stateToUse), model (stateToUse) {}
+
+        /** Brings a restored session up to date. `saved` is the state as it
+            was saved (before the parameters it lacked were filled in): one
+            from before the bench is set out as it looked then, and one from
+            the first bench (one unison stack and one envelope for every
+            oscillator) gets each oscillator its own of both. */
+        void migrate (const juce::ValueTree& saved)
+        {
+            if (const auto savedBench = saved.getChildWithName (benchType); ! savedBench.isValid())
+                adoptClassicLayout (saved);
+            else if ((int) savedBench.getProperty (versionProperty, 1) < currentVersion)
+                adoptFirstBench (saved);
+            model.ensureBench();
+            model.bench().setProperty (versionProperty, currentVersion, nullptr);
+        }
+
+        /** Sets out a session from before the bench as it looked then: OSC 1
+            (and the other oscillators that were on) along the top, each under
+            its own envelope, and each with the unison stack it shared then.
+            OSC 1 and the envelope were always there, so they go on the bench,
+            unless `saved` already switched them on or off itself. */
+        void adoptClassicLayout (const juce::ValueTree& saved = {})
+        {
+            model.ensureBench();
+            for (const auto& id : allModules)
+                model.setPosition (id, defaultPosition (id));
+
+            if (! hasSaved (saved, ParamID::osc1On))
+                model.setPresent ({ Kind::oscillator, 0 }, true);
+            const bool shaped = savedValue (saved, ParamID::envelopeOn, 1.0f) >= 0.5f;
+            if (! hasSaved (saved, ParamID::envelope (0).on))
+                model.setPresent ({ Kind::envelope, 0 }, shaped);
+
+            shareUnison (savedValue (saved, ParamID::unisonOn, 1.0f) >= 0.5f);
+            if (model.isPresent ({ Kind::envelope, 0 }))
+                shareEnvelope();
+        }
+
+    private:
         void setValue (const char* id, float value)   // NOSONAR(cpp:S5817): it changes a parameter
         {
             auto* parameter = state.getParameter (id);
@@ -713,7 +738,7 @@ namespace Bench
             for (int k = 1; k < numOscillators; ++k)
             {
                 const ModuleId env { Kind::envelope, k };
-                if (! isPresent ({ Kind::oscillator, k }) || isPresent (env))
+                if (! model.isPresent ({ Kind::oscillator, k }) || model.isPresent (env))
                     continue;
                 const auto& from = ParamID::envelope (0);
                 const auto& to   = ParamID::envelope (k);
@@ -721,8 +746,8 @@ namespace Bench
                                                       std::pair (to.hold, from.hold), std::pair (to.decay, from.decay),
                                                       std::pair (to.sustain, from.sustain), std::pair (to.release, from.release) })
                     setValue (target, valueOf (source));
-                setPosition (env, resolveOverlap (positionOf (env), Kind::envelope, othersThan (env)));
-                setPresent (env, true);
+                model.setPosition (env, resolveOverlap (model.positionOf (env), Kind::envelope, model.othersThan (env)));
+                model.setPresent (env, true);
             }
         }
 
@@ -732,42 +757,34 @@ namespace Bench
         // their envelope, and everything is moved off anything it now covers.
         void adoptFirstBench (const juce::ValueTree& saved)
         {
-            auto first = bench();
+            auto first = model.bench();
             if (auto unison = first.getChildWithProperty (idProperty, "unison"); unison.isValid())
                 first.removeChild (unison, nullptr);
             if (auto envelope = first.getChildWithProperty (idProperty, "envelope"); envelope.isValid())
                 envelope.setProperty (idProperty, ModuleId { Kind::envelope, 0 }.toString(), nullptr);
 
             shareUnison (savedValue (saved, ParamID::unisonOn, 0.0f) >= 0.5f);
-            setPresent ({ Kind::envelope, 0 }, savedValue (saved, ParamID::envelopeOn, 0.0f) >= 0.5f);
+            model.setPresent ({ Kind::envelope, 0 }, savedValue (saved, ParamID::envelopeOn, 0.0f) >= 0.5f);
 
             std::vector<juce::Rectangle<float>> placed;
-            for (const auto& id : readingOrder())
+            for (const auto& id : model.readingOrder())
             {
-                const auto landed = resolveOverlap (positionOf (id), id.kind, placed);
-                setPosition (id, landed);
+                const auto landed = resolveOverlap (model.positionOf (id), id.kind, placed);
+                model.setPosition (id, landed);
                 placed.push_back (boundsAt (landed, id.kind));
             }
-            if (isPresent ({ Kind::envelope, 0 }))
+            if (model.isPresent ({ Kind::envelope, 0 }))
                 shareEnvelope();
 
-            for (const auto& from : patchedToOutput())
-                if (const ModuleId env { Kind::envelope, from.slot }; from.kind == Kind::oscillator && isPresent (env))
+            for (const auto& from : model.patchedToOutput())
+                if (const ModuleId env { Kind::envelope, from.slot }; from.kind == Kind::oscillator && model.isPresent (env))
                 {
-                    connect (from, env);
-                    connect (env);
+                    model.connect (from, env);
+                    model.connect (env);
                 }
         }
 
-        std::vector<juce::Rectangle<float>> othersThan (const ModuleId& id) const
-        {
-            std::vector<juce::Rectangle<float>> others;
-            for (const auto& other : present())
-                if (other != id)
-                    others.push_back (boundsOf (other));
-            return others;
-        }
-
         juce::AudioProcessorValueTreeState& state;
+        Model model;
     };
 }

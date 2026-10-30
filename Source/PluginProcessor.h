@@ -22,9 +22,6 @@
     the keys the host is playing are lit on it from the editor's timer.
 */
 class Synth2AudioProcessor : public juce::AudioProcessor,
-                             private juce::MidiKeyboardState::Listener,
-                             private juce::ValueTree::Listener,
-                             private juce::AudioProcessorValueTreeState::Listener,
                              private juce::AsyncUpdater
 {
 public:
@@ -64,7 +61,7 @@ public:
 
     /** The on-screen keyboard's notes, played alongside the host's MIDI. Message
         thread only. */
-    juce::MidiKeyboardState& getKeyboardState() noexcept { return keyboardState; }
+    juce::MidiKeyboardState& getKeyboardState() noexcept { return keys.getState(); }
 
     /** Lights the on-screen keys the host is holding down, and unlights the
         ones it let go (keys held with the mouse are left alone). Message thread. */
@@ -91,25 +88,74 @@ public:
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
-    // MidiKeyboardState::Listener: a key on the on-screen keyboard went down / up.
-    void handleNoteOn (juce::MidiKeyboardState*, int midiChannel, int midiNoteNumber, float velocity) override;
-    void handleNoteOff (juce::MidiKeyboardState*, int midiChannel, int midiNoteNumber, float velocity) override;
-    void playOnScreenKeys() noexcept;
+    // The on-screen keyboard. Key presses go to the audio thread through a
+    // FIFO (velocity 0 = key up); the keys the host holds come back one bit
+    // per note, to be lit on it.
+    class OnScreenKeys final : private juce::MidiKeyboardState::Listener
+    {
+    public:
+        OnScreenKeys() { keyboardState.addListener (this); }
+        ~OnScreenKeys() override { keyboardState.removeListener (this); }
 
-    // What the bench decides for the sound (which envelope shapes each
-    // oscillator, and which reach the output along the cables), worked out
-    // again whenever the bench changes: a module added, removed, moved or
-    // patched, or a whole new state. Message thread.
-    void followBench();
+        juce::MidiKeyboardState& getState() noexcept { return keyboardState; }
 
-    // The order the effects play in (see Rack.h), worked out again whenever
-    // one goes into the chain or out, or a card moves. Message thread.
-    void followRack();
-    void valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTree& child) override;
-    void valueTreeChildRemoved (juce::ValueTree& parent, juce::ValueTree& child, int index) override;
-    void valueTreePropertyChanged (juce::ValueTree& tree, const juce::Identifier& property) override;
-    void valueTreeRedirected (juce::ValueTree& tree) override;
-    void parameterChanged (const juce::String& parameterID, float newValue) override;
+        // Audio thread: plays the keys pressed since the last block on
+        // `synth`, at its start; and takes note of the keys the host holds.
+        void playOn (Synth2Engine& synth) noexcept;
+        void setHostHeld (const std::array<std::uint64_t, 2>& held) noexcept;
+
+        // Message thread: see showHostNotesOnKeyboard.
+        void showHostNotes();
+
+    private:
+        // MidiKeyboardState::Listener: a key on the on-screen keyboard went down / up.
+        void handleNoteOn (juce::MidiKeyboardState*, int midiChannel, int midiNoteNumber, float velocity) override;
+        void handleNoteOff (juce::MidiKeyboardState*, int midiChannel, int midiNoteNumber, float velocity) override;
+
+        struct KeyEvent
+        {
+            int   note     = 0;
+            float velocity = 0.0f;
+        };
+        static constexpr int keyFifoSize = 256;
+        juce::MidiKeyboardState keyboardState;
+        juce::AbstractFifo keyFifo { keyFifoSize };
+        std::array<KeyEvent, keyFifoSize> keyEvents {};
+        std::array<std::atomic<std::uint64_t>, 2> hostHeldNotes {};
+        std::bitset<128> keysHeldByMouse;
+        bool showingHostNotes = false;
+
+        JUCE_DECLARE_NON_COPYABLE (OnScreenKeys)
+    };
+
+    // Works out again what the bench decides for the sound (which envelope
+    // shapes each oscillator, and which reach the output along the cables)
+    // whenever the bench changes: a module added, removed, moved or patched,
+    // or a whole new state; and the order the effects play in (see Rack.h)
+    // whenever one goes into the chain or out, or a card moves. Message
+    // thread; a module or an effect coming or going off it is followed there
+    // shortly after.
+    class Follower final : private juce::ValueTree::Listener,
+                           private juce::AudioProcessorValueTreeState::Listener
+    {
+    public:
+        explicit Follower (Synth2AudioProcessor& processorToFollowFor);
+        ~Follower() override;
+
+        void followBench();
+        void followRack();
+
+    private:
+        void valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTree& child) override;
+        void valueTreeChildRemoved (juce::ValueTree& parent, juce::ValueTree& child, int index) override;
+        void valueTreePropertyChanged (juce::ValueTree& tree, const juce::Identifier& property) override;
+        void valueTreeRedirected (juce::ValueTree& tree) override;
+        void parameterChanged (const juce::String& parameterID, float newValue) override;
+
+        Synth2AudioProcessor& owner;
+
+        JUCE_DECLARE_NON_COPYABLE (Follower)
+    };
 
     // The bench and the effects followed, or a host's program change
     // loaded, on the message thread when either came from off it.
@@ -142,21 +188,8 @@ private:
     };
     std::array<std::array<PublishedActivity, Synth2Engine::maxNotes>, Synth2Engine::numOscillators> noteActivity;
 
-    // The on-screen keyboard. Key presses go to the audio thread through
-    // keyFifo (velocity 0 = key up); the keys the host holds come back as
-    // hostHeldNotes, one bit per note.
-    struct KeyEvent
-    {
-        int   note     = 0;
-        float velocity = 0.0f;
-    };
-    static constexpr int keyFifoSize = 256;
-    juce::MidiKeyboardState keyboardState;
-    juce::AbstractFifo keyFifo { keyFifoSize };
-    std::array<KeyEvent, keyFifoSize> keyEvents {};
-    std::array<std::atomic<std::uint64_t>, 2> hostHeldNotes {};
-    std::bitset<128> keysHeldByMouse;
-    bool showingHostNotes = false;
+    OnScreenKeys keys;
+    Follower     follower { *this };   // last: it reads and fills in the state above
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Synth2AudioProcessor)
 };

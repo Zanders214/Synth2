@@ -61,12 +61,12 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
     // A click on an empty spot offers modules to add there.
     benchView.onEmptyClick ([this] (juce::Point<float> benchAt, juce::Point<int> viewAt)
     {
-        openAddTray (benchAt, viewAt + benchView.getPosition());
+        trays.openAdd (benchAt, viewAt + benchView.getPosition());
     });
     // And on the EFFECTS tab, offers the effects not yet in the chain.
     effectsView.onEmptyClick ([this] (juce::Point<float> rackAt, juce::Point<int> viewAt)
     {
-        openEffectTray (rackAt, viewAt + effectsView.getPosition());
+        trays.openEffect (rackAt, viewAt + effectsView.getPosition());
     });
 
     for (int slot = 0; slot < Bench::numOscillators; ++slot)
@@ -97,35 +97,8 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
     for (const auto& id : Bench::allModules)
         benchView.getModule (id).onJack ([this, id] (BenchModule::Jack which, const juce::MouseEvent& e, BenchModule::JackPhase phase)
         {
-            patch (id, which, e, phase);
+            cables.patch (id, which, e, phase);
         });
-
-    trays.add.onChoose ([this] (int choice)
-    {
-        benchView.add (choice == 0 ? Bench::Kind::oscillator : Bench::Kind::envelope, trays.addAt);
-        shown.cables.clear();
-    });
-    trays.settings.onChoose ([this] (int choice)
-    {
-        if (choice >= firstEnvelopeView)
-        {
-            auto view = model.view();
-            if (choice >= firstOscillatorView)
-                view.oscillators = (Bench::OscillatorView) (choice - firstOscillatorView);
-            else
-                view.envelopes = (Bench::EnvelopeView) (choice - firstEnvelopeView);
-            model.setView (view);
-            showView();
-            return;
-        }
-        auto* flow = processorRef.getState().getParameter (ParamID::signalFlow);
-        flow->beginChangeGesture();
-        flow->setValueNotifyingHost (flow->convertTo0to1 ((float) choice));
-        flow->endChangeGesture();
-        showFlow();
-    });
-    trays.effect.onChoose ([this] (int choice) { effectsView.add (Rack::allEffects[(size_t) choice], trays.effectAt); });
-    trays.preset.onChoose ([this] (int choice) { processorRef.loadPreset (choice); });
 
     setResizable (true, true);
     if (auto* constrainer = getConstrainer())
@@ -136,10 +109,8 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
     setSize ((int) designWidth, (int) designHeight);
     for (auto& menu : waveMenus)
         addChildComponent (menu);   // last, so the trays open over everything
-    addChildComponent (trays.add);
-    addChildComponent (trays.effect);
-    addChildComponent (trays.settings);
-    addChildComponent (trays.preset);
+    for (auto* tray : trays.all())
+        addChildComponent (*tray);
     resized();
     timerCallback();
     startTimerHz (30);
@@ -184,7 +155,7 @@ Synth2AudioProcessor::SignalFlow Synth2AudioProcessorEditor::signalFlow() const
 
 // The modules' headers follow the signal flow: their place in the order when
 // sound follows the layout, and which oscillator each envelope shapes; with
-// the cables, their jacks instead (see showCables).
+// the cables, their jacks instead (see CableLayer::showOnModules).
 void Synth2AudioProcessorEditor::showView()
 {
     if (const auto view = model.view(); view != shown.view)
@@ -210,11 +181,11 @@ void Synth2AudioProcessorEditor::showFlow()
         }
     }
     for (size_t i = 0; i < Bench::allModules.size(); ++i)
-        benchView.getModule (Bench::allModules[i]).setOrder (places[i]);
+        benchView.getModule (Bench::allModules[i]).getHeader().setOrder (places[i]);
 
     if (flow == Synth2AudioProcessor::SignalFlow::cables)
     {
-        showCables();
+        cables.showOnModules();
     }
     else
     {
@@ -222,15 +193,15 @@ void Synth2AudioProcessorEditor::showFlow()
         for (int slot = 0; slot < Bench::numOscillators; ++slot)
         {
             auto& osc = benchView.getOscillator (slot);
-            osc.setJacksShown (false, false);
+            osc.getHeader().setJacksShown (false, false);
             osc.setDimmed (false);
         }
         for (int e = 0; e < Bench::numEnvelopes; ++e)
         {
             const auto shaped = std::find (shapedBy.begin(), shapedBy.end(), e);
             auto& env = benchView.getEnvelope (e);
-            env.setJacksShown (false, false);
-            env.setTag (shaped != shapedBy.end() ? "> OSC " + juce::String (shaped - shapedBy.begin() + 1) : juce::String());
+            env.getHeader().setJacksShown (false, false);
+            env.getHeader().setTag (shaped != shapedBy.end() ? "> OSC " + juce::String (shaped - shapedBy.begin() + 1) : juce::String());
             env.setDimmed (shaped == shapedBy.end(), "Not shaping an oscillator: put one before it, or add the one with its number");
         }
     }
@@ -239,31 +210,6 @@ void Synth2AudioProcessorEditor::showFlow()
     {
         shown.flow = (int) flow;
         repaint();
-    }
-}
-
-// With the cables: every module's jacks, lit where a cable is plugged in, and
-// greyed out what isn't heard (an oscillator that doesn't reach the output,
-// an envelope that shapes nothing or isn't patched to it).
-void Synth2AudioProcessorEditor::showCables()
-{
-    const auto heard = model.heardThroughCables();
-    for (int slot = 0; slot < Bench::numOscillators; ++slot)
-    {
-        auto& osc = benchView.getOscillator (slot);
-        osc.setJacksShown (true, false);
-        osc.setPlugged (model.destinationOf (osc.getId()).has_value(), false);
-        osc.setDimmed (! heard[(size_t) slot], "Not connected: patch a cable from OUT to an envelope or the output to hear it");
-    }
-    for (int e = 0; e < Bench::numEnvelopes; ++e)
-    {
-        auto& env = benchView.getEnvelope (e);
-        const bool fed  = model.inputOf (env.getId()).has_value();
-        const bool out  = model.isPatchedToOutput (env.getId());
-        env.setJacksShown (true, true);
-        env.setPlugged (out, fed);
-        env.setTag ({});
-        env.setDimmed (! fed || ! out, "Not connected: patch an oscillator into IN, and OUT to the output");
     }
 }
 
@@ -287,7 +233,7 @@ void Synth2AudioProcessorEditor::timerCallback()
     showView();
     showFlow();
 
-    if (const auto signature = cableSignature(); signature != shown.cables)
+    if (const auto signature = cables.signature(); signature != shown.cables)
     {
         shown.cables = signature;
         cables.repaint();
@@ -348,24 +294,54 @@ void Synth2AudioProcessorEditor::showTab (Tab which)
 
 // ---- Trays ---------------------------------------------------------------------------
 
-void Synth2AudioProcessorEditor::openAddTray (juce::Point<float> benchAt, juce::Point<int> editorAt)
+Synth2AudioProcessorEditor::Trays::Trays (Synth2AudioProcessorEditor& ownerToUse) : owner (ownerToUse)
 {
-    trays.addAt = benchAt;
-    const int oscillatorsLeft = model.left (Bench::Kind::oscillator);
-    const int envelopesLeft   = model.left (Bench::Kind::envelope);
+    addTray.onChoose ([this] (int choice)
+    {
+        owner.benchView.add (choice == 0 ? Bench::Kind::oscillator : Bench::Kind::envelope, addAt);
+        owner.shown.cables.clear();
+    });
+    settingsTray.onChoose ([this] (int choice)
+    {
+        if (choice >= firstEnvelopeView)
+        {
+            auto view = owner.model.view();
+            if (choice >= firstOscillatorView)
+                view.oscillators = (Bench::OscillatorView) (choice - firstOscillatorView);
+            else
+                view.envelopes = (Bench::EnvelopeView) (choice - firstEnvelopeView);
+            owner.model.setView (view);
+            owner.showView();
+            return;
+        }
+        auto* flow = owner.processorRef.getState().getParameter (ParamID::signalFlow);
+        flow->beginChangeGesture();
+        flow->setValueNotifyingHost (flow->convertTo0to1 ((float) choice));
+        flow->endChangeGesture();
+        owner.showFlow();
+    });
+    effectTray.onChoose ([this] (int choice) { owner.effectsView.add (Rack::allEffects[(size_t) choice], effectAt); });
+    presetTray.onChoose ([this] (int choice) { owner.processorRef.loadPreset (choice); });
+}
+
+void Synth2AudioProcessorEditor::Trays::openAdd (juce::Point<float> benchAt, juce::Point<int> editorAt)
+{
+    addAt = benchAt;
+    const int oscillatorsLeft = owner.model.left (Bench::Kind::oscillator);
+    const int envelopesLeft   = owner.model.left (Bench::Kind::envelope);
     std::vector<ChoiceTray::Choice> choices {
         { "Oscillator", oscillatorsLeft > 0 ? juce::String (oscillatorsLeft) + " of 4 left: a shape, stacked and spread"
                                             : juce::String ("All four are on the bench"), oscillatorsLeft > 0 },
         { "Envelope",   envelopesLeft > 0 ? juce::String (envelopesLeft) + " of 4 left: one oscillator's attack and release"
                                           : juce::String ("All four are on the bench"), envelopesLeft > 0 } };
-    trays.add.setBounds (getLocalBounds());
-    trays.add.open ("ADD TO THE BENCH", std::move (choices), editorAt);
+    addTray.setBounds (owner.getLocalBounds());
+    addTray.open ("ADD TO THE BENCH", std::move (choices), editorAt);
 }
 
-void Synth2AudioProcessorEditor::openEffectTray (juce::Point<float> rackAt, juce::Point<int> editorAt)
+void Synth2AudioProcessorEditor::Trays::openEffect (juce::Point<float> rackAt, juce::Point<int> editorAt)
 {
-    trays.effectAt = rackAt;
-    const Rack::Model rack (processorRef.getState());
+    effectAt = rackAt;
+    const Rack::Model rack (owner.processorRef.getState());
     std::vector<ChoiceTray::Choice> choices {
         { "Drive",  "Grit and warmth: WARM, TUBE or HARD" },
         { "Delay",  "Repeats, free or on the beat" },
@@ -376,73 +352,73 @@ void Synth2AudioProcessorEditor::openEffectTray (juce::Point<float> rackAt, juce
             choices[i].detail  = "Already in the chain";
             choices[i].enabled = false;
         }
-    trays.effect.setBounds (getLocalBounds());
-    trays.effect.open ("ADD AN EFFECT", std::move (choices), editorAt);
+    effectTray.setBounds (owner.getLocalBounds());
+    effectTray.open ("ADD AN EFFECT", std::move (choices), editorAt);
 }
 
-void Synth2AudioProcessorEditor::openSettings()
+void Synth2AudioProcessorEditor::Trays::openSettings()
 {
-    const auto view = model.view();
+    const auto view = owner.model.view();
     std::vector<ChoiceTray::Choice> choices (flowChoices.begin(), flowChoices.end());
     choices.insert (choices.end(), envelopeViewChoices.begin(), envelopeViewChoices.end());
     choices.insert (choices.end(), oscillatorViewChoices.begin(), oscillatorViewChoices.end());
-    choices[(size_t) signalFlow()].ticked = true;
+    choices[(size_t) owner.signalFlow()].ticked = true;
     choices[(size_t) (firstEnvelopeView + (int) view.envelopes)].ticked     = true;
     choices[(size_t) (firstOscillatorView + (int) view.oscillators)].ticked = true;
-    trays.settings.setBounds (getLocalBounds());
-    const auto gear = layout.gear;
-    trays.settings.open ("SIGNAL FLOW", std::move (choices),
-                       { gear.getRight() - juce::roundToInt (260.0f * uiScale), gear.getBottom() + juce::roundToInt (8.0f * uiScale) });
-    repaint (layout.gear);
+    settingsTray.setBounds (owner.getLocalBounds());
+    const auto gear = owner.layout.gear;
+    settingsTray.open ("SIGNAL FLOW", std::move (choices),
+                       { gear.getRight() - juce::roundToInt (260.0f * owner.uiScale), gear.getBottom() + juce::roundToInt (8.0f * owner.uiScale) });
+    owner.repaint (owner.layout.gear);
 }
 
-void Synth2AudioProcessorEditor::openPresets()
+void Synth2AudioProcessorEditor::Trays::openPresets()
 {
     std::vector<ChoiceTray::Choice> choices;
     for (const auto& preset : Presets::factory)
         choices.push_back ({ preset.name, preset.detail });
-    choices[(size_t) processorRef.getCurrentProgram()].ticked = true;
-    trays.preset.setBounds (getLocalBounds());
-    const auto picker = layout.preset;
-    trays.preset.open ("PRESETS", std::move (choices),
-                     { picker.getCentreX() - juce::roundToInt (130.0f * uiScale), picker.getBottom() + juce::roundToInt (8.0f * uiScale) });
-    repaint (layout.preset);
+    choices[(size_t) owner.processorRef.getCurrentProgram()].ticked = true;
+    presetTray.setBounds (owner.getLocalBounds());
+    const auto picker = owner.layout.preset;
+    presetTray.open ("PRESETS", std::move (choices),
+                     { picker.getCentreX() - juce::roundToInt (130.0f * owner.uiScale), picker.getBottom() + juce::roundToInt (8.0f * owner.uiScale) });
+    owner.repaint (owner.layout.preset);
 }
 
-void Synth2AudioProcessorEditor::stepPreset (int delta)
+void Synth2AudioProcessorEditor::Trays::stepPreset (int delta)
 {
-    processorRef.loadPreset ((processorRef.getCurrentProgram() + delta + Presets::numPresets) % Presets::numPresets);
+    owner.processorRef.loadPreset ((owner.processorRef.getCurrentProgram() + delta + Presets::numPresets) % Presets::numPresets);
 }
 
 // ---- Cables ----------------------------------------------------------------------------
 
-juce::Rectangle<float> Synth2AudioProcessorEditor::outputJackBounds() const noexcept
+juce::Rectangle<float> Synth2AudioProcessorEditor::CableLayer::outputJackBounds() const noexcept
 {
-    const float s = uiScale;
-    const auto column = layout.outputColumn.toFloat();
+    const float s = owner.uiScale;
+    const auto column = owner.layout.outputColumn.toFloat();
     return { column.getX() + 4.0f * s, column.getY() + 17.0f * s, 18.0f * s, 18.0f * s };
 }
 
-juce::Point<float> Synth2AudioProcessorEditor::jackCentre (const Bench::ModuleId& id, BenchModule::Jack which)
+juce::Point<float> Synth2AudioProcessorEditor::CableLayer::jackCentre (const Bench::ModuleId& id, BenchModule::Jack which) const
 {
-    const auto& card = benchView.getModule (id);
-    return getLocalPoint (&card, card.jackBounds (which).getCentre());
+    const auto& card = owner.benchView.getModule (id);
+    return owner.getLocalPoint (&card, card.jackBounds (which).getCentre());
 }
 
-void Synth2AudioProcessorEditor::patch (const Bench::ModuleId& owner, BenchModule::Jack which, const juce::MouseEvent& e, BenchModule::JackPhase phase)
+void Synth2AudioProcessorEditor::CableLayer::patch (const Bench::ModuleId& id, BenchModule::Jack which, const juce::MouseEvent& e, BenchModule::JackPhase phase)
 {
-    const auto at = e.getEventRelativeTo (this).position;
+    const auto at = e.getEventRelativeTo (&owner).position;
     if (phase == BenchModule::JackPhase::down)
     {
         // Picking up a patched jack unplugs its cable, to drop elsewhere: an
         // OUT jack's own, or the one coming into an envelope's IN (which
         // then hangs from the oscillator it came from).
-        auto from = std::optional<Bench::ModuleId> (owner);
+        auto from = std::optional<Bench::ModuleId> (id);
         if (which == BenchModule::Jack::in)
-            from = model.inputOf (owner);
+            from = owner.model.inputOf (id);
         if (! from.has_value())
             return;
-        model.disconnect (*from);
+        owner.model.disconnect (*from);
         patching.from = from;
         patching.to   = at;
     }
@@ -454,113 +430,55 @@ void Synth2AudioProcessorEditor::patch (const Bench::ModuleId& owner, BenchModul
     {
         dropCable (at);
     }
-    showFlow();
-    cables.repaint();
-    repaint (layout.outputColumn);
+    owner.showFlow();
+    repaint();
+    owner.repaint (owner.layout.outputColumn);
 }
 
 // A cable being dragged lets go at `at`: on the output's IN, or an
 // envelope's IN (from an oscillator), it is patched there; anywhere else, it
 // stays unplugged.
-void Synth2AudioProcessorEditor::dropCable (juce::Point<float> at)
+void Synth2AudioProcessorEditor::CableLayer::dropCable (juce::Point<float> at)
 {
     if (! patching.from.has_value())
         return;
     const auto from  = *patching.from;
-    const auto reach = 10.0f * uiScale;
+    const auto reach = 10.0f * owner.uiScale;
     patching.from.reset();
 
     if (outputJackBounds().expanded (reach).contains (at))
     {
-        model.connect (from);
+        owner.model.connect (from);
         return;
     }
     for (int e = 0; e < Bench::numEnvelopes; ++e)
     {
-        const auto& env = benchView.getEnvelope (e);
-        if (env.isVisible() && env.isJackShown (BenchModule::Jack::in)
-            && getLocalArea (&env, env.jackBounds (BenchModule::Jack::in)).expanded (reach).contains (at))
+        const auto& env = owner.benchView.getEnvelope (e);
+        if (env.isVisible() && env.getHeader().isJackShown (BenchModule::Jack::in)
+            && owner.getLocalArea (&env, env.jackBounds (BenchModule::Jack::in)).expanded (reach).contains (at))
         {
-            model.connect (from, env.getId());
+            owner.model.connect (from, env.getId());
             return;
         }
     }
 }
 
-void Synth2AudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
+juce::String Synth2AudioProcessorEditor::CableLayer::signature() const
 {
-    for (const auto which : { Tab::bench, Tab::effects })
-        if (tabBounds (which).contains (e.position))
-        {
-            showTab (which);
-            return;
-        }
-    if (layout.gear.toFloat().contains (e.position))
+    juce::String text (owner.signalFlow() == Synth2AudioProcessor::SignalFlow::cables ? "cables" : "none");
+    for (const auto& [from, to] : owner.model.cables())
     {
-        openSettings();
-        return;
-    }
-    if (layout.preset.toFloat().contains (e.position))
-    {
-        if (const float arrow = kPresetArrowWidth * uiScale; e.position.x < (float) layout.preset.getX() + arrow)
-            stepPreset (-1);
-        else if (e.position.x > (float) layout.preset.getRight() - arrow)
-            stepPreset (1);
-        else
-            openPresets();
-        return;
-    }
-
-    // Grabbing the output's IN jack takes the last cable patched into it.
-    if (tab == Tab::bench && signalFlow() == Synth2AudioProcessor::SignalFlow::cables && outputJackBounds().expanded (4.0f * uiScale).contains (e.position))
-    {
-        const auto patched = model.patchedToOutput();
-        if (! patched.empty())
-        {
-            const auto from = patched.back();
-            model.disconnect (from);
-            patching.from = from;
-            patching.to   = e.position;
-            showFlow();
-            cables.repaint();
-        }
-    }
-}
-
-void Synth2AudioProcessorEditor::mouseDrag (const juce::MouseEvent& e)
-{
-    if (! patching.from.has_value())
-        return;
-    patching.to = e.position;
-    cables.repaint();
-}
-
-void Synth2AudioProcessorEditor::mouseUp (const juce::MouseEvent& e)
-{
-    if (! patching.from.has_value())
-        return;
-    dropCable (e.position);
-    showFlow();
-    cables.repaint();
-    repaint (layout.outputColumn);
-}
-
-juce::String Synth2AudioProcessorEditor::cableSignature()
-{
-    juce::String signature (signalFlow() == Synth2AudioProcessor::SignalFlow::cables ? "cables" : "none");
-    for (const auto& [from, to] : model.cables())
-    {
-        signature << " " << from.toString() << "@" << jackCentre (from).toString();
+        text << " " << from.toString() << "@" << jackCentre (from).toString();
         if (to.has_value())
-            signature << ">" << to->toString() << "@" << jackCentre (*to, BenchModule::Jack::in).toString();
+            text << ">" << to->toString() << "@" << jackCentre (*to, BenchModule::Jack::in).toString();
     }
-    return signature;
+    return text;
 }
 
-void Synth2AudioProcessorEditor::paintCable (juce::Graphics& g, juce::Point<float> from, juce::Point<float> to, juce::Colour colour) const
+void Synth2AudioProcessorEditor::CableLayer::paintCable (juce::Graphics& g, juce::Point<float> from, juce::Point<float> to, juce::Colour colour) const
 {
     // A cable hangs: a curve that sags below both ends, more the longer it is.
-    const float s   = uiScale;
+    const float s   = owner.uiScale;
     const float sag = 40.0f * s + 0.25f * from.getDistanceFrom (to);
     juce::Path cable;
     cable.startNewSubPath (from);
@@ -578,24 +496,121 @@ void Synth2AudioProcessorEditor::paintCable (juce::Graphics& g, juce::Point<floa
     g.fillEllipse (juce::Rectangle<float> (7.0f * s, 7.0f * s).withCentre (to));
 }
 
-void Synth2AudioProcessorEditor::paintCables (juce::Graphics& g)
+void Synth2AudioProcessorEditor::CableLayer::paint (juce::Graphics& g)
 {
-    if (tab != Tab::bench || signalFlow() != Synth2AudioProcessor::SignalFlow::cables)
+    if (owner.tab != Tab::bench || owner.signalFlow() != Synth2AudioProcessor::SignalFlow::cables)
         return;
 
     // Each cable in the colour of the module it comes from.
     const auto output = outputJackBounds().getCentre();
-    for (const auto& [from, to] : model.cables())
+    for (const auto& [from, to] : owner.model.cables())
     {
-        const auto& source = benchView.getModule (from);
-        if (! source.isVisible() || (to.has_value() && ! benchView.getModule (*to).isVisible()))
+        const auto& source = owner.benchView.getModule (from);
+        if (! source.isVisible() || (to.has_value() && ! owner.benchView.getModule (*to).isVisible()))
             continue;
         const auto end = to.has_value() ? jackCentre (*to, BenchModule::Jack::in) : output;
-        paintCable (g, jackCentre (from), end, source.getJackColour());
+        paintCable (g, jackCentre (from), end, source.getHeader().getJackColour());
     }
 
     if (patching.from.has_value())
-        paintCable (g, jackCentre (*patching.from), patching.to, benchView.getModule (*patching.from).getJackColour().withAlpha (0.8f));
+        paintCable (g, jackCentre (*patching.from), patching.to, owner.benchView.getModule (*patching.from).getHeader().getJackColour().withAlpha (0.8f));
+}
+
+// With the cables: every module's jacks, lit where a cable is plugged in, and
+// greyed out what isn't heard (an oscillator that doesn't reach the output,
+// an envelope that shapes nothing or isn't patched to it).
+void Synth2AudioProcessorEditor::CableLayer::showOnModules()
+{
+    const auto heard = owner.model.heardThroughCables();
+    for (int slot = 0; slot < Bench::numOscillators; ++slot)
+    {
+        auto& osc = owner.benchView.getOscillator (slot);
+        osc.getHeader().setJacksShown (true, false);
+        osc.getHeader().setPlugged (owner.model.destinationOf (osc.getId()).has_value(), false);
+        osc.setDimmed (! heard[(size_t) slot], "Not connected: patch a cable from OUT to an envelope or the output to hear it");
+    }
+    for (int e = 0; e < Bench::numEnvelopes; ++e)
+    {
+        auto& env = owner.benchView.getEnvelope (e);
+        const bool fed  = owner.model.inputOf (env.getId()).has_value();
+        const bool out  = owner.model.isPatchedToOutput (env.getId());
+        env.getHeader().setJacksShown (true, true);
+        env.getHeader().setPlugged (out, fed);
+        env.getHeader().setTag ({});
+        env.setDimmed (! fed || ! out, "Not connected: patch an oscillator into IN, and OUT to the output");
+    }
+}
+
+void Synth2AudioProcessorEditor::CableLayer::pickUpFromOutput (juce::Point<float> at)
+{
+    // Grabbing the output's IN jack takes the last cable patched into it.
+    if (owner.tab == Tab::bench && owner.signalFlow() == Synth2AudioProcessor::SignalFlow::cables && outputJackBounds().expanded (4.0f * owner.uiScale).contains (at))
+    {
+        const auto patched = owner.model.patchedToOutput();
+        if (! patched.empty())
+        {
+            const auto from = patched.back();
+            owner.model.disconnect (from);
+            patching.from = from;
+            patching.to   = at;
+            owner.showFlow();
+            repaint();
+        }
+    }
+}
+
+void Synth2AudioProcessorEditor::CableLayer::dragTo (juce::Point<float> at)
+{
+    if (! patching.from.has_value())
+        return;
+    patching.to = at;
+    repaint();
+}
+
+void Synth2AudioProcessorEditor::CableLayer::letGo (juce::Point<float> at)
+{
+    if (! patching.from.has_value())
+        return;
+    dropCable (at);
+    owner.showFlow();
+    repaint();
+    owner.repaint (owner.layout.outputColumn);
+}
+
+void Synth2AudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
+{
+    for (const auto which : { Tab::bench, Tab::effects })
+        if (tabBounds (which).contains (e.position))
+        {
+            showTab (which);
+            return;
+        }
+    if (layout.gear.toFloat().contains (e.position))
+    {
+        trays.openSettings();
+        return;
+    }
+    if (layout.preset.toFloat().contains (e.position))
+    {
+        if (const float arrow = kPresetArrowWidth * uiScale; e.position.x < (float) layout.preset.getX() + arrow)
+            trays.stepPreset (-1);
+        else if (e.position.x > (float) layout.preset.getRight() - arrow)
+            trays.stepPreset (1);
+        else
+            trays.openPresets();
+        return;
+    }
+    cables.pickUpFromOutput (e.position);
+}
+
+void Synth2AudioProcessorEditor::mouseDrag (const juce::MouseEvent& e)
+{
+    cables.dragTo (e.position);
+}
+
+void Synth2AudioProcessorEditor::mouseUp (const juce::MouseEvent& e)
+{
+    cables.letGo (e.position);
 }
 
 // ---- Painting ---------------------------------------------------------------------------
@@ -680,9 +695,9 @@ void Synth2AudioProcessorEditor::paintHeader (juce::Graphics& g, float s) const
     // The preset picker: the loaded preset's name in a pill, with arrows to
     // step either way, lit while its tray is open.
     const auto picker = layout.preset.toFloat();
-    g.setColour (trays.preset.isOpen() ? Palette::idleFill.withMultipliedAlpha (1.6f) : Palette::idleFill);
+    g.setColour (trays.isPresetsOpen() ? Palette::idleFill.withMultipliedAlpha (1.6f) : Palette::idleFill);
     g.fillRoundedRectangle (picker, picker.getHeight() * 0.5f);
-    g.setColour (trays.preset.isOpen() ? Palette::strongLine : Palette::hairline);
+    g.setColour (trays.isPresetsOpen() ? Palette::strongLine : Palette::hairline);
     g.drawRoundedRectangle (picker, picker.getHeight() * 0.5f, juce::jmax (1.0f, s));
 
     const float arrowWidth = kPresetArrowWidth * s;
@@ -723,7 +738,7 @@ void Synth2AudioProcessorEditor::paintHeader (juce::Graphics& g, float s) const
         teeth.applyTransform (juce::AffineTransform::rotation (juce::MathConstants<float>::twoPi / 8.0f));
     }
     teeth.applyTransform (juce::AffineTransform::translation (gear.getCentre()));
-    g.setColour (trays.settings.isOpen() ? Palette::textStrong : Palette::textDim);
+    g.setColour (trays.isSettingsOpen() ? Palette::textStrong : Palette::textDim);
     g.fillPath (teeth);
     g.drawEllipse (juce::Rectangle<float> (inner * 2.0f, inner * 2.0f).withCentre (gear.getCentre()), juce::jmax (1.0f, 2.2f * s));
 }
@@ -745,7 +760,7 @@ void Synth2AudioProcessorEditor::paintOutput (juce::Graphics& g, float s) const
 
     if (tab == Tab::bench && signalFlow() == Synth2AudioProcessor::SignalFlow::cables)
     {
-        const auto jack = outputJackBounds();
+        const auto jack = cables.outputJackBounds();
         BenchStyle::paintJack (g, jack, Palette::accent, ! model.patchedToOutput().empty(), false, s);
         g.setFont (Fonts::sans (8.0f * s, true, 0.22f));
         g.setColour (Palette::textFaint);
@@ -760,7 +775,7 @@ void Synth2AudioProcessorEditor::resized()
     auto& animator = juce::Desktop::getInstance().getAnimator();
     for (auto& menu : waveMenus)
         animator.cancelAnimation (&menu, true);
-    for (auto* tray : { &trays.add, &trays.effect, &trays.settings, &trays.preset })
+    for (auto* tray : trays.all())
         animator.cancelAnimation (tray, true);
 
     uiScale = (float) getWidth() / designWidth;
@@ -774,7 +789,7 @@ void Synth2AudioProcessorEditor::resized()
         menu.setUiScale (s);
         menu.setBounds (getLocalBounds());
     }
-    for (auto* tray : { &trays.add, &trays.effect, &trays.settings, &trays.preset })
+    for (auto* tray : trays.all())
     {
         tray->setUiScale (s);
         tray->setBounds (getLocalBounds());
