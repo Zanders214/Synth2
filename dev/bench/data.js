@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793370604217,
+  "lastUpdate": 1793371260474,
   "repoUrl": "https://github.com/Zanders214/Synth2",
   "entries": {
     "ZandersSynth2 DSP": [
@@ -1077,6 +1077,80 @@ window.BENCHMARK_DATA = {
           {
             "name": "DSP load 16x16 4-osc + effects @48k/512",
             "value": 16.435,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "152227414+Zanders214@users.noreply.github.com",
+            "name": "Dennis Zanders",
+            "username": "Zanders214"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c003fb4e6913b6d65ab28a307c70783549f91894",
+          "message": "Merge pull request #17 from Zanders214/claude/drive-and-keys\n\nAdd a DRIVE effect, and play the standalone app from MIDI keyboards and the computer's keys",
+          "timestamp": "2026-10-30T15:38:13+01:00",
+          "tree_id": "968e89d417873be544ba3e611bb42d62db5a0460",
+          "url": "https://github.com/Zanders214/Synth2/commit/c003fb4e6913b6d65ab28a307c70783549f91894"
+        },
+        "date": 1793371259693,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "processBlock 8x7",
+            "value": 109147.19,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 8x7 @48k/512",
+            "value": 1.023,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16",
+            "value": 440964.231,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 @48k/512",
+            "value": 4.134,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 2-osc",
+            "value": 920051.137,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 2-osc @48k/512",
+            "value": 8.625,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 4-osc",
+            "value": 1781156.131,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 4-osc @48k/512",
+            "value": 16.698,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 4-osc + effects",
+            "value": 1967219.603,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 4-osc + effects @48k/512",
+            "value": 18.443,
             "unit": "%"
           }
         ]
