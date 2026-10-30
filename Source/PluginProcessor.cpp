@@ -19,27 +19,14 @@ Synth2AudioProcessor::Synth2AudioProcessor()
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "PARAMETERS", createParameterLayout())
 {
-    keyboardState.addListener (this);
-    Bench::Model (apvts).ensureBench();
-    Rack::Model (apvts).ensureRack();
-    apvts.state.addListener (this);
-    for (const auto& id : Bench::allModules)
-        apvts.addParameterListener (Bench::parameterFor (id), this);
-    for (const auto kind : Rack::allEffects)
-        apvts.addParameterListener (Rack::inChainParameter (kind), this);
-    followBench();
-    followRack();
+    // The on-screen keyboard and the follower (the bench's layout and the
+    // effects' rack in the state, and listening for changes to them) set
+    // themselves up as members.
 }
 
 Synth2AudioProcessor::~Synth2AudioProcessor()
 {
     cancelPendingUpdate();
-    for (const auto& id : Bench::allModules)
-        apvts.removeParameterListener (Bench::parameterFor (id), this);
-    for (const auto kind : Rack::allEffects)
-        apvts.removeParameterListener (Rack::inChainParameter (kind), this);
-    apvts.state.removeListener (this);
-    keyboardState.removeListener (this);
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::createParameterLayout()
@@ -352,7 +339,7 @@ void Synth2AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
                 hostBpm.store (*bpm);
 
     engine.setSettings (currentSettings());
-    playOnScreenKeys();
+    keys.playOn (engine);
     engine.process (buffer, midi);
     activeNotes.store (engine.getNumActiveNotes());
 
@@ -367,9 +354,7 @@ void Synth2AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         }
     }
 
-    const auto held = engine.getHeldNotes();
-    hostHeldNotes[0].store (held[0], std::memory_order_relaxed);
-    hostHeldNotes[1].store (held[1], std::memory_order_relaxed);
+    keys.setHostHeld (engine.getHeldNotes());
 
     // An instrument makes no MIDI of its own.
     midi.clear();
@@ -377,7 +362,7 @@ void Synth2AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
 
 // ---- The on-screen keyboard ---------------------------------------------------------
 
-void Synth2AudioProcessor::handleNoteOn (juce::MidiKeyboardState*, int, int midiNoteNumber, float velocity)
+void Synth2AudioProcessor::OnScreenKeys::handleNoteOn (juce::MidiKeyboardState*, int, int midiNoteNumber, float velocity)
 {
     if (showingHostNotes)
         return;   // only lighting a key the host plays, not playing it again
@@ -387,7 +372,7 @@ void Synth2AudioProcessor::handleNoteOn (juce::MidiKeyboardState*, int, int midi
         keyEvents[(size_t) scope.startIndex1] = { midiNoteNumber, juce::jmax (0.01f, velocity) };
 }
 
-void Synth2AudioProcessor::handleNoteOff (juce::MidiKeyboardState*, int, int midiNoteNumber, float)
+void Synth2AudioProcessor::OnScreenKeys::handleNoteOff (juce::MidiKeyboardState*, int, int midiNoteNumber, float)
 {
     if (showingHostNotes)
         return;
@@ -397,26 +382,31 @@ void Synth2AudioProcessor::handleNoteOff (juce::MidiKeyboardState*, int, int mid
         keyEvents[(size_t) scope.startIndex1] = { midiNoteNumber, 0.0f };
 }
 
-// Audio thread: plays the keys pressed since the last block, at its start.
-void Synth2AudioProcessor::playOnScreenKeys() noexcept
+void Synth2AudioProcessor::OnScreenKeys::playOn (Synth2Engine& synth) noexcept
 {
     const auto scope = keyFifo.read (keyFifo.getNumReady());
-    const auto play  = [this] (int start, int size)
+    const auto play  = [this, &synth] (int start, int size)
     {
         for (int i = start; i < start + size; ++i)
         {
             const auto& key = keyEvents[(size_t) i];
             if (key.velocity > 0.0f)
-                engine.noteOn (keyboardChannel, key.note, key.velocity);
+                synth.noteOn (keyboardChannel, key.note, key.velocity);
             else
-                engine.noteOff (keyboardChannel, key.note);
+                synth.noteOff (keyboardChannel, key.note);
         }
     };
     play (scope.startIndex1, scope.blockSize1);
     play (scope.startIndex2, scope.blockSize2);
 }
 
-void Synth2AudioProcessor::showHostNotesOnKeyboard()
+void Synth2AudioProcessor::OnScreenKeys::setHostHeld (const std::array<std::uint64_t, 2>& held) noexcept
+{
+    hostHeldNotes[0].store (held[0], std::memory_order_relaxed);
+    hostHeldNotes[1].store (held[1], std::memory_order_relaxed);
+}
+
+void Synth2AudioProcessor::OnScreenKeys::showHostNotes()
 {
     const std::array<std::uint64_t, 2> held { hostHeldNotes[0].load (std::memory_order_relaxed),
                                               hostHeldNotes[1].load (std::memory_order_relaxed) };
@@ -436,6 +426,11 @@ void Synth2AudioProcessor::showHostNotesOnKeyboard()
                 keyboardState.noteOff (1, note, 0.0f);
         }
     }
+}
+
+void Synth2AudioProcessor::showHostNotesOnKeyboard()
+{
+    keys.showHostNotes();
 }
 
 juce::AudioProcessorEditor* Synth2AudioProcessor::createEditor()
@@ -509,8 +504,8 @@ void Synth2AudioProcessor::loadPreset (int index)
     Presets::apply (apvts, Presets::factory[(size_t) index]);
     currentPreset.store (index);
     apvts.state.setProperty (presetProperty, index, nullptr);
-    followBench();
-    followRack();
+    follower.followBench();
+    follower.followRack();
     updateHostDisplay (ChangeDetails().withProgramChanged (true));
 }
 
@@ -531,48 +526,74 @@ void Synth2AudioProcessor::setStateInformation (const void* data, int sizeInByte
     // over it once the message thread gets to it.
     pendingPreset.store (-1);
 
-    // An older session is brought up to date (see Bench::Model::migrate and
+    // An older session is brought up to date (see Bench::Migration::migrate and
     // Rack::Model::migrate).
     // (replaceState shares the tree and fills in the parameters it lacks,
     // so what was saved is read from a copy.)
     const auto restored = juce::ValueTree::fromXml (*xml);
     const auto saved    = restored.createCopy();
     apvts.replaceState (restored);
-    Bench::Model (apvts).migrate (saved);
+    Bench::Migration (apvts).migrate (saved);
     Rack::Model (apvts).migrate (saved);
     currentPreset.store (juce::jlimit (0, Presets::numPresets - 1, (int) saved.getProperty (presetProperty, 0)));
+    follower.followBench();
+    follower.followRack();
+}
+
+void Synth2AudioProcessor::handleAsyncUpdate()
+{
+    if (const int index = pendingPreset.exchange (-1); index >= 0)
+        loadPreset (index);
+    follower.followBench();
+    follower.followRack();
+}
+
+// ---- Following the bench and the effects ------------------------------------------------
+
+Synth2AudioProcessor::Follower::Follower (Synth2AudioProcessor& processorToFollowFor) : owner (processorToFollowFor)
+{
+    auto& state = owner.apvts;
+    Bench::Model (state).ensureBench();
+    Rack::Model (state).ensureRack();
+    state.state.addListener (this);
+    for (const auto& id : Bench::allModules)
+        state.addParameterListener (Bench::parameterFor (id), this);
+    for (const auto kind : Rack::allEffects)
+        state.addParameterListener (Rack::inChainParameter (kind), this);
     followBench();
     followRack();
 }
 
-void Synth2AudioProcessor::followBench()
+Synth2AudioProcessor::Follower::~Follower()
 {
-    const Bench::Model bench (apvts);
+    auto& state = owner.apvts;
+    for (const auto& id : Bench::allModules)
+        state.removeParameterListener (Bench::parameterFor (id), this);
+    for (const auto kind : Rack::allEffects)
+        state.removeParameterListener (Rack::inChainParameter (kind), this);
+    state.state.removeListener (this);
+}
+
+void Synth2AudioProcessor::Follower::followBench()
+{
+    const Bench::Model bench (owner.apvts);
     for (const auto flow : { SignalFlow::fixed, SignalFlow::layout, SignalFlow::cables })
     {
         const auto assignment = bench.envelopeAssignment (flow);
         for (size_t k = 0; k < assignment.size(); ++k)
-            envelopeFor[(size_t) flow][k].store (assignment[k], std::memory_order_relaxed);
+            owner.envelopeFor[(size_t) flow][k].store (assignment[k], std::memory_order_relaxed);
     }
     const auto heard = bench.heardThroughCables();
     for (size_t k = 0; k < heard.size(); ++k)
-        setRoutedToOutput ((int) k, heard[k]);
+        owner.setRoutedToOutput ((int) k, heard[k]);
 }
 
-void Synth2AudioProcessor::followRack()
+void Synth2AudioProcessor::Follower::followRack()
 {
-    effectsChain.store (Effects::encode (Rack::Model (apvts).chain()));
+    owner.effectsChain.store (Effects::encode (Rack::Model (owner.apvts).chain()));
 }
 
-void Synth2AudioProcessor::valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTree&)
-{
-    if (parent.hasType (Bench::benchType))
-        followBench();
-    else if (parent.hasType (Rack::rackType))
-        followRack();
-}
-
-void Synth2AudioProcessor::valueTreeChildRemoved (juce::ValueTree& parent, juce::ValueTree&, int)
+void Synth2AudioProcessor::Follower::valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTree&)
 {
     if (parent.hasType (Bench::benchType))
         followBench();
@@ -580,7 +601,15 @@ void Synth2AudioProcessor::valueTreeChildRemoved (juce::ValueTree& parent, juce:
         followRack();
 }
 
-void Synth2AudioProcessor::valueTreePropertyChanged (juce::ValueTree& tree, const juce::Identifier&)
+void Synth2AudioProcessor::Follower::valueTreeChildRemoved (juce::ValueTree& parent, juce::ValueTree&, int)
+{
+    if (parent.hasType (Bench::benchType))
+        followBench();
+    else if (parent.hasType (Rack::rackType))
+        followRack();
+}
+
+void Synth2AudioProcessor::Follower::valueTreePropertyChanged (juce::ValueTree& tree, const juce::Identifier&)
 {
     if (tree.hasType (Bench::moduleType) || tree.hasType (Bench::cableType))
         followBench();
@@ -588,7 +617,7 @@ void Synth2AudioProcessor::valueTreePropertyChanged (juce::ValueTree& tree, cons
         followRack();
 }
 
-void Synth2AudioProcessor::valueTreeRedirected (juce::ValueTree&)
+void Synth2AudioProcessor::Follower::valueTreeRedirected (juce::ValueTree&)
 {
     followBench();
     followRack();
@@ -598,7 +627,7 @@ void Synth2AudioProcessor::valueTreeRedirected (juce::ValueTree&)
 // out of it. That usually happens on the message thread (the editor, a
 // restored session); from anywhere else, both are followed there shortly
 // after.
-void Synth2AudioProcessor::parameterChanged (const juce::String&, float)
+void Synth2AudioProcessor::Follower::parameterChanged (const juce::String&, float)
 {
     if (juce::MessageManager::existsAndIsCurrentThread())
     {
@@ -607,16 +636,8 @@ void Synth2AudioProcessor::parameterChanged (const juce::String&, float)
     }
     else
     {
-        triggerAsyncUpdate();
+        owner.triggerAsyncUpdate();
     }
-}
-
-void Synth2AudioProcessor::handleAsyncUpdate()
-{
-    if (const int index = pendingPreset.exchange (-1); index >= 0)
-        loadPreset (index);
-    followBench();
-    followRack();
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

@@ -27,7 +27,7 @@ double benchChord (const char* name, int notes, int voices, ankerl::nanobench::B
 
     Synth2AudioProcessor proc;
     proc.prepareToPlay (sr, bs);
-    Bench::Model (proc.getState()).adoptClassicLayout();   // OSC 1 and ENV 1, as before the bench
+    Bench::Migration (proc.getState()).adoptClassicLayout();   // OSC 1 and ENV 1, as before the bench
     const auto set = [&proc] (const char* id, float value)
     {
         auto* p = proc.getState().getParameter (id);

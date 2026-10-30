@@ -420,6 +420,43 @@ public:
     enum class Jack { out, in };
     enum class JackPhase { down, drag, up };
 
+    /** What the header shows besides the module's name: its place in the
+        order (when sound follows the layout; 0 shows none), a tag naming
+        what it shapes, and, when sound follows the cables, its jacks: which
+        show, what is plugged in, and the colour they light in. A change
+        repaints the module. */
+    class Header
+    {
+    public:
+        explicit Header (juce::Component& moduleToRepaint) : owner (moduleToRepaint) {}
+
+        void setOrder (int newOrder)                { if (order != newOrder) { order = newOrder; owner.repaint(); } }
+        void setTag (const juce::String& newTag)    { if (tag != newTag) { tag = newTag; owner.repaint(); } }
+        void setJacksShown (bool out, bool in)      { if (jacks.out != out || jacks.in != in) { jacks.out = out; jacks.in = in; owner.repaint(); } }
+        void setPlugged (bool out, bool in)         { if (jacks.outPlugged != out || jacks.inPlugged != in) { jacks.outPlugged = out; jacks.inPlugged = in; owner.repaint(); } }
+        void setJackColour (juce::Colour c)         { jacks.colour = c; }
+        int  getOrder() const noexcept              { return order; }
+        const juce::String& getTag() const noexcept { return tag; }
+        bool isJackShown (Jack which = Jack::out) const noexcept { return which == Jack::out ? jacks.out : jacks.in; }
+        bool isPlugged (Jack which) const noexcept  { return which == Jack::out ? jacks.outPlugged : jacks.inPlugged; }
+        juce::Colour getJackColour() const noexcept { return jacks.colour; }
+
+    private:
+        struct Jacks
+        {
+            bool out        = false;
+            bool in         = false;
+            bool outPlugged = false;
+            bool inPlugged  = false;
+            juce::Colour colour { Synth2::Palette::accent };
+        };
+
+        juce::Component& owner;
+        juce::String     tag;
+        Jacks            jacks;
+        int              order = 0;
+    };
+
     /** The cross was clicked. */
     void onRemove (std::function<void()> handler) { removeHandler = std::move (handler); }
     /** The header was dragged and let go, the module's top left now here (in its parent). */
@@ -452,15 +489,8 @@ public:
     /** How tall the card is drawn (design pixels) in its view. */
     float cardHeight() const noexcept { return Bench::cardHeightOf (id.kind, view); }
 
-    void setOrder (int newOrder)                { if (order != newOrder) { order = newOrder; repaint(); } }
-    void setTag (const juce::String& newTag)    { if (tag != newTag) { tag = newTag; repaint(); } }
-    void setJacksShown (bool out, bool in)      { if (jacks.out != out || jacks.in != in) { jacks.out = out; jacks.in = in; repaint(); } }
-    void setPlugged (bool out, bool in)         { if (jacks.outPlugged != out || jacks.inPlugged != in) { jacks.outPlugged = out; jacks.inPlugged = in; repaint(); } }
-    void setJackColour (juce::Colour c)         { jacks.colour = c; }
-    int  getOrder() const noexcept              { return order; }
-    const juce::String& getTag() const noexcept { return tag; }
-    bool isJackShown (Jack which = Jack::out) const noexcept { return which == Jack::out ? jacks.out : jacks.in; }
-    juce::Colour getJackColour() const noexcept { return jacks.colour; }
+    Header&       getHeader() noexcept       { return headerState; }
+    const Header& getHeader() const noexcept { return headerState; }
 
     /** Greys the module's insides out because of how sound flows (not
         heard, or not shaping anything), saying why in the dials' tooltips.
@@ -474,7 +504,6 @@ public:
     bool isDimmed() const noexcept { return dim.shown; }
 
     PowerSwitch& getPower() noexcept { return power; }
-    bool isSwitchedOff() const noexcept { return ! power.getToggleState(); }
 
     bool isBeingDragged() const noexcept { return dragging; }
 
@@ -488,10 +517,10 @@ public:
     {
         const float s = uiScale;
         if (which == Jack::out)
-            return jacks.out ? juce::Rectangle<float> ((float) getWidth() - 56.0f * s, 6.0f * s, 18.0f * s, 18.0f * s)
+            return headerState.isJackShown (Jack::out) ? juce::Rectangle<float> ((float) getWidth() - 56.0f * s, 6.0f * s, 18.0f * s, 18.0f * s)
                              : juce::Rectangle<float>();
-        return jacks.in ? juce::Rectangle<float> ((float) getWidth() - 108.0f * s, 6.0f * s, 18.0f * s, 18.0f * s)
-                        : juce::Rectangle<float>();
+        return headerState.isJackShown (Jack::in) ? juce::Rectangle<float> ((float) getWidth() - 108.0f * s, 6.0f * s, 18.0f * s, 18.0f * s)
+                                                  : juce::Rectangle<float>();
     }
 
     juce::Slider& getDial (int index) { return dials[(size_t) index]->slider; }
@@ -657,17 +686,6 @@ private:
         juce::Rectangle<int> column;
     };
 
-    // Which jacks show (when sound follows the cables), what is plugged in,
-    // and the colour they light in.
-    struct Jacks
-    {
-        bool out        = false;
-        bool in         = false;
-        bool outPlugged = false;
-        bool inPlugged  = false;
-        juce::Colour colour { Synth2::Palette::accent };
-    };
-
     // Header: the order (following the layout), the name, what it shapes,
     // the jacks, the cross.
     void paintHeader (juce::Graphics& g) const
@@ -679,7 +697,7 @@ private:
 
         auto header = headerBounds().reduced (12.0f * s, 0.0f);
         header.removeFromLeft (26.0f * s);   // the power switch
-        if (order > 0)
+        if (const int order = headerState.getOrder(); order > 0)
         {
             const auto badge = header.removeFromLeft (18.0f * s).withSizeKeepingCentre (18.0f * s, 18.0f * s);
             g.setColour (Palette::accentSoft);
@@ -693,25 +711,25 @@ private:
         g.setColour (dim.shown ? Palette::textFaint : Palette::textMid);
         g.drawText (title, header, juce::Justification::centredLeft, false);
 
-        if (tag.isNotEmpty())
+        if (const auto& tag = headerState.getTag(); tag.isNotEmpty())
         {
             g.setFont (Fonts::sans (9.0f * s, true, 0.14f));
             g.setColour (dim.shown ? Palette::textFaint : Palette::accent);
             g.drawText (tag, header.withRight (closeBounds().getX() - 8.0f * s), juce::Justification::centredRight, false);
         }
 
-        const auto jack = [&] (Jack which, const char* label, bool plugged)
+        const auto jack = [&] (Jack which, const char* label)
         {
             const auto area = jackBounds (which);
             g.setFont (Fonts::sans (8.0f * s, true, 0.22f));
             g.setColour (Palette::textFaint);
             g.drawText (label, area.withX (area.getX() - 28.0f * s).withWidth (24.0f * s), juce::Justification::centredRight, false);
-            BenchStyle::paintJack (g, area, jacks.colour, plugged, over && area.contains (mouse), s);
+            BenchStyle::paintJack (g, area, headerState.getJackColour(), headerState.isPlugged (which), over && area.contains (mouse), s);
         };
-        if (jacks.in)
-            jack (Jack::in, "IN", jacks.inPlugged);
-        if (jacks.out)
-            jack (Jack::out, "OUT", jacks.outPlugged);
+        if (headerState.isJackShown (Jack::in))
+            jack (Jack::in, "IN");
+        if (headerState.isJackShown (Jack::out))
+            jack (Jack::out, "OUT");
 
         const auto cross = closeBounds();
         const bool crossHot = over && cross.contains (mouse);
@@ -762,7 +780,7 @@ private:
     // `again` reapplies it to children added since.
     void showDim (bool again = false)
     {
-        const bool   off = isSwitchedOff();
+        const bool   off = ! power.getToggleState();
         const bool   now = off || dim.flow;
         const auto&  why = off ? dim.offWhy : dim.flowWhy;
         if (! again && now == dim.shown && why == dim.shownWhy)
@@ -778,14 +796,12 @@ private:
     }
 
     PowerSwitch         power;
-    Jacks               jacks;
+    Header              headerState { *this };
     std::optional<Jack> heldJack;   // the jack a press began on
-    juce::String        tag;
     Dim                 dim;
     Bench::View         view;
     juce::Point<int>    dragStart;
     float uiScale  = 1.0f;
-    int   order    = 0;
     bool  dragging = false;
 };
 
@@ -809,7 +825,7 @@ public:
         addDial (ids.voices, "VOICES", BenchStyle::dialColour (0.6f));
         addDial (ids.detune, "DETUNE", BenchStyle::dialColour (0.8f));
         addDial (ids.width,  "WIDTH",  BenchStyle::dialColour (1.0f));
-        setJackColour (BenchStyle::dialColour (0.25f * (float) slot));
+        getHeader().setJackColour (BenchStyle::dialColour (0.25f * (float) slot));
     }
 
     WaveDisplay& getDisplay() noexcept { return display; }
@@ -869,7 +885,7 @@ public:
         for (size_t i = 0; i < stages.size(); ++i)
             parameters[i] = stateToUse.getParameter (stages[i].first);
         display.setParameters (parameters);
-        setJackColour (BenchStyle::dialColour (0.6f + 0.1f * (float) slot));
+        getHeader().setJackColour (BenchStyle::dialColour (0.6f + 0.1f * (float) slot));
     }
 
     AmpDisplay& getDisplay() noexcept { return display; }

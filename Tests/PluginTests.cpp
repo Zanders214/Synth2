@@ -108,7 +108,7 @@ float playAndMeasure (Synth2AudioProcessor& p, juce::MidiBuffer midi, int blocks
 // opens, so a processor has something to play.
 void fillBench (Synth2AudioProcessor& p)
 {
-    Bench::Model (p.getState()).adoptClassicLayout();
+    Bench::Migration (p.getState()).adoptClassicLayout();
 }
 
 void pump (int milliseconds)
@@ -673,7 +673,7 @@ void testEditor()
     snapshot (empty, "1-empty");
 
     // A click on the bench offers what can go on it, there.
-    auto& tray = editor->getAddTray();
+    auto& tray = editor->getTrays().getAdd();
     const auto clickBench = [&] (juce::Point<float> at) { bench.mouseDown (mouseAt (bench, at)); };
     const auto addAt = [&] (int choice, juce::Point<float> at)
     {
@@ -768,13 +768,13 @@ void testEditor()
     const auto tagsAre = [&bench] (std::initializer_list<const char*> expected)
     {
         int e = 0;
-        return std::all_of (expected.begin(), expected.end(), [&] (const char* tag) { return bench.getEnvelope (e++).getTag() == tag; });
+        return std::all_of (expected.begin(), expected.end(), [&] (const char* tag) { return bench.getEnvelope (e++).getHeader().getTag() == tag; });
     };
     check (pumpUntil ([&] { return tagsAre ({ "> OSC 1", "> OSC 2", "> OSC 3", "> OSC 4" }); }),
            "each envelope shows the oscillator with its number");
     snapshot (render (*editor), "3-full-bench");
     setParam (p, ParamID::osc3On, 0.0f);
-    check (pumpUntil ([&] { return bench.getEnvelope (2).isDimmed() && bench.getEnvelope (2).getTag().isEmpty(); })
+    check (pumpUntil ([&] { return bench.getEnvelope (2).isDimmed() && bench.getEnvelope (2).getHeader().getTag().isEmpty(); })
                && ! bench.getEnvelope (1).isDimmed(),
            "without OSC 3, ENV 3 shapes nothing and is greyed out");
     setParam (p, ParamID::osc3On, 1.0f);
@@ -900,7 +900,7 @@ void testEditor()
 
     // The gear picks how sound flows: following the layout numbers the modules,
     // and each envelope shapes the first oscillator before it without one.
-    auto& settings = editor->getSettingsTray();
+    auto& settings = editor->getTrays().getSettings();
     editor->mouseDown (mouseAt (*editor, editor->gearBounds().getCentre()));
     check (settings.isOpen() && settings.getCaption() == "SIGNAL FLOW" && settings.getNumChoices() == 8
                && settings.getChoice (0).ticked && ! settings.getChoice (1).ticked,
@@ -917,7 +917,7 @@ void testEditor()
 
     const auto orderIs = [&bench] (std::initializer_list<std::pair<Bench::ModuleId, int>> expected)
     {
-        return std::all_of (expected.begin(), expected.end(), [&bench] (const auto& e) { return bench.getModule (e.first).getOrder() == e.second; });
+        return std::all_of (expected.begin(), expected.end(), [&bench] (const auto& e) { return bench.getModule (e.first).getHeader().getOrder() == e.second; });
     };
     const Bench::ModuleId o1 { Bench::Kind::oscillator, 0 }, o2 { Bench::Kind::oscillator, 1 }, o3 { Bench::Kind::oscillator, 2 },
                           o4 { Bench::Kind::oscillator, 3 }, e1 { Bench::Kind::envelope, 0 },   e2 { Bench::Kind::envelope, 1 },
@@ -939,8 +939,8 @@ void testEditor()
     settings.mouseDown (mouseAt (settings, settings.choiceBounds (2).getCentre()));
     check (approx (param (p, ParamID::signalFlow), 2.0f, 1e-6f), "picking Patch cables sets the flow");
     using Jack = BenchModule::Jack;
-    check (pumpUntil ([&] { return osc1.isJackShown() && ! osc1.isJackShown (Jack::in) && osc1.getOrder() == 0; })
-               && env1.isJackShown (Jack::in) && env1.isJackShown (Jack::out) && env1.getTag().isEmpty(),
+    check (pumpUntil ([&] { return osc1.getHeader().isJackShown() && ! osc1.getHeader().isJackShown (Jack::in) && osc1.getHeader().getOrder() == 0; })
+               && env1.getHeader().isJackShown (Jack::in) && env1.getHeader().isJackShown (Jack::out) && env1.getHeader().getTag().isEmpty(),
            "the oscillators show OUT jacks, the envelopes IN and OUT, and no numbers");
     bool allDimmed = true;
     for (const auto& id : Bench::allModules)
@@ -956,15 +956,15 @@ void testEditor()
         module.mouseDown (mouseAt (module, from));
         module.mouseUp (mouseAt (module, module.getLocalPoint (editor, to), from));
     };
-    const auto outputIn = editor->outputJackBounds().getCentre();
+    const auto outputIn = editor->getCables().outputJackBounds().getCentre();
 
     const auto jack = osc1.jackBounds().getCentre();
     osc1.mouseDown (mouseAt (osc1, jack));
     osc1.mouseDrag (mouseAt (osc1, jack + juce::Point<float> (-80.0f, 300.0f), jack));
-    check (editor->isPatching(), "dragging from OSC 1's OUT jack pulls a cable");
+    check (editor->getCables().isPatching(), "dragging from OSC 1's OUT jack pulls a cable");
     snapshot (render (*editor), "7-patching");
-    osc1.mouseUp (mouseAt (osc1, osc1.getLocalPoint (editor, editor->jackCentre (e1, Jack::in)), jack));
-    check (! editor->isPatching() && model.inputOf (e1) == std::optional (o1), "dropped on ENV 1's IN jack, it's patched");
+    osc1.mouseUp (mouseAt (osc1, osc1.getLocalPoint (editor, editor->getCables().jackCentre (e1, Jack::in)), jack));
+    check (! editor->getCables().isPatching() && model.inputOf (e1) == std::optional (o1), "dropped on ENV 1's IN jack, it's patched");
     check (osc1.isDimmed() && holdAndMeasure (p) < 1e-4f, "but not heard until ENV 1 reaches the output");
     releaseAll (p);
     drag (env1, Jack::out, outputIn);
@@ -988,19 +988,19 @@ void testEditor()
     // Picking a cable up: by its oscillator, an envelope's IN or the output's IN.
     drag (osc1, Jack::out, { 400.0f, 860.0f });
     check (! model.inputOf (e1).has_value() && osc1.isDimmed() && env1.isDimmed(), "a cable dropped anywhere else is unplugged");
-    drag (osc1, Jack::out, editor->jackCentre (e1, Jack::in));
+    drag (osc1, Jack::out, editor->getCables().jackCentre (e1, Jack::in));
     const auto envIn = env1.jackBounds (Jack::in).getCentre();
     env1.mouseDown (mouseAt (env1, envIn));
-    check (editor->isPatching() && ! model.inputOf (e1).has_value(), "grabbing ENV 1's IN jack picks up the cable into it");
+    check (editor->getCables().isPatching() && ! model.inputOf (e1).has_value(), "grabbing ENV 1's IN jack picks up the cable into it");
     env1.mouseUp (mouseAt (env1, envIn, envIn));
     check (model.inputOf (e1) == std::optional (o1), "and dropping it back plugs it in again");
     check (! model.connect (e1, e2) && model.inputOf (e2) == std::nullopt, "an envelope can't be patched into another");
 
     editor->mouseDown (mouseAt (*editor, outputIn));
-    check (editor->isPatching() && ! model.isPatchedToOutput (o2) && model.isPatchedToOutput (e1),
+    check (editor->getCables().isPatching() && ! model.isPatchedToOutput (o2) && model.isPatchedToOutput (e1),
            "grabbing the output's IN jack picks up the last cable patched to it");
     editor->mouseUp (mouseAt (*editor, outputIn + juce::Point<float> (-300.0f, -200.0f), outputIn));
-    check (! editor->isPatching() && ! model.isPatchedToOutput (o2), "and dropping it away unplugs it");
+    check (! editor->getCables().isPatching() && ! model.isPatchedToOutput (o2), "and dropping it away unplugs it");
 
     osc1.mouseDown (mouseAt (osc1, osc1.closeBounds().getCentre()));
     check (! model.inputOf (e1).has_value() && param (p, ParamID::osc1On) < 0.5f, "taking an oscillator off the bench unplugs its cable");
@@ -1011,7 +1011,7 @@ void testEditor()
     // Back to a fixed order: no jacks, nothing greyed out.
     auto& osc4 = bench.getOscillator (3);
     setParam (p, ParamID::signalFlow, 0.0f);
-    check (pumpUntil ([&] { return ! osc4.isJackShown() && ! osc4.isDimmed() && bench.getEnvelope (3).getTag() == "> OSC 4"; }),
+    check (pumpUntil ([&] { return ! osc4.getHeader().isJackShown() && ! osc4.isDimmed() && bench.getEnvelope (3).getHeader().getTag() == "> OSC 4"; }),
            "a host change of the flow shows too");
 
     // A session restored while the editor is open moves the cards there.
@@ -1208,7 +1208,7 @@ void testViews()
     snapshot (render (*editor), "15-envelope-graph");
 
     // The gear menu's views.
-    auto& settings = editor->getSettingsTray();
+    auto& settings = editor->getTrays().getSettings();
     const auto pick = [&] (int choice)
     {
         editor->mouseDown (mouseAt (*editor, editor->gearBounds().getCentre()));
@@ -1298,7 +1298,7 @@ void testEffectsTab()
     snapshot (render (*editor), "11-effects-empty");
 
     // A click on an empty spot offers the effects, there.
-    auto& tray = editor->getEffectTray();
+    auto& tray = editor->getTrays().getEffect();
     const auto area = effects.rackArea().toFloat();
     // A click that puts a card's top left at `topLeft` (design pixels on the area).
     const auto clickFor = [&] (juce::Point<float> topLeft)
@@ -1719,7 +1719,7 @@ void testPresets()
     editor->mouseDown (mouseAt (*editor, { picker.getX() + 6.0f, picker.getCentreY() }));
     check (p.getCurrentProgram() == Presets::numPresets - 1, "its left arrow steps back, wrapping round");
 
-    auto& tray = editor->getPresetTray();
+    auto& tray = editor->getTrays().getPreset();
     editor->mouseDown (mouseAt (*editor, picker.getCentre()));
     check (tray.isOpen() && tray.getCaption() == "PRESETS" && tray.getNumChoices() == Presets::numPresets
                && tray.getChoice (Presets::numPresets - 1).ticked && ! tray.getChoice (0).ticked,
