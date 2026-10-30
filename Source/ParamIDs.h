@@ -143,10 +143,20 @@ namespace ParamID
     inline constexpr const char* reverbWidth   = "reverbWidth";
     inline constexpr const char* reverbMix     = "reverbMix";
     inline constexpr const char* reverbPreDelay = "reverbPreDelay";
-    inline constexpr const char* effectsOrder  = "effectsOrder";   // 0: delay first, 1: reverb first
+
+    // Whether each effect is in the chain, on the EFFECTS tab (see Rack.h);
+    // its ...On above is its power switch.
+    inline constexpr const char* driveInChain  = "driveInChain";
+    inline constexpr const char* delayInChain  = "delayInChain";
+    inline constexpr const char* reverbInChain = "reverbInChain";
 
     // Retired with the first bench's shared unison and envelope modules; only
     // read from sessions saved with them, to carry them over.
     inline constexpr const char* unisonOn   = "unisonOn";
     inline constexpr const char* envelopeOn = "envelopeOn";
+
+    // Retired when the effects could be put in any order (their order is now
+    // where they sit: see Rack.h); only read from older sessions. 0: the
+    // delay before the reverb, 1: the reverb first, the drive always first.
+    inline constexpr const char* effectsOrder = "effectsOrder";
 }

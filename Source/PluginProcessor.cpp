@@ -3,6 +3,7 @@
 #include "ParamIDs.h"
 #include "Bench.h"
 #include "Presets.h"
+#include "Rack.h"
 
 namespace
 {
@@ -20,10 +21,14 @@ Synth2AudioProcessor::Synth2AudioProcessor()
 {
     keyboardState.addListener (this);
     Bench::Model (apvts).ensureBench();
+    Rack::Model (apvts).ensureRack();
     apvts.state.addListener (this);
     for (const auto& id : Bench::allModules)
         apvts.addParameterListener (Bench::parameterFor (id), this);
+    for (const auto kind : Rack::allEffects)
+        apvts.addParameterListener (Rack::inChainParameter (kind), this);
     followBench();
+    followRack();
 }
 
 Synth2AudioProcessor::~Synth2AudioProcessor()
@@ -31,6 +36,8 @@ Synth2AudioProcessor::~Synth2AudioProcessor()
     cancelPendingUpdate();
     for (const auto& id : Bench::allModules)
         apvts.removeParameterListener (Bench::parameterFor (id), this);
+    for (const auto kind : Rack::allEffects)
+        apvts.removeParameterListener (Rack::inChainParameter (kind), this);
     apvts.state.removeListener (this);
     keyboardState.removeListener (this);
 }
@@ -200,7 +207,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
         AudioParameterFloatAttributes().withLabel ("ms")
             .withStringFromValueFunction ([] (float value, int) { return String (roundToInt (value)) + " ms"; })));
 
-    // The drive (version 8), first in the chain, off to start with.
+    // The drive (version 8), off to start with.
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::driveOn, 8 }, "Drive On", effects.drive.on));
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { ParamID::driveAmount, 8 }, "Drive", NormalisableRange<float> (0.0f, 1.0f), effects.drive.amount,
@@ -213,9 +220,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
     percent (ParamID::driveTone, "Drive Tone", 1.0f, effects.drive.tone, 8);
     percent (ParamID::driveMix,  "Drive Mix",  1.0f, effects.drive.mix, 8);
 
-    layout.add (std::make_unique<AudioParameterChoice> (
-        ParameterID { ParamID::effectsOrder, 6 }, "Effects Order", StringArray { "Delay, then reverb", "Reverb, then delay" },
-        (int) effects.reverbFirst, AudioParameterChoiceAttributes().withAutomatable (false)));
+    // Whether each effect is in the chain (version 9): the EFFECTS tab starts
+    // empty, like the bench. Not automatable, like the signal flow; an
+    // effect's power switch above is what a song brings in and out.
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::driveInChain, 9 },  "Drive In Chain",  false, onOff (false)));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::delayInChain, 9 },  "Delay In Chain",  false, onOff (false)));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::reverbInChain, 9 }, "Reverb In Chain", false, onOff (false)));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { ParamID::output, 1 }, "Output",
@@ -275,15 +285,17 @@ Synth2Engine::Settings Synth2AudioProcessor::currentSettings() const noexcept
         envelope.sustainLevel   = param (ids.sustain);
         envelope.releaseSeconds = param (ids.release);
     }
+    // An effect plays while it is both in the chain and switched on.
+    const auto playing = [&param] (const char* power, const char* inChain) { return param (power) >= 0.5f && param (inChain) >= 0.5f; };
     auto& drive = settings.effects.drive;
-    drive.on     = param (ParamID::driveOn) >= 0.5f;
+    drive.on     = playing (ParamID::driveOn, ParamID::driveInChain);
     drive.amount = param (ParamID::driveAmount);
     drive.shape  = juce::roundToInt (param (ParamID::driveShape));
     drive.tone   = param (ParamID::driveTone);
     drive.mix    = param (ParamID::driveMix);
 
     auto& delay = settings.effects.delay;
-    delay.on       = param (ParamID::delayOn) >= 0.5f;
+    delay.on       = playing (ParamID::delayOn, ParamID::delayInChain);
     delay.sync     = param (ParamID::delaySync) >= 0.5f;
     delay.timeMs   = param (ParamID::delayTime);
     delay.division = juce::roundToInt (param (ParamID::delayNote));
@@ -293,15 +305,15 @@ Synth2Engine::Settings Synth2AudioProcessor::currentSettings() const noexcept
     delay.pingPong = param (ParamID::delayPingPong) >= 0.5f;
 
     auto& reverb = settings.effects.reverb;
-    reverb.on      = param (ParamID::reverbOn) >= 0.5f;
+    reverb.on      = playing (ParamID::reverbOn, ParamID::reverbInChain);
     reverb.size    = param (ParamID::reverbSize);
     reverb.damping = param (ParamID::reverbDamping);
     reverb.width   = param (ParamID::reverbWidth);
     reverb.mix     = param (ParamID::reverbMix);
     reverb.preDelayMs = param (ParamID::reverbPreDelay);
 
-    settings.effects.reverbFirst = param (ParamID::effectsOrder) >= 0.5f;
-    settings.effects.bpm         = hostBpm.load (std::memory_order_relaxed);
+    settings.effects.order = Effects::decode (effectsChain.load (std::memory_order_relaxed));
+    settings.effects.bpm   = hostBpm.load (std::memory_order_relaxed);
     settings.outputDb = param (ParamID::output);
     return settings;
 }
@@ -437,7 +449,7 @@ bool Synth2AudioProcessor::isMidiEffect() const         { return false; }
 
 // Once the last key goes up, the notes ring on for the longest release of the
 // envelopes shaping the oscillators on the bench (or a moment, with none),
-// and then the delay's repeats and the reverb's ring.
+// and then the delay's repeats and the reverb's ring (of those in the chain).
 double Synth2AudioProcessor::getTailLengthSeconds() const
 {
     const auto settings = currentSettings();
@@ -494,6 +506,7 @@ void Synth2AudioProcessor::loadPreset (int index)
     currentPreset.store (index);
     apvts.state.setProperty (presetProperty, index, nullptr);
     followBench();
+    followRack();
     updateHostDisplay (ChangeDetails().withProgramChanged (true));
 }
 
@@ -514,15 +527,18 @@ void Synth2AudioProcessor::setStateInformation (const void* data, int sizeInByte
     // over it once the message thread gets to it.
     pendingPreset.store (-1);
 
-    // An older session is brought up to date (see Bench::Model::migrate).
+    // An older session is brought up to date (see Bench::Model::migrate and
+    // Rack::Model::migrate).
     // (replaceState shares the tree and fills in the parameters it lacks,
     // so what was saved is read from a copy.)
     const auto restored = juce::ValueTree::fromXml (*xml);
     const auto saved    = restored.createCopy();
     apvts.replaceState (restored);
     Bench::Model (apvts).migrate (saved);
+    Rack::Model (apvts).migrate (saved);
     currentPreset.store (juce::jlimit (0, Presets::numPresets - 1, (int) saved.getProperty (presetProperty, 0)));
     followBench();
+    followRack();
 }
 
 void Synth2AudioProcessor::followBench()
@@ -539,38 +555,56 @@ void Synth2AudioProcessor::followBench()
         setRoutedToOutput ((int) k, heard[k]);
 }
 
+void Synth2AudioProcessor::followRack()
+{
+    effectsChain.store (Effects::encode (Rack::Model (apvts).chain()), std::memory_order_relaxed);
+}
+
 void Synth2AudioProcessor::valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTree&)
 {
     if (parent.hasType (Bench::benchType))
         followBench();
+    else if (parent.hasType (Rack::rackType))
+        followRack();
 }
 
 void Synth2AudioProcessor::valueTreeChildRemoved (juce::ValueTree& parent, juce::ValueTree&, int)
 {
     if (parent.hasType (Bench::benchType))
         followBench();
+    else if (parent.hasType (Rack::rackType))
+        followRack();
 }
 
 void Synth2AudioProcessor::valueTreePropertyChanged (juce::ValueTree& tree, const juce::Identifier&)
 {
     if (tree.hasType (Bench::moduleType) || tree.hasType (Bench::cableType))
         followBench();
+    else if (tree.hasType (Rack::effectType))
+        followRack();
 }
 
 void Synth2AudioProcessor::valueTreeRedirected (juce::ValueTree&)
 {
     followBench();
+    followRack();
 }
 
-// A module came onto the bench or left it. That usually happens on the
-// message thread (the editor, a restored session); from anywhere else, the
-// bench is followed there shortly after.
+// A module came onto the bench or left it, or an effect into the chain or
+// out of it. That usually happens on the message thread (the editor, a
+// restored session); from anywhere else, both are followed there shortly
+// after.
 void Synth2AudioProcessor::parameterChanged (const juce::String&, float)
 {
     if (juce::MessageManager::existsAndIsCurrentThread())
+    {
         followBench();
+        followRack();
+    }
     else
+    {
         triggerAsyncUpdate();
+    }
 }
 
 void Synth2AudioProcessor::handleAsyncUpdate()
@@ -578,6 +612,7 @@ void Synth2AudioProcessor::handleAsyncUpdate()
     if (const int index = pendingPreset.exchange (-1); index >= 0)
         loadPreset (index);
     followBench();
+    followRack();
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

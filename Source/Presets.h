@@ -9,18 +9,20 @@
 #include "Bench.h"
 #include "EffectSettings.h"
 #include "ParamIDs.h"
+#include "Rack.h"
 
 /**
     Presets
 
     Synth2's factory sounds. Each one says which oscillators are on the bench
     and how they are set: each with its own unison stack, and most with their
-    own DAHDSR envelope, and the delay and reverb it goes through (the pads
-    and keys mostly). Everything a preset doesn't mention goes back to its
-    default, so it sounds the same whatever was playing before it. Loading one
-    sets the bench out afresh: its oscillators along the top row, each
-    envelope under its oscillator (ENV n shapes OSC n), in a fixed order with
-    no cables.
+    own DAHDSR envelope, and the effects it goes through (the pads and keys
+    mostly). Everything a preset doesn't mention goes back to its default, so
+    it sounds the same whatever was playing before it. Loading one sets the
+    bench out afresh: its oscillators along the top row, each envelope under
+    its oscillator (ENV n shapes OSC n), in a fixed order with no cables; and
+    the EFFECTS tab too: just its effects, side by side, the drive, then the
+    delay, then the reverb.
 
     The first, Empty Bench, is the bench a new instance opens on.
 */
@@ -104,7 +106,7 @@ namespace Presets
         const char* detail;   // one line for the preset tray
         std::array<std::optional<Oscillator>, Bench::numOscillators> oscillators;   // empty: off the bench
         float outputDb = 0.0f;
-        std::optional<Delay>  delay {};    // empty: off
+        std::optional<Delay>  delay {};    // empty: out of the chain
         std::optional<Reverb> reverb {};
         std::optional<Drive>  drive {};
     };
@@ -199,7 +201,8 @@ namespace Presets
     inline constexpr int numPresets = (int) std::tuple_size_v<decltype (factory)>;
 
     /** The parameter values `preset` sets, by ID: whether each oscillator and
-        envelope is on the bench, and the settings of the ones that are. */
+        envelope is on the bench and each effect in the chain, and the
+        settings of the ones that are. */
     inline std::vector<std::pair<const char*, float>> valuesOf (const Preset& preset)
     {
         std::vector<std::pair<const char*, float>> values;
@@ -231,6 +234,7 @@ namespace Presets
                 values.emplace_back (env.release, osc->envelope->releaseSeconds);
             }
         }
+        values.emplace_back (ParamID::driveInChain, preset.drive.has_value() ? 1.0f : 0.0f);
         values.emplace_back (ParamID::driveOn, preset.drive.has_value() ? 1.0f : 0.0f);
         if (preset.drive.has_value())
         {
@@ -239,6 +243,7 @@ namespace Presets
             values.emplace_back (ParamID::driveTone,   preset.drive->tone);
             values.emplace_back (ParamID::driveMix,    preset.drive->mix);
         }
+        values.emplace_back (ParamID::delayInChain, preset.delay.has_value() ? 1.0f : 0.0f);
         values.emplace_back (ParamID::delayOn, preset.delay.has_value() ? 1.0f : 0.0f);
         if (preset.delay.has_value())
         {
@@ -249,6 +254,7 @@ namespace Presets
             values.emplace_back (ParamID::delayMix,      preset.delay->mix);
             values.emplace_back (ParamID::delayPingPong, preset.delay->pingPong ? 1.0f : 0.0f);
         }
+        values.emplace_back (ParamID::reverbInChain, preset.reverb.has_value() ? 1.0f : 0.0f);
         values.emplace_back (ParamID::reverbOn, preset.reverb.has_value() ? 1.0f : 0.0f);
         if (preset.reverb.has_value())
         {
@@ -263,7 +269,8 @@ namespace Presets
     }
 
     /** Loads `preset` into `state`: every parameter back to its default, then
-        the preset's own values, and the bench set out afresh. Message thread. */
+        the preset's own values, and the bench and the effects set out
+        afresh. Message thread. */
     inline void apply (juce::AudioProcessorValueTreeState& state, const Preset& preset)
     {
         const auto set = [] (juce::RangedAudioParameter& parameter, float normalised)
@@ -285,5 +292,6 @@ namespace Presets
             }
 
         Bench::Model (state).layOut();
+        Rack::Model (state).layOut();
     }
 }

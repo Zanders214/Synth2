@@ -41,6 +41,9 @@ double benchChord (const char* name, int notes, int voices, ankerl::nanobench::B
         set (ParamID::envelopes[k].on, k < numOscillators ? 1.0f : 0.0f);
         set (ParamID::envelopes[k].release, 10.0f);
     }
+    set (ParamID::driveInChain,  effects ? 1.0f : 0.0f);
+    set (ParamID::delayInChain,  effects ? 1.0f : 0.0f);
+    set (ParamID::reverbInChain, effects ? 1.0f : 0.0f);
     set (ParamID::driveOn,  effects ? 1.0f : 0.0f);
     set (ParamID::delayOn,  effects ? 1.0f : 0.0f);
     set (ParamID::reverbOn, effects ? 1.0f : 0.0f);

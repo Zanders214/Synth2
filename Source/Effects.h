@@ -13,10 +13,11 @@
     Effects
 
     The effects every note goes through together, after the mix and before
-    OUTPUT: a DRIVE, then a stereo DELAY and a REVERB, one after the other in
-    either order.
+    OUTPUT: a DRIVE, a stereo DELAY and a REVERB, one after the other in
+    whichever order the settings ask for (by default the drive, then the
+    delay, then the reverb).
 
-        notes  ->  +  ->  DRIVE  ->  DELAY  ->  REVERB  ->  OUTPUT     (or REVERB before DELAY)
+        notes  ->  +  ->  DRIVE  ->  DELAY  ->  REVERB  ->  OUTPUT     (or any other order)
 
     Each has its own switch and MIX. MIX keeps the dry sound at full level up
     to the middle, adding the effect underneath it, and from there fades the
@@ -425,7 +426,7 @@ namespace Effects
         bool  holding = false;
     };
 
-    /** The drive, then the delay and the reverb in the order the settings ask for. */
+    /** The drive, the delay and the reverb, in the order the settings ask for. */
     class Chain
     {
     public:
@@ -441,22 +442,20 @@ namespace Effects
             drive.set (settings.drive);
             delay.set (settings.delay, settings.bpm);
             reverb.set (settings.reverb);
-            reverbFirst = settings.reverbFirst;
+            order = isOrder (settings.order) ? settings.order : defaultOrder;
         }
 
-        /** Runs the stereo pair through both effects, in place. */
+        /** Runs the stereo pair through the effects, one after the other, in place. */
         void process (float* left, float* right, int numSamples) noexcept
         {
-            drive.process (left, right, numSamples);
-            if (reverbFirst)
+            for (const auto kind : order)
             {
-                reverb.process (left, right, numSamples);
-                delay.process (left, right, numSamples);
-            }
-            else
-            {
-                delay.process (left, right, numSamples);
-                reverb.process (left, right, numSamples);
+                switch (kind)
+                {
+                    case Kind::drive:  drive.process (left, right, numSamples);  break;
+                    case Kind::delay:  delay.process (left, right, numSamples);  break;
+                    case Kind::reverb: reverb.process (left, right, numSamples); break;
+                }
             }
         }
 
@@ -471,6 +470,6 @@ namespace Effects
         Drive  drive;
         Delay  delay;
         Reverb reverb;
-        bool   reverbFirst = false;
+        Order  order = defaultOrder;
     };
 }

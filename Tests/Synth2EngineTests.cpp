@@ -1092,9 +1092,24 @@ void testEffectsChain()
     both.delay.mix = 1.0f;
     both.reverb.on = true;
     auto reversed = both;
-    reversed.reverbFirst = true;
+    reversed.order = { Effects::Kind::drive, Effects::Kind::reverb, Effects::Kind::delay };
     check (throughEffects (both, impulse (24000), 4800) != throughEffects (reversed, impulse (24000), 4800),
            "the order matters");
+    auto drivenLast = both;
+    drivenLast.drive.on     = true;
+    drivenLast.drive.amount = 1.0f;
+    auto drivenFirst = drivenLast;
+    drivenLast.order = { Effects::Kind::delay, Effects::Kind::reverb, Effects::Kind::drive };
+    check (throughEffects (drivenFirst, impulse (24000), 4800) != throughEffects (drivenLast, impulse (24000), 4800),
+           "the drive can go anywhere in the chain, not just first");
+    for (int code = 0; code < 27; ++code)
+    {
+        const auto order = Effects::decode (code);
+        check (Effects::isOrder (order) && (Effects::encode (order) == code || order == Effects::defaultOrder),
+               "every code decodes to an order, each effect once (" + std::to_string (code) + ")");
+    }
+    check (Effects::decode (-1) == Effects::defaultOrder && Effects::decode (999) == Effects::defaultOrder,
+           "and anything else to the default");
 
     // Switching the delay off fades it out and forgets its repeats.
     Effects::Settings delay;

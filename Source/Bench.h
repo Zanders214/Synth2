@@ -120,35 +120,40 @@ namespace Bench
                  juce::jlimit (0.0f, areaHeight - heightOf (kind), topLeft.y) };
     }
 
-    /** Where a module of `kind` dropped at `wanted` lands: there (inside the
-        bench) if it covers none of `others`, else the nearest spot that is
-        free. If the bench has no free spot big enough, it stays where it was
-        dropped. */
-    inline juce::Point<float> resolveOverlap (juce::Point<float> wanted, Kind kind, const std::vector<juce::Rectangle<float>>& others)
+    /** Where a card `size` big dropped at `wanted` lands on an area `area`
+        big (from its top left): there (inside the area) if it covers none of
+        `others`, else the nearest spot that is free, `spacing` away from any
+        card it lands beside. If the area has no free spot big enough, it
+        stays where it was dropped. Shared by the bench and the effects. */
+    inline juce::Point<float> resolveOverlapIn (juce::Point<float> wanted, juce::Point<float> size, juce::Point<float> area,
+                                                const std::vector<juce::Rectangle<float>>& others, float spacing)
     {
-        wanted = clampToArea (wanted, kind);
-        const float height = heightOf (kind);
-        const auto isFree = [&others, kind] (juce::Point<float> topLeft)
+        const auto clamp = [size, area] (juce::Point<float> topLeft)
         {
-            const auto bounds = boundsAt (topLeft, kind);
+            return juce::Point<float> (juce::jlimit (0.0f, area.x - size.x, topLeft.x), juce::jlimit (0.0f, area.y - size.y, topLeft.y));
+        };
+        wanted = clamp (wanted);
+        const auto isFree = [&others, size] (juce::Point<float> topLeft)
+        {
+            const juce::Rectangle<float> bounds (topLeft.x, topLeft.y, size.x, size.y);
             return std::none_of (others.begin(), others.end(), [&bounds] (const auto& other) { return bounds.intersects (other); });
         };
         if (isFree (wanted))
             return wanted;
 
-        // Every spot on a fine grid, plus the spots flush against each module
-        // (so a module can sit right next to another), nearest first.
+        // Every spot on a fine grid, plus the spots flush against each card
+        // (so a card can sit right next to another), nearest first.
         constexpr float step = 8.0f;
         std::vector<float> xs;
         std::vector<float> ys;
-        for (float x = 0.0f; x <= areaWidth - moduleWidth; x += step) xs.push_back (x);
-        for (float y = 0.0f; y <= areaHeight - height; y += step)     ys.push_back (y);
-        xs.push_back (areaWidth - moduleWidth);
-        ys.push_back (areaHeight - height);
+        for (float x = 0.0f; x <= area.x - size.x; x += step) xs.push_back (x);
+        for (float y = 0.0f; y <= area.y - size.y; y += step) ys.push_back (y);
+        xs.push_back (area.x - size.x);
+        ys.push_back (area.y - size.y);
         for (const auto& other : others)
         {
-            xs.insert (xs.end(), { other.getX() - moduleWidth - gap, other.getRight() + gap, other.getX(), wanted.x });
-            ys.insert (ys.end(), { other.getY() - height - gap, other.getBottom() + gap, other.getY(), wanted.y });
+            xs.insert (xs.end(), { other.getX() - size.x - spacing, other.getRight() + spacing, other.getX(), wanted.x });
+            ys.insert (ys.end(), { other.getY() - size.y - spacing, other.getBottom() + spacing, other.getY(), wanted.y });
         }
 
         std::optional<juce::Point<float>> best;
@@ -157,7 +162,7 @@ namespace Bench
             for (const float y : ys)
             {
                 const juce::Point<float> candidate (x, y);
-                const auto inside = clampToArea (candidate, kind);
+                const auto inside = clamp (candidate);
                 if (! juce::exactlyEqual (inside.x, x) || ! juce::exactlyEqual (inside.y, y))
                     continue;
                 const float distance = candidate.getDistanceSquaredFrom (wanted);
@@ -168,6 +173,15 @@ namespace Bench
                 }
             }
         return best.value_or (wanted);
+    }
+
+    /** Where a module of `kind` dropped at `wanted` lands: there (inside the
+        bench) if it covers none of `others`, else the nearest spot that is
+        free. If the bench has no free spot big enough, it stays where it was
+        dropped. */
+    inline juce::Point<float> resolveOverlap (juce::Point<float> wanted, Kind kind, const std::vector<juce::Rectangle<float>>& others)
+    {
+        return resolveOverlapIn (wanted, { moduleWidth, heightOf (kind) }, { areaWidth, areaHeight }, others, gap);
     }
 
     /** The order modules at `positions` read in: row by row, top to bottom

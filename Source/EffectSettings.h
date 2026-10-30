@@ -155,13 +155,49 @@ namespace Effects
         return driveMakeUp (shape, gain) * driveCurve (shape, gain * x);
     }
 
+    /** The three effects, and the order sound goes through them: each
+        once, first to last. */
+    enum class Kind { drive, delay, reverb };
+    inline constexpr int numKinds = 3;
+    using Order = std::array<Kind, (size_t) numKinds>;
+    inline constexpr Order defaultOrder { Kind::drive, Kind::delay, Kind::reverb };
+
+    /** Whether `order` has each effect exactly once. */
+    inline bool isOrder (const Order& order) noexcept
+    {
+        std::array<bool, (size_t) numKinds> seen {};
+        for (const auto kind : order)
+        {
+            const auto k = (size_t) kind;
+            if (k >= seen.size() || seen[k])
+                return false;
+            seen[k] = true;
+        }
+        return true;
+    }
+
+    /** An order as one number (so it can be handed over in one atomic), and back. */
+    inline int encode (const Order& order) noexcept
+    {
+        return (int) order[0] + numKinds * (int) order[1] + numKinds * numKinds * (int) order[2];
+    }
+
+    /** The order `code` stands for, or the default for anything that isn't one. */
+    inline Order decode (int code) noexcept
+    {
+        const Order order { (Kind) std::clamp (code % numKinds, 0, numKinds - 1),
+                            (Kind) std::clamp (code / numKinds % numKinds, 0, numKinds - 1),
+                            (Kind) std::clamp (code / (numKinds * numKinds) % numKinds, 0, numKinds - 1) };
+        return code >= 0 && isOrder (order) ? order : defaultOrder;
+    }
+
     struct Settings
     {
         DriveSettings  drive;
         DelaySettings  delay;
         ReverbSettings reverb;
-        bool   reverbFirst = false;
-        double bpm         = 120.0;   // the host's tempo, for a synced delay
+        Order  order = defaultOrder;
+        double bpm   = 120.0;   // the host's tempo, for a synced delay
     };
 
     /** How long the delay waits before each repeat, in seconds. */

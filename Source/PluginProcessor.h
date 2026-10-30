@@ -101,14 +101,18 @@ private:
     // again whenever the bench changes: a module added, removed, moved or
     // patched, or a whole new state. Message thread.
     void followBench();
+
+    // The order the effects play in (see Rack.h), worked out again whenever
+    // one goes into the chain or out, or a card moves. Message thread.
+    void followRack();
     void valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTree& child) override;
     void valueTreeChildRemoved (juce::ValueTree& parent, juce::ValueTree& child, int index) override;
     void valueTreePropertyChanged (juce::ValueTree& tree, const juce::Identifier& property) override;
     void valueTreeRedirected (juce::ValueTree& tree) override;
     void parameterChanged (const juce::String& parameterID, float newValue) override;
 
-    // The bench followed, or a host's program change loaded, on the message
-    // thread when either came from off it.
+    // The bench and the effects followed, or a host's program change
+    // loaded, on the message thread when either came from off it.
     void handleAsyncUpdate() override;
 
     juce::AudioProcessorValueTreeState apvts;
@@ -116,6 +120,7 @@ private:
     std::atomic<int> activeNotes { 0 };
     std::array<std::atomic<bool>, Synth2Engine::numOscillators> routedToOutput { true, true, true, true };
     std::atomic<double> hostBpm { 120.0 };   // the host's tempo, as of the last block
+    std::atomic<int> effectsChain { Effects::encode (Effects::defaultOrder) };   // the effects' order, encoded
 
     // Which envelope shapes each oscillator (-1 for none), for each way sound
     // can flow, so the audio thread just picks the row for the flow in use.
