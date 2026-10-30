@@ -1,8 +1,10 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
+#include "EffectSettings.h"
 #include "Envelope.h"
 #include "Oscillator.h"
 #include "Unison.h"
@@ -14,7 +16,8 @@
     oscillators' WAVE wells (the shape at its pitch and level, and a faint copy
     per unison voice, each placed and tinted by its detune and pan) and the
     envelopes' AMP wells (the envelope's shape at OUTPUT's level, and a dot per
-    sounding note riding it).
+    sounding note riding it), and the effects' wells (the delay's repeats and
+    the reverb's ring).
 
     It draws on the very same Oscillator::naive and Unison maths the engine
     plays, so what the displays show never drifts from what you hear. The
@@ -196,5 +199,82 @@ struct Synth2VisualModel
         }
         d.x = clamp01 (d.x);
         return d;
+    }
+
+    // ---- EFFECTS -----------------------------------------------------------
+
+    /** One spike in the DELAY well: where it falls (x 0..1 across the well),
+        how loud it is on each side, and how bright it still is (TONE darkens
+        each repeat a little more). */
+    struct Echo
+    {
+        float x          = 0.0f;
+        float left       = 0.0f;
+        float right      = 0.0f;
+        float brightness = 1.0f;
+    };
+
+    static constexpr float echoSpanSeconds = 2.0f;   // the DELAY well's width, the longest TIME
+    static constexpr int   maxEchoes       = 64;
+
+    struct Echoes
+    {
+        std::array<Echo, maxEchoes> taps {};
+        int count = 0;
+    };
+
+    /** The DELAY well: the dry sound at the left, then each repeat `seconds`
+        after the last, FEEDBACK as loud, until they fall below -40 dB or off
+        the well's two seconds. With PING-PONG they take turns, left first. */
+    static Echoes echoes (double seconds, float feedback, float tone, float mix, bool pingPong) noexcept
+    {
+        Echoes e;
+        const float dry = Effects::dryGain (mix);
+        e.taps[0] = { 0.0f, dry, dry, 1.0f };
+        e.count   = 1;
+
+        const float repeat = std::min (Effects::maxFeedback, std::max (0.0f, feedback));
+        const float darken = 0.45f + 0.55f * clamp01 (tone);
+        float level      = Effects::wetGain (mix);
+        float brightness = 1.0f;
+        for (int k = 1; e.count < maxEchoes; ++k)
+        {
+            const auto x = (float) ((double) k * seconds / (double) echoSpanSeconds);
+            if (x > 1.0f || level < 0.01f)
+                break;
+            brightness *= darken;
+            Echo echo { x, level, level, brightness };
+            if (pingPong && k % 2 == 1)
+                echo.right = 0.0f;
+            else if (pingPong)
+                echo.left = 0.0f;
+            e.taps[(size_t) e.count++] = echo;
+            level *= repeat;
+        }
+        return e;
+    }
+
+    static constexpr float roomSpanSeconds = 6.0f;   // the REVERB well's width
+
+    /** How high the REVERB well's room stands at x (0..1 across its six
+        seconds), on a 60 dB scale: silent through PRE-DELAY, it swells in
+        over 40 ms, then falls away in a straight line (in dB) over its ring,
+        scaled by MIX. */
+    static float roomHeight (float size, float mix, float x, float preDelayMs = 0.0f) noexcept
+    {
+        const double seconds = (double) clamp01 (x) * (double) roomSpanSeconds - (double) std::max (0.0f, preDelayMs) / 1000.0;
+        if (seconds <= 0.0)
+            return 0.0f;
+        const double ring    = Effects::reverbSeconds (size);
+        const double swell   = std::min (1.0, seconds / 0.04);
+        return (float) (swell * std::max (0.0, 1.0 - seconds / ring)) * Effects::wetGain (mix);
+    }
+
+    /** How bright the room still is at x (0..1): DAMPING dulls it sooner. */
+    static float roomBrightness (float size, float damping, float x) noexcept
+    {
+        const double seconds = (double) clamp01 (x) * (double) roomSpanSeconds;
+        const double dulled  = Effects::reverbSeconds (size) * (1.05 - 0.85 * (double) clamp01 (damping));
+        return (float) std::max (0.0, 1.0 - seconds / dulled);
     }
 };

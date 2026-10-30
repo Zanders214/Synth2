@@ -177,6 +177,50 @@ void testProcessorBasics()
     setParam (p, ParamID::env1On, 0.0f);
     setParam (p, ParamID::osc1On, 0.0f);
 
+    // The effects: both off to start with, so older sessions sound as they did.
+    for (const auto* id : { ParamID::delayOn, ParamID::delaySync, ParamID::delayTime, ParamID::delayNote, ParamID::delayFeedback,
+                            ParamID::delayTone, ParamID::delayMix, ParamID::delayPingPong, ParamID::reverbOn, ParamID::reverbSize,
+                            ParamID::reverbDamping, ParamID::reverbWidth, ParamID::reverbMix, ParamID::effectsOrder })
+        check (p.getState().getParameter (id) != nullptr, std::string ("has the '") + id + "' parameter");
+    check (param (p, ParamID::delayOn) < 0.5f && param (p, ParamID::reverbOn) < 0.5f, "both effects start off");
+    auto* note = p.getState().getParameter (ParamID::delayNote);
+    auto* time = p.getState().getParameter (ParamID::delayTime);
+    check (note->getCurrentValueAsText() == "1/8D" && time->getCurrentValueAsText() == "375 ms",
+           "the delay starts on a dotted eighth, 375 ms");
+
+    setParam (p, ParamID::osc1On, 1.0f);
+    setParam (p, ParamID::delayOn, 1.0f);
+    setParam (p, ParamID::delayTime, 500.0f);
+    setParam (p, ParamID::delayFeedback, 0.5f);
+    const double delayTail = 0.5 * (1.0 + std::log (0.001) / std::log (0.5));
+    check (approx ((float) p.getTailLengthSeconds(), (float) (Synth2Engine::gateReleaseSeconds + delayTail), 0.01f),
+           "the delay's repeats add to the tail");
+    setParam (p, ParamID::reverbOn, 1.0f);
+    check (p.getTailLengthSeconds() > Synth2Engine::gateReleaseSeconds + delayTail + 1.0, "and so does the reverb's ring");
+    setParam (p, ParamID::effectsOrder, 1.0f);
+    check (p.currentSettings().effects.reverbFirst && approx (p.currentSettings().effects.delay.feedback, 0.5f, 1e-4f),
+           "the engine gets the effects' settings and order");
+
+    // A synced delay follows the host's tempo.
+    struct Tempo final : juce::AudioPlayHead
+    {
+        juce::Optional<PositionInfo> getPosition() const override
+        {
+            PositionInfo info;
+            info.setBpm (100.0);
+            return info;
+        }
+    } tempo;
+    p.prepareToPlay (48000.0, 512);
+    p.setPlayHead (&tempo);
+    playAndMeasure (p, {}, 1);
+    p.setPlayHead (nullptr);
+    check (approx ((float) p.currentSettings().effects.bpm, 100.0f, 1e-4f), "the host's tempo reaches the delay");
+    for (const auto* id : { ParamID::delayOn, ParamID::reverbOn, ParamID::effectsOrder, ParamID::osc1On })
+        setParam (p, id, 0.0f);
+    setParam (p, ParamID::delayTime, 375.0f);
+    setParam (p, ParamID::delayFeedback, 0.35f);
+
     auto* detune = p.getState().getParameter (ParamID::detune);
     check (detune->getText (detune->convertTo0to1 (12.5f), 32) == "12.5 ct", "DETUNE reads in cents");
     auto* attack = p.getState().getParameter (ParamID::attack);
@@ -973,6 +1017,97 @@ void testEditor()
     const float aspect = (float) editor->getWidth() / (float) editor->getHeight();
     check (approx (aspect, 1040.0f / 916.0f, 0.02f), "resizing keeps the design's proportions");
 }
+// Drags `card` by its header sideways by `dx`.
+void dragCard (EffectCard& card, float dx)
+{
+    const auto grab = card.headerBounds().getCentre().translated (-60.0f, 0.0f);
+    card.mouseDown (mouseAt (card, grab));
+    card.mouseDrag (mouseAt (card, grab.translated (dx * 0.5f, 0.0f), grab));
+    card.mouseDrag (mouseAt (card, grab.translated (dx, 0.0f), grab));
+    card.mouseUp (mouseAt (card, grab.translated (dx, 0.0f), grab));
+}
+
+void testEffectsTab()
+{
+    std::printf ("Effects tab:\n");
+
+    Synth2AudioProcessor p;
+    p.prepareToPlay (48000.0, 512);
+    std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
+    auto* editor = dynamic_cast<Synth2AudioProcessorEditor*> (base.get());
+    if (editor == nullptr)
+        return;
+    using Tab = Synth2AudioProcessorEditor::Tab;
+
+    auto& bench   = editor->getBench();
+    auto& effects = editor->getEffects();
+    const auto tabs = editor->tabBounds (Tab::bench).getUnion (editor->tabBounds (Tab::effects));
+    check (editor->getTab() == Tab::bench && bench.isVisible() && ! effects.isVisible(), "it opens on the bench");
+    check (tabs.getBottom() < (float) bench.getY() && ! tabs.intersects (editor->presetBounds()) && tabs.getX() > 140.0f,
+           "the tabs sit in the header, between the wordmark and the presets");
+
+    editor->mouseDown (mouseAt (*editor, editor->tabBounds (Tab::effects).getCentre()));
+    check (editor->getTab() == Tab::effects && effects.isVisible() && ! bench.isVisible() && effects.getBounds() == bench.getBounds(),
+           "EFFECTS swaps the bench for the effects, in its place");
+    check (editor->getKeyboard().isVisible() && editor->getOutputDial().isVisible(), "with the keyboard and OUTPUT still below");
+
+    auto& delay  = effects.getDelay();
+    auto& reverb = effects.getReverb();
+    check (delay.getPlace() == 1 && reverb.getPlace() == 2 && delay.getX() < reverb.getX(), "the delay comes first, then the reverb");
+    check (delay.getNumDials() == 5 && reverb.getNumDials() == 5,
+           "TIME (or its note), FEEDBACK, TONE and MIX; SIZE, PRE-DELAY, DAMPING, WIDTH and MIX");
+    check (delay.getDial (0).getAlpha() < 0.5f && reverb.getDial (0).getAlpha() < 0.5f, "both off, so both greyed out");
+    snapshot (render (*editor), "11-effects-off");
+
+    delay.getPower().setToggleState (true, juce::sendNotificationSync);
+    delay.getPower().onClick();
+    check (param (p, ParamID::delayOn) >= 0.5f && delay.getDial (0).getAlpha() >= 1.0f, "ON switches the delay on, and lights it");
+    setParam (p, ParamID::reverbOn, 1.0f);
+    check (pumpUntil ([&reverb] { return reverb.getDial (0).getAlpha() >= 1.0f; }), "a host switching the reverb on lights it too");
+
+    delay.getDial (2).setValue (0.6, juce::sendNotificationSync);
+    check (approx (param (p, ParamID::delayFeedback), 0.6f, 1e-4f), "FEEDBACK drives its parameter");
+    check (pumpUntil ([&delay] { return approx (delay.getDisplay().getDelayState().feedback, 0.6f, 1e-4f); }), "and the well follows");
+    reverb.getDial (0).setValue (0.8, juce::sendNotificationSync);
+    check (approx (param (p, ParamID::reverbSize), 0.8f, 1e-4f)
+               && pumpUntil ([&reverb] { return approx (reverb.getDisplay().getReverbState().size, 0.8f, 1e-4f); }),
+           "SIZE drives its parameter and the room");
+
+    check (delay.getDial (0).isVisible() && ! delay.getDial (1).isVisible(), "TIME turns in milliseconds");
+    delay.getSync().setToggleState (true, juce::sendNotificationSync);
+    check (param (p, ParamID::delaySync) >= 0.5f
+               && pumpUntil ([&delay] { return ! delay.getDial (0).isVisible() && delay.getDial (1).isVisible(); }),
+           "with SYNC, it picks a note length instead");
+    check (delay.getDial (1).getBounds() == delay.getDial (0).getBounds(), "in the same place");
+    check (pumpUntil ([&delay] { return delay.getDisplay().getDelayState().sync; }), "and the well says so");
+    delay.getPingPong().setToggleState (true, juce::sendNotificationSync);
+    check (param (p, ParamID::delayPingPong) >= 0.5f, "PING-PONG switches on");
+    pumpUntil ([&delay] { return delay.getDisplay().getDelayState().pingPong; });
+    snapshot (render (*editor), "12-effects-on");
+
+    // Dragging the delay past the middle puts the reverb first.
+    dragCard (delay, 480.0f);
+    check (param (p, ParamID::effectsOrder) >= 0.5f && p.currentSettings().effects.reverbFirst, "dragging the delay right puts it second");
+    check (reverb.getPlace() == 1 && delay.getPlace() == 2 && reverb.getBounds() == effects.slotBounds (1)
+               && delay.getBounds() == effects.slotBounds (2),
+           "and the cards swap places");
+    dragCard (delay, 100.0f);
+    check (param (p, ParamID::effectsOrder) >= 0.5f && delay.getBounds() == effects.slotBounds (2), "a short drag puts it back where it was");
+    snapshot (render (*editor), "13-effects-reordered");
+    setParam (p, ParamID::effectsOrder, 0.0f);
+    check (pumpUntil ([&] { return delay.getPlace() == 1 && delay.getBounds() == effects.slotBounds (1); }),
+           "a host changing the order moves the cards too");
+
+    // Scaled up: the same face at 2x.
+    editor->setSize (2080, 1832);
+    check (delay.getWidth() == 872 && approx ((float) delay.getDial (2).getWidth(), 104.0f, 1.0f), "at 2x the cards and dials double");
+    check (hasDetail (render (*editor)), "renders at 2x");
+    editor->setSize (1040, 916);
+
+    editor->mouseDown (mouseAt (*editor, editor->tabBounds (Tab::bench).getCentre()));
+    check (editor->getTab() == Tab::bench && bench.isVisible() && ! effects.isVisible(), "BENCH brings the bench back");
+}
+
 // ---- Presets ----------------------------------------------------------------------
 
 // The loudest sample over `blocks` blocks of a chord held from the first.
@@ -1043,6 +1178,22 @@ void testPresets()
         check (q.getCurrentProgram() == i && modulesMatch && apart, name + ": its modules are on the bench, apart");
         check (shapedByOwn, name + ": each envelope shapes its own oscillator");
         check (peak > 0.2f && peak < 1.0f, name + ": a chord sounds without clipping (peak " + std::to_string (peak) + ")");
+    }
+
+    // The pads and keys go through a room, and some through the delay; the basses stay dry.
+    const auto presetNamed = [&names] (const char* name) { return Presets::factory[(size_t) names.indexOf (name)]; };
+    check (presetNamed ("Supersaw Pad").reverb.has_value() && presetNamed ("Glass Keys").reverb.has_value()
+               && presetNamed ("Supersaw Pad").delay.has_value() && ! presetNamed ("Sub Bass").reverb.has_value(),
+           "the pads and keys have reverb, the basses none");
+    {
+        Synth2AudioProcessor q;
+        q.setCurrentProgram (names.indexOf ("Supersaw Pad"));
+        check (param (q, ParamID::reverbOn) >= 0.5f && param (q, ParamID::delayOn) >= 0.5f && param (q, ParamID::delaySync) >= 0.5f,
+               "loading one switches its effects on, the delay on the beat");
+        q.setCurrentProgram (names.indexOf ("Sub Bass"));
+        check (param (q, ParamID::reverbOn) < 0.5f && param (q, ParamID::delayOn) < 0.5f
+                   && approx (param (q, ParamID::reverbSize), 0.5f, 1e-4f),
+               "and the next one sets them back to their defaults");
     }
 
     // The plucks fall away while the key is still held.
@@ -1163,6 +1314,7 @@ int main()
     testStateRoundTrip();
     testPresets();
     testEditor();
+    testEffectsTab();
 
     std::printf ("\n%s\n", failures == 0 ? "ALL TESTS PASSED" : "SOME TESTS FAILED");
     return failures == 0 ? 0 : 1;

@@ -30,9 +30,11 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
       processorRef (p),
       model (p.getState()),
       bench (p.getState(), looks),
+      effects (p.getState(), looks),
       keyboard (p.getKeyboardState())
 {
     addAndMakeVisible (bench);
+    addChildComponent (effects);
     addAndMakeVisible (keyboard);
 
     BenchStyle::setUpDial (outputDial, BenchStyle::dialColour (1.0f), looks, p.getState(), ParamID::output);
@@ -81,7 +83,7 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
     addTray.onChoose ([this] (int choice)
     {
         bench.add (choice == 0 ? Bench::Kind::oscillator : Bench::Kind::envelope, addAt);
-        lastCables.clear();
+        shown.cables.clear();
     });
     settingsTray.onChoose ([this] (int choice)
     {
@@ -190,9 +192,9 @@ void Synth2AudioProcessorEditor::showFlow()
         }
     }
 
-    if ((int) flow != lastFlow)
+    if ((int) flow != shown.flow)
     {
-        lastFlow = (int) flow;
+        shown.flow = (int) flow;
         repaint();
     }
 }
@@ -229,6 +231,7 @@ void Synth2AudioProcessorEditor::timerCallback()
     // play; each display repaints only when its state moved.
     bench.sync();
     const auto settings = processorRef.currentSettings();
+    effects.refresh (settings.effects);
     std::array<int, Bench::numOscillators> shapedBy {};
     for (int slot = 0; slot < Bench::numOscillators; ++slot)
     {
@@ -239,24 +242,39 @@ void Synth2AudioProcessorEditor::timerCallback()
         bench.getEnvelope (e).refresh (ampState (settings, e, shapedBy));
     showFlow();
 
-    if (const auto signature = cableSignature(); signature != lastCables)
+    if (const auto signature = cableSignature(); signature != shown.cables)
     {
-        lastCables = signature;
+        shown.cables = signature;
         cables.repaint();
         repaint (layout.outputColumn);
     }
-    if (const int preset = processorRef.getCurrentProgram(); preset != lastPreset)
+    if (const int preset = processorRef.getCurrentProgram(); preset != shown.preset)
     {
-        lastPreset = preset;
+        shown.preset = preset;
         repaint (layout.preset);
     }
-    if (! juce::exactlyEqual (settings.outputDb, lastOutput))
+    if (! juce::exactlyEqual (settings.outputDb, shown.output))
     {
-        lastOutput = settings.outputDb;
+        shown.output = settings.outputDb;
         repaint (layout.outputColumn);
     }
 
     processorRef.showHostNotesOnKeyboard();
+}
+
+// ---- Tabs ----------------------------------------------------------------------------
+
+// The bench and the effects take turns over the keyboard; the cables and the
+// output's IN jack belong to the bench.
+void Synth2AudioProcessorEditor::showTab (Tab which)
+{
+    if (which == tab)
+        return;
+    tab = which;
+    bench.setVisible (tab == Tab::bench);
+    effects.setVisible (tab == Tab::effects);
+    cables.repaint();
+    repaint();
 }
 
 // ---- Trays ---------------------------------------------------------------------------
@@ -379,6 +397,12 @@ void Synth2AudioProcessorEditor::dropCable (juce::Point<float> at)
 
 void Synth2AudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
 {
+    for (const auto which : { Tab::bench, Tab::effects })
+        if (tabBounds (which).contains (e.position))
+        {
+            showTab (which);
+            return;
+        }
     if (layout.gear.toFloat().contains (e.position))
     {
         openSettings();
@@ -397,7 +421,7 @@ void Synth2AudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
     }
 
     // Grabbing the output's IN jack takes the last cable patched into it.
-    if (signalFlow() == Synth2AudioProcessor::SignalFlow::cables && outputJackBounds().expanded (4.0f * uiScale).contains (e.position))
+    if (tab == Tab::bench && signalFlow() == Synth2AudioProcessor::SignalFlow::cables && outputJackBounds().expanded (4.0f * uiScale).contains (e.position))
     {
         const auto patched = model.patchedToOutput();
         if (! patched.empty())
@@ -465,7 +489,7 @@ void Synth2AudioProcessorEditor::paintCable (juce::Graphics& g, juce::Point<floa
 
 void Synth2AudioProcessorEditor::paintCables (juce::Graphics& g)
 {
-    if (signalFlow() != Synth2AudioProcessor::SignalFlow::cables)
+    if (tab != Tab::bench || signalFlow() != Synth2AudioProcessor::SignalFlow::cables)
         return;
 
     // Each cable in the colour of the module it comes from.
@@ -542,6 +566,26 @@ void Synth2AudioProcessorEditor::paintHeader (juce::Graphics& g, float s) const
     g.drawText ("Synth2", area.withTrimmedLeft (Fonts::width (wordmarkFont, house)),
                 juce::Justification::centredLeft, false);
 
+    // The tabs: two halves of a pill, the one showing lit.
+    const auto tabs = layout.benchTab.getUnion (layout.effectsTab).toFloat();
+    g.setColour (Palette::idleFill);
+    g.fillRoundedRectangle (tabs, tabs.getHeight() * 0.5f);
+    g.setColour (Palette::hairline);
+    g.drawRoundedRectangle (tabs, tabs.getHeight() * 0.5f, juce::jmax (1.0f, s));
+    for (const auto which : { Tab::bench, Tab::effects })
+    {
+        const auto half    = tabBounds (which);
+        const bool showing = which == tab;
+        if (showing)
+        {
+            g.setColour (Palette::accentSoft);
+            g.fillRoundedRectangle (half.reduced (2.0f * s), (half.getHeight() - 4.0f * s) * 0.5f);
+        }
+        g.setFont (Fonts::sans (10.0f * s, true, 0.14f));
+        g.setColour (showing ? Palette::accent : Palette::textDim);
+        g.drawText (which == Tab::bench ? "BENCH" : "EFFECTS", half, juce::Justification::centred, false);
+    }
+
     // The preset picker: the loaded preset's name in a pill, with arrows to
     // step either way, lit while its tray is open.
     const auto picker = layout.preset.toFloat();
@@ -608,7 +652,7 @@ void Synth2AudioProcessorEditor::paintOutput (juce::Graphics& g, float s) const
     g.drawText (BenchStyle::dialText (ParamID::output, paramValue (processorRef, ParamID::output)),
                 juce::Rectangle (column.getX(), textTop + 13.0f * s, column.getWidth(), 13.0f * s), juce::Justification::centredTop, false);
 
-    if (signalFlow() == Synth2AudioProcessor::SignalFlow::cables)
+    if (tab == Tab::bench && signalFlow() == Synth2AudioProcessor::SignalFlow::cables)
     {
         const auto jack = outputJackBounds();
         BenchStyle::paintJack (g, jack, Palette::accent, ! model.patchedToOutput().empty(), false, s);
@@ -653,10 +697,15 @@ void Synth2AudioProcessorEditor::resized()
     layout.badge  = layout.header.withTrimmedLeft (layout.header.getWidth() - px (22.0f + 12.0f + 54.0f))
                                  .withWidth (px (54.0f)).withSizeKeepingCentre (px (54.0f), px (20.0f));
     layout.preset = layout.header.withSizeKeepingCentre (px (240.0f), px (26.0f));
+    layout.benchTab   = layout.header.withX (layout.header.getX() + px (148.0f)).withWidth (px (84.0f))
+                                     .withSizeKeepingCentre (px (84.0f), px (26.0f));
+    layout.effectsTab = layout.benchTab.translated (px (84.0f), 0);
 
-    // The bench.
+    // The bench, and in the same place the effects.
     bench.setUiScale (s);
     bench.setBounds (px (kPanelPad), px (kBenchTop), px (Bench::areaWidth), px (Bench::areaHeight));
+    effects.setUiScale (s);
+    effects.setBounds (bench.getBounds());
 
     // Hairline, then the keyboard with OUTPUT (and, patching, its IN jack) at its right.
     area.setTop (bench.getBottom() + px (12.0f));
@@ -669,5 +718,5 @@ void Synth2AudioProcessorEditor::resized()
     keyboard.setBounds (area);
 
     cables.setBounds (getLocalBounds());
-    lastCables.clear();
+    shown.cables.clear();
 }

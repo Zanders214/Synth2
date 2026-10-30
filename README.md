@@ -5,10 +5,11 @@ A simple polyphonic synth plugin for DAWs (VST3 / AU / Standalone), built with
 on it the modules you want, where you want them. Add up to four oscillators,
 each with one of the four basic wave shapes and its own stack of up to 16
 detuned, spread copies on every note, give each its own envelope, and play
-chords: the classic wide, detuned "supersaw" pad in a few turns.
+chords: the classic wide, detuned "supersaw" pad in a few turns. Then send the
+lot through a delay and a reverb on the EFFECTS tab.
 
 ```
-note -> OSC n (VOICES x shape, DETUNE + WIDTH) -> ENV n (DELAY ATTACK HOLD DECAY SUSTAIN RELEASE) -> + -> OUTPUT
+note -> OSC n (VOICES x shape, DETUNE + WIDTH) -> ENV n (DELAY ATTACK HOLD DECAY SUSTAIN RELEASE) -> + -> DELAY -> REVERB -> OUTPUT
 ```
 
 ## The workbench
@@ -30,7 +31,48 @@ was on) along the top and an envelope under each, sounding as it did: the unison
 and the envelope they used to share are copied into each. A set from the first bench,
 with its single Unison and Envelope modules, is brought over the same way.
 
-The keyboard and the OUTPUT dial stay in a strip along the bottom.
+The keyboard and the OUTPUT dial stay in a strip along the bottom, whichever tab is
+showing.
+
+## Effects
+
+The **BENCH | EFFECTS** tabs in the header swap the bench for the effects. Every note
+goes through them together, after the oscillators are mixed and before OUTPUT, as a
+chain read left to right: by default the delay, then the reverb. Drag a card by its
+header past the middle to swap the order (a reverb into a delay smears each repeat;
+a delay into a reverb sends the repeats into the room).
+
+Each effect has its own **ON** switch (both start off, so older sets sound as they
+did) and a **MIX**: up to the middle the dry sound stays at full level and the effect
+is added underneath; from there the dry sound fades out until only the effect is left.
+Switching an effect on or off fades it over 20 ms; once it is off it costs nothing,
+and switching it back on starts clean.
+
+| Control       | What it does                                                        |
+|---------------|---------------------------------------------------------------------|
+| **Time**      | How long the delay waits before each repeat, 10 ms to 2 s. With **SYNC** on it picks a note length at your DAW's tempo instead, from 1/32 to a whole note, dotted (D) or triplet (T). Turning it while repeats ring bends their pitch, like tape. |
+| **Feedback**  | How loud each repeat comes back against the one before, 0 to 95%.    |
+| **Tone**      | How bright the repeats stay: each one passes a lowpass from 1 kHz (low) up to 18 kHz (high), so they darken as they fade. |
+| **Ping-Pong** | The repeats bounce from left to right.                               |
+| **Size**      | How long the reverb rings before it falls 60 dB: 0.3 s for a small room, about 2 s in the middle, 12 s for a hall. The dial reads the time. |
+| **Pre-Delay** | How long the room waits before it starts, 0 to 250 ms, so each note's attack stays clear of it. |
+| **Damping**   | How quickly the room's highs die away.                               |
+| **Width**     | How wide the room spreads: 0% is the same on both sides.             |
+
+Like tape, each repeat of the delay also loses its deepest lows (so they don't pile up
+into mud), rounds off gently when driven hard, and wavers very slightly in pitch, so
+the repeats sit behind the sound rather than copying it.
+
+The DELAY card's well shows the dry sound and each repeat where it falls across two
+seconds, the left side above the line and the right below; the REVERB card's shows the
+room ringing away over six seconds, and how long it rings to -60 dB. Your DAW is told
+how long the effects ring on after the notes stop, so a bounce isn't cut short.
+
+The reverb is a feedback delay network rather than the classic Freeverb, whose few
+comb filters ring metallic on held synth chords: a low cut and the pre-delay, then four
+steps of diffusion that multiply each sound into a dense cloud, then eight feedback
+lines mixed into one another, each drifting very slightly in length so no pitch rings
+out. Its tail is levelled, so a long room is longer rather than louder.
 
 ### Presets
 
@@ -38,7 +80,8 @@ The pill in the middle of the header holds the factory presets: its arrows step 
 previous and next one, and a click on its name opens a tray of them all. Your DAW lists
 the same presets as the plugin's programs. Loading one puts its modules on the bench
 (oscillators along the top, each with its own unison stack, and each DAHDSR envelope
-under the oscillator it shapes, in a fixed order with no cables) and sets everything
+under the oscillator it shapes, in a fixed order with no cables), switches its effects
+on (most pads and keys have a reverb, some a delay on the beat), and sets everything
 it doesn't use back to its default; picking it again undoes your edits. Which preset
 you loaded is saved with your set.
 
@@ -81,8 +124,8 @@ The gear at the top right picks how sound flows between the modules:
   or drop it anywhere else, to unplug it.
 
 The oscillators, each under its own envelope, are summed, so Fixed order and Follow
-layout differ only in which envelope shapes which oscillator; the order will matter
-more as effects (a filter, a reverb) join the bench.
+layout differ only in which envelope shapes which oscillator. The effects follow the
+sum, on their own tab (see [Effects](#effects)).
 
 ## Controls
 
@@ -196,7 +239,7 @@ ctest --test-dir build --output-on-failure
 
 Set `SYNTH2_SNAPSHOTS` to a folder to have the editor tests save PNGs of the faces they
 render (the empty bench, the trays, a full bench of four oscillators and four envelopes,
-the flow modes, the cables) for a look by eye.
+the flow modes, the cables, the effects) for a look by eye.
 
 ## Layout
 
@@ -205,7 +248,10 @@ Source/
   PluginProcessor.{h,cpp}    thin host wrapper + parameters (APVTS); the on-screen keyboard's lock-free hand-over; cables -> routing
   ParamIDs.h                 the parameter IDs
   Presets.h                  the factory presets, and loading one onto the bench
-  Synth2Engine.h             host-agnostic DSP core: 16 voices, up to four oscillators, MIDI, smoothing, output
+  Synth2Engine.h             host-agnostic DSP core: 16 voices, up to four oscillators, MIDI, smoothing, effects, output
+  Effects.h                  the delay and the reverb after the mix, in either order
+  Room.h                     the reverb's room: pre-delay, diffusion and an eight-line feedback delay network
+  EffectSettings.h           the effects' settings and sums (note lengths, tails, MIX), shared with the displays
   SynthVoice.h               one note: each oscillator's unison copies, under that oscillator's envelope
   Envelope.h                 the delay / attack / hold / decay / sustain / release envelope
   Oscillator.h               the four wave shapes, and the PolyBLEP oscillator that plays them
@@ -213,16 +259,17 @@ Source/
   Bench.h                    the workbench model: modules, where they sit, cables, which envelope shapes which oscillator, older sessions
   BenchView.h                the bench itself: the dotted area the modules sit and are dragged on
   BenchModules.h             the oscillator and envelope modules, and the add / settings trays
-  PluginEditor.{h,cpp}       the Neon Plugins editor: header and gear, bench, cables, keyboard, OUTPUT
+  EffectsView.h              the EFFECTS tab: the delay and reverb cards, their wells and switches
+  PluginEditor.{h,cpp}       the Neon Plugins editor: header, tabs and gear, bench or effects, cables, keyboard, OUTPUT
   Synth2LookAndFeel.{h,cpp}  the dials (design-system Dial: arc + glowing core)
   WavePicker.h               an oscillator well's picker (pill, arrows, wheel) and its tray of shapes
   VoiceDisplays.h            the OSC and AMP wells
   NeonKeyboard.h             the on-screen keyboard
   Synth2Theme.h              shared palette, fonts, colour + value formatting
-  Synth2VisualModel.h        pure wave / unison / envelope -> display math (uses the engine's own), the morph and its ease
+  Synth2VisualModel.h        pure wave / unison / envelope / effects -> display math (uses the engine's own), the morph and its ease
   RtSafety.h                 the RealtimeSanitizer annotation
 Tests/
-  Synth2EngineTests.cpp         framework-free DSP tests: pitch, envelopes, unison, the oscillators, polyphony, pedal
+  Synth2EngineTests.cpp         framework-free DSP tests: pitch, envelopes, unison, the oscillators, polyphony, pedal, effects
   Synth2VisualModelTests.cpp    framework-free tests for the shapes, the spread and the displays' model
   PluginTests.cpp               processor + editor: params, buses, MIDI, state, the bench, offscreen renders
   rt_check.cpp                  RealtimeSanitizer driver
@@ -232,8 +279,8 @@ Tests/
 ## UI
 
 The editor follows the **Neon Plugins** design system natively in JUCE (no WebView):
-the dark radial panel, the `Zanders` + product wordmark (Synth2 in violet) with its
-mode badge and the settings gear, then the bench: a dark, faintly dotted area where
+the dark radial panel, the `Zanders` + product wordmark (Synth2 in violet), the
+BENCH | EFFECTS tabs, the preset picker, the mode badge and the settings gear, then the bench: a dark, faintly dotted area where
 the modules sit as cards, each with a header (its name, its place or OUT jack, a
 cross, and on an envelope the oscillator it shapes) over its display and its Dials,
 coloured along the cyan → violet → pink → amber spectrum. The oscillators show their

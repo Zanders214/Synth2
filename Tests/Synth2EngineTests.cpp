@@ -694,6 +694,355 @@ void testOutputAndMono()
     const auto out = run (*mono, (int) sampleRate / 2, { { 0, on (60) } }, 1);
     check (rms (out, 0, 4800, out.getNumSamples()) > 0.05f, "a mono bus gets the whole stack");
 }
+
+// ---- Effects ----------------------------------------------------------------
+
+/** Runs `in` (a stereo pair) through a chain set up with `settings`, in the
+    engine's 32-sample chunks, after `warmUp` samples of silence. */
+std::vector<std::vector<float>> throughEffects (const Effects::Settings& settings, std::vector<std::vector<float>> in, int warmUp = 0)
+{
+    Effects::Chain chain;
+    chain.set (settings);
+    chain.prepare (sampleRate);
+
+    std::array<float, 32> silenceL {};
+    std::array<float, 32> silenceR {};
+    for (int done = 0; done < warmUp; done += 32)
+    {
+        silenceL.fill (0.0f);
+        silenceR.fill (0.0f);
+        chain.process (silenceL.data(), silenceR.data(), 32);
+    }
+
+    const int numSamples = (int) in[0].size();
+    for (int done = 0; done < numSamples; done += 32)
+        chain.process (in[0].data() + done, in[1].data() + done, std::min (32, numSamples - done));
+    return in;
+}
+
+std::vector<std::vector<float>> impulse (int numSamples, float left = 1.0f, float right = 1.0f)
+{
+    std::vector<std::vector<float>> in (2, std::vector<float> ((size_t) numSamples, 0.0f));
+    in[0][0] = left;
+    in[1][0] = right;
+    return in;
+}
+
+/** A 2 ms burst of 1 kHz at `level` on both sides, for timing and levels
+    that don't hang on a single sample (the delay reads between samples). */
+std::vector<std::vector<float>> blip (int numSamples, float level)
+{
+    std::vector<std::vector<float>> in (2, std::vector<float> ((size_t) numSamples, 0.0f));
+    for (size_t i = 0; i < 96; ++i)
+    {
+        const double t = (double) i / 96.0;
+        in[0][i] = in[1][i] = level * (float) (std::sin (juce::MathConstants<double>::pi * t) * std::sin (juce::MathConstants<double>::twoPi * 1000.0 * (double) i / sampleRate));
+    }
+    return in;
+}
+
+/** Where the loudest sample in [from, to) is, and how loud. */
+std::pair<int, float> loudest (const std::vector<float>& x, int from, int to)
+{
+    int   at   = from;
+    float best = 0.0f;
+    for (int i = from; i < to; ++i)
+        if (std::abs (x[(size_t) i]) > best)
+        {
+            best = std::abs (x[(size_t) i]);
+            at   = i;
+        }
+    return { at, best };
+}
+
+/** Where the sound in [from, to) is centred, weighted by its energy. */
+double centre (const std::vector<float>& x, int from, int to)
+{
+    double weighted = 0.0;
+    double total    = 0.0;
+    for (int i = from; i < to; ++i)
+    {
+        const double e = (double) x[(size_t) i] * x[(size_t) i];
+        weighted += e * i;
+        total    += e;
+    }
+    return total > 0.0 ? weighted / total : 0.0;
+}
+
+float energy (const std::vector<float>& x, int from, int to)
+{
+    double sum = 0.0;
+    for (int i = from; i < to; ++i)
+        sum += (double) x[(size_t) i] * x[(size_t) i];
+    return (float) sum;
+}
+
+void testDelay()
+{
+    std::printf ("Delay:\n");
+
+    Effects::Settings settings;
+    settings.delay.on       = true;
+    settings.delay.timeMs   = 375.0f;
+    settings.delay.feedback = 0.5f;
+    settings.delay.tone     = 1.0f;
+    settings.delay.mix      = 0.5f;
+    const int echo = (int) (0.375 * sampleRate);   // 18000 samples
+    // The tape's waver, in samples, and a couple more for the filters' own lag.
+    const int wow  = (int) std::ceil (Effects::Delay::wowMs * 0.001 * sampleRate) + 2;
+    const float hit = 0.25f;   // an ordinary level, below where the repeats start to round off
+
+    const auto out = throughEffects (settings, blip (3 * echo, hit));
+    const auto dry = loudest (out[0], 0, 96);
+    check (approx (dry.second, loudest (blip (96, hit)[0], 0, 96).second, 1.0e-6f), "at half MIX the dry sound passes at full level");
+    const auto first  = loudest (out[0], 200, echo + echo / 2);
+    const auto second = loudest (out[0], echo + echo / 2, 2 * echo + echo / 2);
+    const double start = centre (out[0], 0, 200);
+    const double late  = centre (out[0], 200, echo + echo / 2) - start - echo;
+    check (std::abs (late) <= wow, "the first repeat comes TIME later, give or take the waver (" + std::to_string (late) + " samples)");
+    check (std::abs (centre (out[0], echo + echo / 2, 2 * echo + echo / 2) - start - 2 * echo) <= 2 * wow, "and the next TIME after that");
+    check (first.second > 0.8f * dry.second, "the first repeat is near full level at the brightest TONE");
+    check (approx (second.second / first.second, 0.5f, 0.1f), "each repeat is FEEDBACK as loud as the last");
+    check (energy (out[0], 200, echo - 200) < 1.0e-12f, "nothing sounds between the repeats");
+
+    auto dark = settings;
+    dark.delay.tone = 0.0f;
+    const auto darker = throughEffects (dark, impulse (2 * echo, hit, hit));
+    const auto bright = throughEffects (settings, impulse (2 * echo, hit, hit));
+    check (energy (darker[0], 200, echo + echo / 2) < 0.3f * energy (bright[0], 200, echo + echo / 2), "a low TONE dulls the repeats");
+
+    auto wet = settings;
+    wet.delay.mix = 1.0f;
+    const auto allWet = throughEffects (wet, impulse (2 * echo, hit, hit));
+    check (std::abs (allWet[0][0]) < 1.0e-6f, "at full MIX only the repeats are left");
+
+    auto pingPong = settings;
+    pingPong.delay.pingPong = true;
+    const auto bounced = throughEffects (pingPong, blip (3 * echo, hit));
+    check (loudest (bounced[0], 200, echo + echo / 2).second > 0.8f * dry.second
+               && loudest (bounced[1], 200, echo + echo / 2).second < 1.0e-6f,
+           "PING-PONG: the first repeat is on the left");
+    check (loudest (bounced[1], echo + echo / 2, 2 * echo + echo / 2).second > 0.3f * dry.second
+               && loudest (bounced[0], echo + echo / 2, 2 * echo + echo / 2).second < 1.0e-6f,
+           "and the next on the right");
+
+    auto synced = settings;
+    synced.delay.sync     = true;
+    synced.delay.division = 8;   // 1/4
+    synced.bpm            = 100.0;
+    const int beat = (int) (0.6 * sampleRate);
+    const auto onTheBeat = throughEffects (synced, blip (beat + beat / 2, hit));
+    const double onBeat = centre (onTheBeat[0], 200, beat + beat / 2) - start - beat;
+    check (std::abs (onBeat) <= wow, "SYNC: a quarter note at 100 BPM waits 600 ms (" + std::to_string (onBeat) + " samples off)");
+    check (std::abs (Effects::delaySeconds (synced.delay, 140.0) - 60.0 / 140.0) < 1.0e-9, "and follows the tempo");
+    synced.delay.division = 11;   // 1/1
+    check (Effects::delaySeconds (synced.delay, 30.0) <= Effects::maxSeconds, "but never longer than the line");
+
+    // Like tape: the lows thin out pass by pass, and a hard hit is rounded off.
+    auto low = settings;
+    low.delay.mix = 1.0f;
+    std::vector<std::vector<float>> hum (2, std::vector<float> ((size_t) (3 * echo)));
+    for (size_t i = 0; i < hum[0].size(); ++i)
+        hum[0][i] = hum[1][i] = i < (size_t) echo / 2 ? 0.25f * (float) std::sin (juce::MathConstants<double>::twoPi * 50.0 * (double) i / sampleRate) : 0.0f;
+    const auto hummed = throughEffects (low, hum);
+    const float firstHum  = loudest (hummed[0], echo, echo + echo / 2).second;
+    const float secondHum = loudest (hummed[0], 2 * echo, 2 * echo + echo / 2).second;
+    check (secondHum < 0.4f * firstHum, "a 50 Hz hum fades faster than FEEDBACK alone would take it");
+    const auto loud = throughEffects (wet, impulse (2 * echo, 3.0f, 3.0f));
+    check (loudest (loud[0], 1, echo + echo / 2).second < 2.2f, "and a hard hit comes back rounded, not clipped");
+}
+
+void testReverb()
+{
+    std::printf ("Reverb:\n");
+
+    Effects::Settings settings;
+    settings.reverb.on  = true;
+    settings.reverb.mix = 1.0f;
+    const int second = (int) sampleRate;
+    const int warmUp = 4800;   // the reverb's own gains glide in from silence
+
+    auto small = settings;
+    small.reverb.size = 0.3f;
+    auto large = settings;
+    large.reverb.size = 0.9f;
+    const auto smallRoom = throughEffects (small, impulse (2 * second), warmUp);
+    const auto largeRoom = throughEffects (large, impulse (2 * second), warmUp);
+    check (energy (smallRoom[0], 0, second / 2) > 1.0e-4f, "an impulse sets the room ringing");
+    check (energy (largeRoom[0], second, 2 * second) > 10.0f * energy (smallRoom[0], second, 2 * second),
+           "a bigger SIZE rings on for longer");
+
+    // Noise in, at full MIX: the room should sit near the dry sound's level.
+    juce::Random random (7);
+    std::vector<std::vector<float>> noise (2, std::vector<float> ((size_t) second));
+    for (auto& side : noise)
+        for (auto& x : side)
+            x = random.nextFloat() * 2.0f - 1.0f;
+    const auto room = throughEffects (settings, noise, warmUp);
+    const float level = std::sqrt (energy (room[0], second / 2, second) / energy (noise[0], second / 2, second));
+    check (level > 0.25f && level < 4.0f, "the room sits near the dry level (" + std::to_string (level) + "x)");
+
+    auto narrow = settings;
+    narrow.reverb.width = 0.0f;
+    const auto mono = throughEffects (narrow, impulse (second / 2, 1.0f, 0.0f), warmUp);
+    float difference = 0.0f;
+    for (size_t i = 0; i < mono[0].size(); ++i)
+        difference = std::max (difference, std::abs (mono[0][i] - mono[1][i]));
+    check (difference < 1.0e-5f, "at no WIDTH the room is the same on both sides");
+
+    check (Effects::reverbSeconds (0.9f) > 2.0 * Effects::reverbSeconds (0.3f), "the tail estimate grows with SIZE");
+
+    // How long it really rings: the time from -5 to -35 dB, doubled, against
+    // what SIZE says (with no DAMPING to shorten the highs).
+    for (const float size : { 0.3f, 0.5f, 0.7f })
+    {
+        auto ring = settings;
+        ring.reverb.size     = size;
+        ring.reverb.damping  = 0.0f;
+        ring.reverb.preDelayMs = 0.0f;
+        const double expected = Effects::reverbSeconds (size);
+        const int length = (int) ((expected + 0.5) * sampleRate);
+        const auto rang = throughEffects (ring, impulse (length), warmUp);
+
+        // The energy left from each 10 ms on (backward integration).
+        const int window = 480;
+        std::vector<double> left ((size_t) (length / window), 0.0);
+        double total = 0.0;
+        for (int w = (int) left.size() - 1; w >= 0; --w)
+        {
+            total += energy (rang[0], w * window, (w + 1) * window) + energy (rang[1], w * window, (w + 1) * window);
+            left[(size_t) w] = total;
+        }
+        const auto when = [&left] (double db)
+        {
+            for (size_t w = 0; w < left.size(); ++w)
+                if (10.0 * std::log10 (left[w] / left[0]) < db)
+                    return (double) w * 0.01;
+            return 1.0e9;
+        };
+        const double measured = 2.0 * (when (-35.0) - when (-5.0));
+        check (std::abs (measured / expected - 1.0) < 0.25,
+               "SIZE " + std::to_string (size) + " rings " + std::to_string (expected) + " s (measured " + std::to_string (measured) + " s)");
+    }
+
+    // Not metallic: in the tail, no echo lines up with itself (a strong
+    // repeat in the autocorrelation is the comb ring Freeverb is known for).
+    auto pad = settings;
+    pad.reverb.size    = 0.8f;
+    pad.reverb.damping = 0.3f;
+    const auto tail = throughEffects (pad, impulse (second), warmUp);
+    const int from = second / 4;
+    const int to   = second / 2;
+    const double self = energy (tail[0], from, to);
+    double strongest = 0.0;
+    for (int lag = 48; lag < 4800; ++lag)
+    {
+        double sum = 0.0;
+        for (int i = from; i < to; ++i)
+            sum += (double) tail[0][(size_t) i] * tail[0][(size_t) (i + lag)];
+        strongest = std::max (strongest, std::abs (sum) / self);
+    }
+    check (strongest < 0.3, "the tail has no ringing repeat in it (strongest " + std::to_string (strongest) + ")");
+
+    // PRE-DELAY: silence first, then the room.
+    auto waits = settings;
+    waits.reverb.preDelayMs = 100.0f;
+    const auto waited = throughEffects (waits, impulse (second / 2), warmUp);
+    check (energy (waited[0], 0, 4500) < 1.0e-10f && energy (waited[0], 4800, 9600) > 1.0e-4f, "PRE-DELAY holds the room back");
+}
+
+void testEffectsChain()
+{
+    std::printf ("Effects chain:\n");
+
+    // Off, with everything else turned: untouched.
+    Effects::Settings off;
+    off.delay.timeMs   = 120.0f;
+    off.delay.feedback = 0.9f;
+    off.delay.mix      = 1.0f;
+    off.reverb.mix     = 1.0f;
+    juce::Random random (11);
+    std::vector<std::vector<float>> noise (2, std::vector<float> (4800));
+    for (auto& side : noise)
+        for (auto& x : side)
+            x = random.nextFloat() - 0.5f;
+    check (throughEffects (off, noise) == noise, "both effects off leave the sound untouched");
+
+    Effects::Settings both;
+    both.delay.on  = true;
+    both.delay.mix = 1.0f;
+    both.reverb.on = true;
+    auto reversed = both;
+    reversed.reverbFirst = true;
+    check (throughEffects (both, impulse (24000), 4800) != throughEffects (reversed, impulse (24000), 4800),
+           "the order matters");
+
+    // Switching the delay off fades it out and forgets its repeats.
+    Effects::Settings delay;
+    delay.delay.on       = true;
+    delay.delay.timeMs   = 100.0f;
+    delay.delay.feedback = 0.9f;
+    Effects::Chain chain;
+    chain.set (delay);
+    chain.prepare (sampleRate);
+    auto in = impulse (9600);
+    for (int done = 0; done < 9600; done += 32)
+        chain.process (in[0].data() + done, in[1].data() + done, 32);
+    delay.delay.on = false;
+    chain.set (delay);
+    std::vector<float> l (4800, 0.0f);
+    std::vector<float> r (4800, 0.0f);
+    for (int done = 0; done < 4800; done += 32)
+        chain.process (l.data() + done, r.data() + done, 32);
+    check (energy (l, 1920, 4800) < 1.0e-12f, "switched off, the repeats stop within the fade");
+    delay.delay.on = true;
+    chain.set (delay);
+    std::fill (l.begin(), l.end(), 0.0f);
+    std::fill (r.begin(), r.end(), 0.0f);
+    for (int done = 0; done < 4800; done += 32)
+        chain.process (l.data() + done, r.data() + done, 32);
+    check (energy (l, 0, 4800) < 1.0e-12f, "and switched on again, it starts clean");
+
+    Effects::Settings tails;
+    check (Effects::tailSeconds (tails) < 1.0e-9, "with both off there is no tail");
+    tails.delay.on       = true;
+    tails.delay.timeMs   = 500.0f;
+    tails.delay.feedback = 0.5f;
+    check (std::abs (Effects::tailSeconds (tails) - 0.5 * (1.0 + std::log (0.001) / std::log (0.5))) < 1.0e-6,
+           "the delay's tail lasts until its repeats fall 60 dB");
+    tails.reverb.on = true;
+    check (Effects::tailSeconds (tails) > 5.5, "and the reverb's ring follows it");
+}
+
+void testEngineEffects()
+{
+    std::printf ("Engine effects:\n");
+
+    // A short note, then silence: the delay's repeats ring on after it.
+    auto settings = defaults (Waveform::sine);
+    settings.envelopes[0].releaseSeconds = 0.005f;
+    settings.effects.delay.on       = true;
+    settings.effects.delay.timeMs   = 250.0f;
+    settings.effects.delay.feedback = 0.4f;
+    auto engine = makeEngine (settings);
+    const int note = (int) (0.05 * sampleRate);
+    const auto out = run (*engine, (int) sampleRate, { { 0, on (69) }, { note, off (69) } });
+    const int after = (int) (0.25 * sampleRate);
+    check (rms (out, 0, note + 2400, after) < 1.0e-6f, "silence between the note and its repeat");
+    check (rms (out, 0, after, after + note) > 0.05f, "the note comes back TIME later");
+
+    auto dry = defaults (Waveform::sine);
+    dry.envelopes[0].releaseSeconds = 0.005f;
+    auto quiet = makeEngine (dry);
+    const auto plain = run (*quiet, (int) sampleRate, { { 0, on (69) }, { note, off (69) } });
+    check (rms (plain, 0, after, after + note) < 1.0e-6f, "with the effects off the note just stops");
+
+    // All Sound Off silences the repeats too.
+    auto panic = makeEngine (settings);
+    const auto stopped = run (*panic, (int) sampleRate,
+                              { { 0, on (69) }, { note, off (69) }, { note + 4800, juce::MidiMessage::allSoundOff (1) } });
+    check (rms (stopped, 0, after, after + note) < 1.0e-6f, "All Sound Off silences the repeats");
+}
 } // namespace
 
 int main()
@@ -712,6 +1061,10 @@ int main()
     testPedalAndPanic();
     testChannels();
     testOutputAndMono();
+    testDelay();
+    testReverb();
+    testEffectsChain();
+    testEngineEffects();
 
     std::printf ("\n%s\n", failures == 0 ? "ALL TESTS PASSED" : "SOME TESTS FAILED");
     return failures == 0 ? 0 : 1;

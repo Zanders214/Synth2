@@ -8,6 +8,7 @@
 #include "Bench.h"
 #include "BenchModules.h"
 #include "BenchView.h"
+#include "EffectsView.h"
 #include "Synth2LookAndFeel.h"
 #include "NeonKeyboard.h"
 #include "WavePicker.h"
@@ -15,10 +16,12 @@
 /**
     Synth2AudioProcessorEditor — the Neon Plugins face for Synth2: a workbench.
 
-    A dark panel, top to bottom: the wordmark, the preset picker, the POLY
-    badge and the gear (the signal-flow settings); the bench, which starts empty and holds
-    whatever modules are put on it, wherever they are put (see BenchView);
-    and along the bottom the keyboard that plays it and the OUTPUT dial.
+    A dark panel, top to bottom: the wordmark, the BENCH / EFFECTS tabs, the
+    preset picker, the POLY badge and the gear (the signal-flow settings);
+    the bench, which starts empty and holds whatever modules are put on it,
+    wherever they are put (see BenchView), or on the EFFECTS tab the delay
+    and the reverb every note goes through (see EffectsView); and along the
+    bottom, on both tabs, the keyboard that plays it and the OUTPUT dial.
 
     Click an empty spot on the bench to add a module there: an oscillator,
     with its own unison stack, or an envelope (up to four of each). Drag a
@@ -57,9 +60,20 @@ public:
     static constexpr float designWidth  = 1040.0f;
     static constexpr float designHeight = 916.0f;
 
+    /** What fills the space over the keyboard. */
+    enum class Tab { bench, effects };
+
+    void showTab (Tab tab);
+    Tab  getTab() const noexcept { return tab; }
+    juce::Rectangle<float> tabBounds (Tab which) const noexcept
+    {
+        return (which == Tab::bench ? layout.benchTab : layout.effectsTab).toFloat();
+    }
+
     // For the tests: the bench, the trays, the OUTPUT dial and keyboard, and
     // where the gear and the output's IN jack sit (in the editor).
     BenchView&    getBench() noexcept                  { return bench; }
+    EffectsView&  getEffects() noexcept                { return effects; }
     ChoiceTray&   getAddTray() noexcept                { return addTray; }
     ChoiceTray&   getSettingsTray() noexcept           { return settingsTray; }
     ChoiceTray&   getPresetTray() noexcept             { return presetTray; }
@@ -110,6 +124,7 @@ private:
     Bench::Model model;
 
     BenchView    bench;
+    EffectsView  effects;
     NeonKeyboard keyboard;
     juce::Slider outputDial;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment;
@@ -124,6 +139,8 @@ private:
     struct Layout
     {
         juce::Rectangle<int> header;
+        juce::Rectangle<int> benchTab;
+        juce::Rectangle<int> effectsTab;
         juce::Rectangle<int> preset;
         juce::Rectangle<int> badge;
         juce::Rectangle<int> gear;
@@ -136,11 +153,17 @@ private:
     std::optional<Bench::ModuleId> patchingFrom;
     juce::Point<float> patchingTo;
 
-    juce::String lastCables;
-    float lastOutput = 0.0f;
-    int   lastFlow   = -1;
-    int   lastPreset = -1;
-    float uiScale    = 1.0f;
+    // What was last shown, to repaint only what changed.
+    struct Shown
+    {
+        juce::String cables;
+        float output = 0.0f;
+        int   flow   = -1;
+        int   preset = -1;
+    };
+    Shown shown;
+    Tab   tab     = Tab::bench;
+    float uiScale = 1.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Synth2AudioProcessorEditor)
 };
