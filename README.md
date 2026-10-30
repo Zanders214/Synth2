@@ -213,9 +213,11 @@ Each module has a display right above its dials, drawn in the dials' colours:
   height.
 - **AMP**, in each envelope (above its six dials): the envelope its oscillator's notes
   follow, each stage in its dial's colour: the wait (DELAY), the rise (ATTACK), the top
-  (HOLD; its height is OUTPUT, against a dashed 0 dB line), the fall (DECAY) to the
-  SUSTAIN level, held while the key is down, and the fall to silence (RELEASE). Every note
-  you play is a dot riding it through the stages, resting on the sustain while held.
+  (HOLD), the fall (DECAY) to the SUSTAIN level, held while the key is down, and the
+  fall to silence (RELEASE). The shape always fills the graph, edge to edge and up to the
+  top, so it looks the same however big the graph is (OUTPUT's level shows in its
+  corner). Every note you play is a dot riding it through the stages, resting on the
+  sustain while held.
 
   You can also shape the envelope right on the graph: drag a corner sideways to
   stretch its stage (the delay's end, the top of the rise, the end of the hold, the end

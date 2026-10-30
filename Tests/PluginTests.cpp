@@ -1149,15 +1149,30 @@ void testViews()
     GestureCount gestures;
     p.addListener (&gestures);
 
+    // The shape fills the plot: from its left edge to its right, and up to its top.
+    const auto fills = [&well]
+    {
+        const auto plot = well.plotArea();
+        return approx (well.handleCentre (Handle::delay).x, plot.getX(), 0.5f)
+            && approx (well.handleCentre (Handle::release).x, plot.getRight(), 0.5f)
+            && approx (well.handleCentre (Handle::attack).y, plot.getY(), 0.5f);
+    };
+    check (fills(), "the envelope fills its graph");
+
     const auto attackAt = well.handleCentre (Handle::attack);
     well.mouseMove (mouseAt (well, attackAt.translated (1.0f, 1.0f)));
     check (well.getHotHandle() == (int) Handle::attack, "hovering ATTACK's corner picks it out");
     const float attackBefore = attack->getValue();
-    dragOn (well, attackAt, attackAt.translated (24.0f, 0.0f));
-    const float expected = attackBefore + 24.0f / (Synth2VisualModel::handleSpans[1] * well.plotArea().getWidth());
-    check (approx (attack->getValue(), expected, 0.01f), "dragging it right lengthens ATTACK");
-    check (pumpUntil ([&] { return well.handleCentre (Handle::attack).getDistanceFrom (attackAt.translated (24.0f, 0.0f)) < 1.5f; }),
-           "and the corner stays under the pointer");
+    const auto  attackTo     = attackAt.translated (24.0f, 0.0f);
+    const float expected     = Synth2VisualModel::dialAt (well.getAmpState().dials, Handle::attack,
+                                                          (attackTo.x - well.plotArea().getX()) / well.plotArea().getWidth());
+    well.mouseDown (mouseAt (well, attackAt));
+    well.mouseDrag (mouseAt (well, attackAt.translated (12.0f, 0.0f), attackAt));
+    well.mouseDrag (mouseAt (well, attackTo, attackAt));
+    check (attack->getValue() > attackBefore + 0.05f && approx (attack->getValue(), expected, 1e-4f), "dragging it right lengthens ATTACK");
+    check (well.handleCentre (Handle::attack).getDistanceFrom (attackTo) < 1.5f && fills(),
+           "the corner stays under the pointer, the rest making room so the envelope still fills the graph");
+    well.mouseUp (mouseAt (well, attackTo, attackAt));
     check (gestures.begun == 1 && gestures.ended == 1, "the whole drag is one gesture for the host");
 
     // A HOLD of 0 puts its corner on ATTACK's: pressing just right of it pulls HOLD out.
@@ -1172,10 +1187,13 @@ void testViews()
     // DECAY's corner moves SUSTAIN up and down too.
     check (pumpUntil ([&] { return approx (well.getAmpState().dials.hold, hold->getValue(), 1e-6f); }), "the well catches up");
     const auto decayAt = well.handleCentre (Handle::decay);
-    dragOn (well, decayAt, decayAt.translated (10.0f, 20.0f));
+    const auto decayTo = decayAt.translated (10.0f, 20.0f);
+    well.mouseDown (mouseAt (well, decayAt));
+    well.mouseDrag (mouseAt (well, decayTo, decayAt));
     check (sustain->convertFrom0to1 (sustain->getValue()) < 0.9f && p.getState().getParameter (ParamID::env1Decay)->getValue() > 0.4f,
            "dragging DECAY's corner down and right lowers SUSTAIN and lengthens DECAY");
-    check (well.handleCentre (Handle::decay).getDistanceFrom (decayAt.translated (10.0f, 20.0f)) < 1.5f, "and it follows the pointer");
+    check (well.handleCentre (Handle::decay).getDistanceFrom (decayTo) < 1.5f, "and it follows the pointer");
+    well.mouseUp (mouseAt (well, decayTo, decayAt));
 
     // A double-click as JUCE sends it: down, up, down, up, then the double-click.
     const auto corner = well.handleCentre (Handle::attack);
@@ -1195,16 +1213,16 @@ void testViews()
     check (gestures.begun == gestures.ended, "even if a double-click arrives while a click is still down");
     p.removeListener (&gestures);
 
-    // With OUTPUT at -24 dB the top has no height: a sideways drag of
-    // DECAY's corner changes DECAY and leaves SUSTAIN alone.
+    // OUTPUT is in the readout: turned down, the shape keeps its height.
+    check (pumpUntil ([&] { return approx (well.getAmpState().dials.attack, attack->getValue(), 1e-6f); }), "the well catches up again");
+    const auto topBefore = well.handleCentre (Handle::attack);
     setParam (p, ParamID::output, -24.0f);
-    setParam (p, ParamID::env1Sustain, 0.6f);
-    check (pumpUntil ([&] { return approx (well.getAmpState().outputDb, -24.0f, 1e-3f) && approx (well.getAmpState().dials.sustain, 0.6f, 1e-4f); }),
-           "the well shows OUTPUT at the bottom");
-    const auto flatDecay = well.handleCentre (Handle::decay);
-    dragOn (well, flatDecay, flatDecay.translated (-8.0f, 0.0f));
-    check (approx (sustain->convertFrom0to1 (sustain->getValue()), 0.6f, 1e-4f), "DECAY's corner dragged then leaves SUSTAIN where it was");
+    check (pumpUntil ([&] { return approx (well.getAmpState().outputDb, -24.0f, 1e-3f); }), "the well hears OUTPUT turned down");
+    check (well.handleCentre (Handle::attack) == topBefore && fills(), "and the shape stays as it was");
     setParam (p, ParamID::output, 0.0f);
+    dragOn (well, well.handleCentre (Handle::release), well.handleCentre (Handle::release).translated (-30.0f, 0.0f));
+    check (fills(), "a shorter RELEASE still fills the graph");
+    pumpUntil ([&] { return approx (well.getAmpState().outputDb, 0.0f, 1e-3f); });
     snapshot (render (*editor), "15-envelope-graph");
 
     // The gear menu's views.
@@ -1218,6 +1236,19 @@ void testViews()
     const auto envAt = env1.getPosition();
     Bench::Model model (p.getState());
 
+    // Where the corners sit, as shares of the plot.
+    const auto shares = [&well]
+    {
+        const auto plot = well.plotArea();
+        std::array<juce::Point<float>, Synth2VisualModel::numHandles> at;
+        for (size_t h = 0; h < at.size(); ++h)
+        {
+            const auto c = well.handleCentre ((Handle) h);
+            at[h] = { (c.x - plot.getX()) / plot.getWidth(), (plot.getBottom() - c.y) / plot.getHeight() };
+        }
+        return at;
+    };
+    const auto smallShares = shares();
     pick (3);
     check (model.view().envelopes == Bench::EnvelopeView::knobs && env1.getHeight() == 240 && ! well.isVisible()
                && env1.getDial (0).isVisible(),
@@ -1226,6 +1257,11 @@ void testViews()
     check (model.view().envelopes == Bench::EnvelopeView::graph && env1.getHeight() == 336 && well.isVisible()
                && well.getHeight() == 286 && ! env1.getDial (0).isVisible(),
            "Graph: a big graph fills the card, no dials");
+    const auto bigShares = shares();
+    bool sameShape = fills();
+    for (size_t h = 0; h < bigShares.size(); ++h)
+        sameShape = sameShape && bigShares[h].getDistanceFrom (smallShares[h]) < 1e-3f;
+    check (sameShape, "with the same shape as the small graph, filling it the same way");
     pick (7);
     check (model.view().oscillators == Bench::OscillatorView::compact && osc1.getHeight() == 268
                && ! osc1.getDisplay().isVisible() && osc1.getPicker().isCompact() && osc1.getPicker().getHeight() == 28,
