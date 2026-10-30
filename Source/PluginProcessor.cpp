@@ -158,10 +158,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
     // The effects after the mix (version 6), both off to start with, so
     // older sessions sound as they did.
     const Effects::Settings effects;
-    const auto percent = [&] (const char* id, const String& effectName, float to, float value)
+    const auto percent = [&] (const char* id, const String& effectName, float to, float value, int version = 6)
     {
         layout.add (std::make_unique<AudioParameterFloat> (
-            ParameterID { id, 6 }, effectName, NormalisableRange<float> (0.0f, to), value,
+            ParameterID { id, version }, effectName, NormalisableRange<float> (0.0f, to), value,
             AudioParameterFloatAttributes().withStringFromValueFunction (percentFromValue)));
     };
     StringArray notes;
@@ -199,6 +199,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
         ParameterID { ParamID::reverbPreDelay, 6 }, "Reverb Pre-Delay", preDelayRange, effects.reverb.preDelayMs,
         AudioParameterFloatAttributes().withLabel ("ms")
             .withStringFromValueFunction ([] (float value, int) { return String (roundToInt (value)) + " ms"; })));
+
+    // The drive (version 8), first in the chain, off to start with.
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::driveOn, 8 }, "Drive On", effects.drive.on));
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { ParamID::driveAmount, 8 }, "Drive", NormalisableRange<float> (0.0f, 1.0f), effects.drive.amount,
+        AudioParameterFloatAttributes().withLabel ("dB").withStringFromValueFunction ([] (float value, int)
+        {
+            return "+" + String (Effects::maxDriveDb * value, 1) + " dB";
+        })));
+    layout.add (std::make_unique<AudioParameterChoice> (
+        ParameterID { ParamID::driveShape, 8 }, "Drive Shape", StringArray { "Warm", "Tube", "Hard" }, effects.drive.shape));
+    percent (ParamID::driveTone, "Drive Tone", 1.0f, effects.drive.tone, 8);
+    percent (ParamID::driveMix,  "Drive Mix",  1.0f, effects.drive.mix, 8);
 
     layout.add (std::make_unique<AudioParameterChoice> (
         ParameterID { ParamID::effectsOrder, 6 }, "Effects Order", StringArray { "Delay, then reverb", "Reverb, then delay" },
@@ -262,6 +275,13 @@ Synth2Engine::Settings Synth2AudioProcessor::currentSettings() const noexcept
         envelope.sustainLevel   = param (ids.sustain);
         envelope.releaseSeconds = param (ids.release);
     }
+    auto& drive = settings.effects.drive;
+    drive.on     = param (ParamID::driveOn) >= 0.5f;
+    drive.amount = param (ParamID::driveAmount);
+    drive.shape  = juce::roundToInt (param (ParamID::driveShape));
+    drive.tone   = param (ParamID::driveTone);
+    drive.mix    = param (ParamID::driveMix);
+
     auto& delay = settings.effects.delay;
     delay.on       = param (ParamID::delayOn) >= 0.5f;
     delay.sync     = param (ParamID::delaySync) >= 0.5f;

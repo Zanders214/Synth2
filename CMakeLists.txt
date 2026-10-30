@@ -54,14 +54,17 @@ set(SYNTH2_APP_SOURCES
     Source/PluginEditor.cpp
     Source/Synth2LookAndFeel.cpp)
 
-target_sources(Synth2 PRIVATE ${SYNTH2_APP_SOURCES})
+target_sources(Synth2 PRIVATE ${SYNTH2_APP_SOURCES} Source/StandaloneApp.cpp)
 
 target_compile_definitions(Synth2
     PUBLIC
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0
-        JUCE_DISPLAY_SPLASH_SCREEN=0)
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+        # The standalone app is ours (Source/StandaloneApp.cpp): it opens
+        # every MIDI keyboard plugged in.
+        JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP=1)
 
 target_link_libraries(Synth2
     PRIVATE

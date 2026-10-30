@@ -277,11 +277,175 @@ private:
     ReverbDisplayState reverb;
 };
 
+/** What the drive's CURVE well shows. */
+struct DriveDisplayState
+{
+    float amount = 0.4f;
+    int   shape  = 0;
+    float mix    = 1.0f;
+
+    friend bool operator== (const DriveDisplayState& a, const DriveDisplayState& b) noexcept
+    {
+        return juce::exactlyEqual (a.amount, b.amount) && a.shape == b.shape && juce::exactlyEqual (a.mix, b.mix);
+    }
+    friend bool operator!= (const DriveDisplayState& a, const DriveDisplayState& b) noexcept { return ! (a == b); }
+};
+
+/**
+    CurveDisplay — the drive's well: what comes out (up) for what goes in
+    (across), from full scale down to full scale up, MIX included, over the
+    faint straight line the sound would follow untouched. The more DRIVE,
+    the sooner it bends over; TUBE bends one side sooner than the other.
+*/
+class CurveDisplay final : public DisplayWell
+{
+public:
+    CurveDisplay() { setInterceptsMouseClicks (false, false); }
+
+    void setColour (juce::Colour newColour) { colour = newColour; repaint(); }
+
+    void setDriveState (const DriveDisplayState& newState)
+    {
+        if (newState == drive)
+            return;
+        drive = newState;
+        repaint();
+    }
+
+    const DriveDisplayState& getDriveState() const noexcept { return drive; }
+
+    void paint (juce::Graphics& g) override
+    {
+        using namespace Synth2;
+        const float s = getUiScale();
+        const auto  readout = "+" + juce::String (Effects::maxDriveDb * drive.amount, 1) + " dB  "
+                            + Effects::driveShapeNames[(size_t) juce::jlimit (0, 2, drive.shape)];
+        auto plot = paintWell (g, "CURVE", readout).reduced (4.0f * s, 2.0f * s);
+        plot = plot.withSizeKeepingCentre (juce::jmin (plot.getWidth(), plot.getHeight() * 1.6f), plot.getHeight());
+
+        // The axes, and the straight line of no drive at all.
+        const float line = juce::jmax (1.0f, s);
+        g.setColour (Palette::gridLine);
+        g.fillRect (juce::Rectangle (plot.getCentreX() - 0.5f * line, plot.getY(), line, plot.getHeight()));
+        g.fillRect (juce::Rectangle (plot.getX(), plot.getCentreY() - 0.5f * line, plot.getWidth(), line));
+        const auto at = [&plot] (float x, float y)
+        {
+            return juce::Point (plot.getCentreX() + 0.5f * x * plot.getWidth(), plot.getCentreY() - 0.5f * y * plot.getHeight());
+        };
+        juce::Path straight;
+        straight.startNewSubPath (at (-1.0f, -1.0f));
+        straight.lineTo (at (1.0f, 1.0f));
+        const float dashes[] { 3.0f * s, 3.0f * s };
+        juce::PathStrokeType (line).createDashedStroke (straight, straight, dashes, 2);
+        g.setColour (Palette::strongLine.withMultipliedAlpha (2.0f));
+        g.fillPath (straight);
+
+        // The curve, glowing.
+        Effects::DriveSettings settings;
+        settings.amount = drive.amount;
+        settings.shape  = drive.shape;
+        const float dry = Effects::dryGain (drive.mix);
+        const float wet = Effects::wetGain (drive.mix);
+        juce::Path curve;
+        const int points = juce::jmax (64, (int) plot.getWidth());
+        for (int p = 0; p <= points; ++p)
+        {
+            const float x = -1.0f + 2.0f * (float) p / (float) points;
+            const float y = juce::jlimit (-1.0f, 1.0f, dry * x + wet * Effects::driveTransfer (settings, x));
+            if (p == 0)
+                curve.startNewSubPath (at (x, y));
+            else
+                curve.lineTo (at (x, y));
+        }
+        g.setColour (colour.withAlpha (0.25f));
+        g.strokePath (curve, juce::PathStrokeType (6.0f * s, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.setColour (colour);
+        g.strokePath (curve, juce::PathStrokeType (2.0f * s, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
+
+private:
+    DriveDisplayState drive;
+    juce::Colour colour { Synth2::Palette::amber };
+};
+
+/** A row of pills, one per choice of a choice parameter, the chosen one lit
+    in its colour: click one to pick it (as one gesture). */
+class SegmentedChoice final : public juce::Component,
+                              public juce::SettableTooltipClient
+{
+public:
+    SegmentedChoice (juce::RangedAudioParameter& parameter, std::vector<juce::String> choiceNames, juce::Colour onColour)
+        : names (std::move (choiceNames)), colour (onColour),
+          attachment (parameter, [this] (float value) { selected = juce::roundToInt (value); repaint(); })
+    {
+        setComponentID (parameter.paramID);
+        setTooltip (parameter.getName (64));
+        setRepaintsOnMouseActivity (true);
+        attachment.sendInitialUpdate();
+    }
+
+    void setUiScale (float newScale) { uiScale = newScale; repaint(); }
+    int  getSelected() const noexcept { return selected; }
+    int  getNumChoices() const noexcept { return (int) names.size(); }
+
+    juce::Rectangle<float> segmentBounds (int index) const noexcept
+    {
+        const float gap   = 6.0f * uiScale;
+        const auto  count = (float) names.size();
+        const float width = ((float) getWidth() - gap * (count - 1.0f)) / count;
+        return { (float) index * (width + gap), 0.0f, width, (float) getHeight() };
+    }
+
+    void choose (int index) { attachment.setValueAsCompleteGesture ((float) juce::jlimit (0, getNumChoices() - 1, index)); }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        for (int i = 0; i < getNumChoices(); ++i)
+            if (segmentBounds (i).contains (e.position))
+                choose (i);
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        using namespace Synth2;
+        const float s     = uiScale;
+        const auto  mouse = getMouseXYRelative().toFloat();
+        for (int i = 0; i < getNumChoices(); ++i)
+        {
+            const auto  pill = segmentBounds (i).reduced (0.5f);
+            const float r    = pill.getHeight() * 0.5f;
+            const bool  on   = i == selected;
+            auto fill = on ? colour.withAlpha (0.16f) : Palette::idleFill;
+            if (isMouseOver() && pill.contains (mouse))
+                fill = fill.withMultipliedAlpha (1.6f);
+            g.setColour (fill);
+            g.fillRoundedRectangle (pill, r);
+            g.setColour (on ? colour.withAlpha (0.65f) : Palette::strongLine);
+            g.drawRoundedRectangle (pill, r, juce::jmax (1.0f, s));
+            g.setFont (Fonts::sans (9.5f * s, true, 0.14f));
+            g.setColour (on ? Palette::textStrong : Palette::textDim);
+            g.drawText (names[(size_t) i], pill, juce::Justification::centred, false);
+        }
+    }
+
+private:
+    std::vector<juce::String> names;
+    juce::Colour colour;
+    juce::ParameterAttachment attachment;
+    int   selected = 0;
+    float uiScale  = 1.0f;
+};
+
 /**
     EffectCard — one effect on the EFFECTS tab: its power switch, its place
     in the chain and its name in the header, its well, a row of dials and any
     switches of its own. Off, everything but the switch greys out. Drag the
-    header sideways to move the card to the other place in the chain.
+    header sideways to move the card to the other place in the chain (unless
+    it has a fixed place: see setMovable).
+
+    Its dials sit in rows of three under the well, by slot (0..2 the first
+    row, 3..5 the second), each row spread across the card; a card with one
+    row of dials gives the other row's room to its well.
 */
 class EffectCard : public juce::Component
 {
@@ -312,6 +476,8 @@ public:
     }
 
     void setPlace (int newPlace) { if (place != newPlace) { place = newPlace; repaint(); } }
+    void setMovable (bool canMove) { movable = canMove; repaint(); }
+    bool isMovable() const noexcept { return movable; }
     int  getPlace() const noexcept { return place; }
     const juce::String& getTitle() const noexcept { return title; }
     juce::Colour getColour() const noexcept { return colour; }
@@ -349,11 +515,14 @@ public:
         g.drawText (title, header.withTrimmedLeft (64.0f * s), juce::Justification::centredLeft, false);
 
         // A grip, saying the card can be dragged.
-        g.setColour (Palette::textFaint);
-        const auto grip = header.withSizeKeepingCentre (18.0f * s, 8.0f * s);
-        for (int row = 0; row < 2; ++row)
-            for (int dot = 0; dot < 3; ++dot)
-                g.fillEllipse (grip.getX() + (float) dot * 7.0f * s, grip.getY() + (float) row * 6.0f * s, 2.2f * s, 2.2f * s);
+        if (movable)
+        {
+            g.setColour (Palette::textFaint);
+            const auto grip = header.withSizeKeepingCentre (18.0f * s, 8.0f * s).withX (header.getRight() - 34.0f * s);
+            for (int row = 0; row < 2; ++row)
+                for (int dot = 0; dot < 3; ++dot)
+                    g.fillEllipse (grip.getX() + (float) dot * 7.0f * s, grip.getY() + (float) row * 6.0f * s, 2.2f * s, 2.2f * s);
+        }
 
         g.setColour (Palette::hairline);
         g.fillRect (header.withTop (header.getBottom() - juce::jmax (1.0f, s)).reduced (12.0f * s, 0.0f));
@@ -375,17 +544,27 @@ public:
 
         auto area = getLocalBounds().withTrimmedTop (px (30.0f)).reduced (px (12.0f), 0);
         area.removeFromTop (px (10.0f));
-        layoutWell (area.removeFromTop (px (250.0f)));
+        const int rows = numRows();
+        layoutWell (area.removeFromTop (px (wellHeight + (float) (maxRows - rows) * rowHeight)));
 
-        // One row of dials across the card; dials sharing a column (one
-        // shown at a time) take the same place.
-        area.removeFromTop (px (14.0f));
-        auto band = area.removeFromTop (px (52.0f + 31.0f));
-        const int columnWidth = band.getWidth() / juce::jmax (1, numColumns());
-        for (const auto& dial : dials)
+        // Rows of up to three dials across the card; dials sharing a slot
+        // (one shown at a time) take the same place.
+        for (int row = 0; row < rows; ++row)
         {
-            dial->column = band.withX (band.getX() + dial->columnIndex * columnWidth).withWidth (columnWidth);
-            dial->slider.setBounds (dial->column.withHeight (px (52.0f)).withSizeKeepingCentre (px (52.0f), px (52.0f)));
+            area.removeFromTop (px (14.0f));
+            const auto band  = area.removeFromTop (px (52.0f + 31.0f));
+            const int  count = slotsInRow (row);
+            const int  columnWidth = band.getWidth() / juce::jmax (1, count);
+            for (const auto& dial : dials)
+            {
+                if (dial->columnIndex / perRow != row)
+                    continue;
+                const int column = dial->columnIndex % perRow;
+                dial->column = band.withTrimmedLeft (column * columnWidth);
+                if (column + 1 < count)
+                    dial->column.setWidth (columnWidth);
+                dial->slider.setBounds (dial->column.withHeight (px (52.0f)).withSizeKeepingCentre (px (52.0f), px (52.0f)));
+            }
         }
 
         area.removeFromTop (px (14.0f));
@@ -404,7 +583,7 @@ public:
 
     void mouseDown (const juce::MouseEvent& e) override
     {
-        if (! headerBounds().contains (e.position))
+        if (! movable || ! headerBounds().contains (e.position))
             return;
         dragging  = true;
         dragStart = getPosition();
@@ -432,12 +611,13 @@ public:
 
     juce::MouseCursor getMouseCursor() override
     {
-        return headerBounds().contains (getMouseXYRelative().toFloat()) ? juce::MouseCursor::DraggingHandCursor
-                                                                         : juce::MouseCursor::NormalCursor;
+        return movable && headerBounds().contains (getMouseXYRelative().toFloat()) ? juce::MouseCursor::DraggingHandCursor
+                                                                                    : juce::MouseCursor::NormalCursor;
     }
 
 protected:
-    /** Gives the card a dial for `paramId` in column `columnIndex`. */
+    /** Gives the card a dial for `paramId` in slot `columnIndex` (0..2 the
+        first row, 3..5 the second). */
     void addDial (const char* paramId, const char* name, juce::Colour dialColour, int columnIndex)
     {
         auto dial = std::make_unique<Dial>();
@@ -474,12 +654,27 @@ private:
 
     bool on() const noexcept { return power.getToggleState(); }
 
-    int numColumns() const noexcept
+    static constexpr int   perRow     = 3;
+    static constexpr int   maxRows    = 2;
+    static constexpr float wellHeight = 164.0f;          // with two rows of dials under it
+    static constexpr float rowHeight  = 14.0f + 52.0f + 31.0f;
+
+    int numRows() const noexcept
     {
-        int columns = 0;
+        int rows = 0;
         for (const auto& dial : dials)
-            columns = juce::jmax (columns, dial->columnIndex + 1);
-        return columns;
+            rows = juce::jmax (rows, dial->columnIndex / perRow + 1);
+        return juce::jmin (rows, maxRows);
+    }
+
+    // How many columns row `row` spreads across: up to its last slot in use.
+    int slotsInRow (int row) const noexcept
+    {
+        int count = 0;
+        for (const auto& dial : dials)
+            if (dial->columnIndex / perRow == row)
+                count = juce::jmax (count, dial->columnIndex % perRow + 1);
+        return count;
     }
 
     juce::String title;
@@ -492,10 +687,11 @@ private:
     juce::Point<int> dragStart;
     float uiScale  = 1.0f;
     int   place    = 1;
+    bool  movable  = true;
     bool  dragging = false;
 };
 
-/** The DELAY card: its repeats in the well over TIME, FEEDBACK, TONE and MIX,
+/** The DELAY card: its repeats in the well over TIME and FEEDBACK, TONE and MIX,
     with SYNC (TIME then picks a note length at the host's tempo) and
     PING-PONG beneath. */
 class DelayCard final : public EffectCard
@@ -511,8 +707,8 @@ public:
         addDial (ParamID::delayTime,     "TIME",     BenchStyle::dialColour (0.0f),  0);
         addDial (ParamID::delayNote,     "TIME",     BenchStyle::dialColour (0.0f),  0);
         addDial (ParamID::delayFeedback, "FEEDBACK", BenchStyle::dialColour (0.33f), 1);
-        addDial (ParamID::delayTone,     "TONE",     BenchStyle::dialColour (0.66f), 2);
-        addDial (ParamID::delayMix,      "MIX",      BenchStyle::dialColour (1.0f),  3);
+        addDial (ParamID::delayTone,     "TONE",     BenchStyle::dialColour (0.66f), 3);
+        addDial (ParamID::delayMix,      "MIX",      BenchStyle::dialColour (1.0f),  4);
         addAndMakeVisible (sync);
         addAndMakeVisible (pingPong);
     }
@@ -571,7 +767,7 @@ private:
 };
 
 /** The REVERB card: the room in the well over SIZE (how long it rings),
-    PRE-DELAY, DAMPING, WIDTH and MIX. */
+    PRE-DELAY and DAMPING, WIDTH and MIX. */
 class ReverbCard final : public EffectCard
 {
 public:
@@ -610,44 +806,98 @@ private:
     RoomDisplay display;
 };
 
+/** The DRIVE card: its curve in the well over DRIVE, TONE and MIX, with
+    its shape (WARM, TUBE or HARD) beneath. It always comes first. */
+class DriveCard final : public EffectCard
+{
+public:
+    DriveCard (Synth2LookAndFeel& looksToUse, juce::AudioProcessorValueTreeState& stateToUse)
+        : EffectCard ("DRIVE", ParamID::driveOn, Synth2::Palette::amber, looksToUse, stateToUse),
+          shape (*stateToUse.getParameter (ParamID::driveShape), { "WARM", "TUBE", "HARD" }, Synth2::Palette::amber)
+    {
+        setMovable (false);
+        addAndMakeVisible (display);
+        display.setColour (Synth2::Palette::amber);
+        addDial (ParamID::driveAmount, "DRIVE", BenchStyle::dialColour (0.0f), 0);
+        addDial (ParamID::driveTone,   "TONE",  BenchStyle::dialColour (0.5f), 1);
+        addDial (ParamID::driveMix,    "MIX",   BenchStyle::dialColour (1.0f), 2);
+        addAndMakeVisible (shape);
+    }
+
+    CurveDisplay&    getDisplay() noexcept { return display; }
+    SegmentedChoice& getShape() noexcept   { return shape; }
+
+    void refresh (const Effects::DriveSettings& drive)
+    {
+        display.setDriveState ({ drive.amount, drive.shape, drive.mix });
+    }
+
+    void setUiScale (float newScale)
+    {
+        shape.setUiScale (newScale);
+        display.setUiScale (newScale);
+        EffectCard::setUiScale (newScale);
+    }
+
+private:
+    void layoutWell (juce::Rectangle<int> well) override
+    {
+        display.setUiScale (getUiScale());
+        display.setBounds (well);
+    }
+
+    void layoutSwitches (juce::Rectangle<int> row) override
+    {
+        const auto px = [s = getUiScale()] (float v) { return juce::roundToInt (v * s); };
+        shape.setBounds (row.reduced (px (10.0f), 0));
+    }
+
+    CurveDisplay    display;
+    SegmentedChoice shape;
+};
+
 /**
     EffectsView — the EFFECTS tab: the effects every note goes through
-    together, as a chain read left to right, from the notes to OUTPUT. Drag
-    a card past the middle to swap the order.
+    together, as a chain read left to right, from the notes to OUTPUT: the
+    drive first, then the delay and the reverb. Drag the delay or the reverb
+    past the other to swap them.
 */
 class EffectsView final : public juce::Component
 {
 public:
-    static constexpr float cardWidth  = 436.0f;
+    static constexpr float cardWidth  = 292.0f;
     static constexpr float cardHeight = 448.0f;
-    static constexpr float stub       = 40.0f;   // the arrows into, between and out of the cards
+    static constexpr float stub       = 29.0f;   // the arrows into, between and out of the cards
 
     EffectsView (juce::AudioProcessorValueTreeState& stateToUse, Synth2LookAndFeel& looks)
-        : state (stateToUse), delay (looks, stateToUse), reverb (looks, stateToUse)
+        : state (stateToUse), drive (looks, stateToUse), delay (looks, stateToUse), reverb (looks, stateToUse)
     {
         reverbFirst = state.getRawParameterValue (ParamID::effectsOrder)->load() >= 0.5f;
-        delayOn     = delay.getPower().getToggleState();
-        reverbOn    = reverb.getPower().getToggleState();
+        shownOn     = { drive.getPower().getToggleState(), delay.getPower().getToggleState(), reverb.getPower().getToggleState() };
         for (auto* card : cards())
         {
             card->showPower();
             addAndMakeVisible (*card);
             card->onDropped ([this, card] (int centreX)
             {
-                const bool wantsFirst = centreX < getWidth() / 2;
-                if (wantsFirst != (card->getPlace() == 1))
+                // The delay and the reverb share the second and third places.
+                const int  between    = (slotBounds (2).getCentreX() + slotBounds (3).getCentreX()) / 2;
+                const bool wantsFirst = centreX < between;
+                if (card->isMovable() && wantsFirst != (card->getPlace() == 2))
                     swapOrder();
                 layOut();
             });
         }
     }
 
+    DriveCard&  getDrive() noexcept  { return drive; }
     DelayCard&  getDelay() noexcept  { return delay; }
     ReverbCard& getReverb() noexcept { return reverb; }
 
     void setUiScale (float newScale)
     {
         uiScale = newScale;
+        drive.setUiScale (newScale);
         delay.setUiScale (newScale);
         reverb.setUiScale (newScale);
         layOut();
@@ -657,14 +907,14 @@ public:
     /** The cards follow the settings, however they change. */
     void refresh (const Effects::Settings& settings)
     {
+        drive.refresh (settings.drive);
         delay.refresh (settings.delay, settings.bpm);
         reverb.refresh (settings.reverb);
-        if (settings.delay.on != delayOn || settings.reverb.on != reverbOn)
+        if (const std::array<bool, 3> on { settings.drive.on, settings.delay.on, settings.reverb.on }; on != shownOn)
         {
-            delayOn  = settings.delay.on;
-            reverbOn = settings.reverb.on;
-            delay.showPower();
-            reverb.showPower();
+            shownOn = on;
+            for (auto* card : cards())
+                card->showPower();
             repaint();
         }
         if (settings.reverbFirst != reverbFirst)
@@ -687,7 +937,7 @@ public:
         repaint();
     }
 
-    /** Where the card in `place` (1 or 2) sits. */
+    /** Where the card in `place` (1 to 3) sits. */
     juce::Rectangle<int> slotBounds (int place) const noexcept
     {
         const float s = uiScale;
@@ -703,51 +953,57 @@ public:
         const float s = uiScale;
 
         // The chain in words over the cards, each effect in its own colour.
-        const auto& first  = reverbFirst ? static_cast<const EffectCard&> (reverb) : static_cast<const EffectCard&> (delay);
-        const auto& second = reverbFirst ? static_cast<const EffectCard&> (delay) : static_cast<const EffectCard&> (reverb);
-        const auto  line   = juce::Rectangle<float> (stub * s, (cardTop() - 40.0f) * s, (2.0f * cardWidth + stub) * s, 16.0f * s);
+        const auto& second = reverbFirst ? static_cast<const EffectCard&> (reverb) : static_cast<const EffectCard&> (delay);
+        const auto& third  = reverbFirst ? static_cast<const EffectCard&> (delay) : static_cast<const EffectCard&> (reverb);
+        const auto  line   = juce::Rectangle<float> (stub * s, (cardTop() - 40.0f) * s, (3.0f * cardWidth + 2.0f * stub) * s, 16.0f * s);
         const auto  arrow  = juce::String (juce::CharPointer_UTF8 ("  \xe2\x86\x92  "));
         juce::AttributedString chain;
         const auto font = Fonts::sans (10.0f * s, true, 0.18f);
-        chain.append ("THE NOTES" + arrow, font, Palette::textDim);
-        chain.append (first.getTitle(), font, first.getColour());
-        chain.append (arrow, font, Palette::textDim);
-        chain.append (second.getTitle(), font, second.getColour());
+        chain.append ("THE NOTES", font, Palette::textDim);
+        for (const auto* card : { static_cast<const EffectCard*> (&drive), &second, &third })
+        {
+            chain.append (arrow, font, Palette::textDim);
+            chain.append (card->getTitle(), font, card->getColour());
+        }
         chain.append (arrow + "OUTPUT", font, Palette::textDim);
         chain.setJustification (juce::Justification::centredLeft);
         chain.draw (g, line);
 
         g.setFont (Fonts::sans (9.5f * s, false, 0.04f));
         g.setColour (Palette::textFaint);
-        g.drawText ("Drag a card by its header to swap the order", line, juce::Justification::centredRight, false);
+        g.drawText ("Drag DELAY or REVERB by its header to swap them", line, juce::Justification::centredRight, false);
 
         // Arrows into the first card, between them, and out to OUTPUT.
-        const float y = (cardTop() + 30.0f + 10.0f + 125.0f) * s;   // level with the wells' middles
+        const float y = (cardTop() + 30.0f + 10.0f + 82.0f) * s;   // level with the wells' middles
         g.setColour (Palette::strongLine.withMultipliedAlpha (2.5f));
-        for (const float from : { 4.0f, stub + cardWidth + 4.0f, 2.0f * (stub + cardWidth) + 4.0f })
+        for (int gap = 0; gap <= 3; ++gap)
+        {
+            const float from = (float) gap * (stub + cardWidth) + 4.0f;
             g.drawArrow ({ from * s, y, (from + stub - 8.0f) * s, y }, juce::jmax (1.0f, 1.5f * s), 7.0f * s, 7.0f * s);
+        }
     }
 
 private:
-    std::array<EffectCard*, 2> cards() noexcept { return { &delay, &reverb }; }
+    std::array<EffectCard*, 3> cards() noexcept { return { &drive, &delay, &reverb }; }
 
     float cardTop() const noexcept { return 0.5f * ((float) Bench::areaHeight - cardHeight) + 20.0f; }
 
     // Each card in its place, unless it is being dragged.
     void layOut()
     {
-        delay.setPlace (reverbFirst ? 2 : 1);
-        reverb.setPlace (reverbFirst ? 1 : 2);
+        drive.setPlace (1);
+        delay.setPlace (reverbFirst ? 3 : 2);
+        reverb.setPlace (reverbFirst ? 2 : 3);
         for (auto* card : cards())
             if (! card->isBeingDragged())
                 card->setBounds (slotBounds (card->getPlace()));
     }
 
     juce::AudioProcessorValueTreeState& state;
+    DriveCard  drive;
     DelayCard  delay;
     ReverbCard reverb;
+    std::array<bool, 3> shownOn {};   // drive, delay, reverb
     float uiScale     = 1.0f;
     bool  reverbFirst = false;
-    bool  delayOn     = false;
-    bool  reverbOn    = false;
 };

@@ -124,6 +124,11 @@ namespace ParamID
     inline constexpr const char* signalFlow = "signalFlow";
 
     // The effects after the mix (see Effects.h).
+    inline constexpr const char* driveOn       = "driveOn";
+    inline constexpr const char* driveAmount   = "driveAmount";
+    inline constexpr const char* driveShape    = "driveShape";
+    inline constexpr const char* driveTone     = "driveTone";
+    inline constexpr const char* driveMix      = "driveMix";
     inline constexpr const char* delayOn       = "delayOn";
     inline constexpr const char* delaySync     = "delaySync";
     inline constexpr const char* delayTime     = "delayTime";

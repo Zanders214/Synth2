@@ -13,9 +13,10 @@
     Effects
 
     The effects every note goes through together, after the mix and before
-    OUTPUT: a stereo DELAY and a REVERB, one after the other in either order.
+    OUTPUT: a DRIVE, then a stereo DELAY and a REVERB, one after the other in
+    either order.
 
-        notes  ->  +  ->  DELAY  ->  REVERB  ->  OUTPUT     (or REVERB first)
+        notes  ->  +  ->  DRIVE  ->  DELAY  ->  REVERB  ->  OUTPUT     (or REVERB before DELAY)
 
     Each has its own switch and MIX. MIX keeps the dry sound at full level up
     to the middle, adding the effect underneath it, and from there fades the
@@ -33,6 +34,13 @@
     pitch, so the repeats sit behind the sound rather than copying it. With
     PING-PONG the repeats bounce from left to right. Turning TIME while
     repeats ring glides there, bending their pitch like tape.
+
+    DRIVE saturates: it pushes the sound up to +36 dB into one of three
+    curves (see DriveShape) and brings it back to about the level it came in
+    at, so it changes the colour more than the loudness. TONE darkens what
+    comes out. The curve is applied through its antiderivative (first-order
+    antiderivative antialiasing), which keeps most of the new harmonics above
+    the top of the band from folding back down as harsh, unrelated tones.
 
     REVERB is a feedback-delay-network room (see Room.h): SIZE sets how long
     it rings, PRE-DELAY how long it waits before it starts, DAMPING how
@@ -80,6 +88,102 @@ namespace Effects
     private:
         juce::SmoothedValue<float> enable { 0.0f };
         juce::SmoothedValue<float> mix    { 0.0f };
+    };
+
+    /** The drive: each side through the curve, then TONE's lowpass and a
+        DC blocker (TUBE leans to one side), mixed in by its Blend. */
+    class Drive
+    {
+    public:
+        void prepare (double newSampleRate)
+        {
+            sampleRate = newSampleRate;
+            blend.prepare (sampleRate);
+            amount.reset (sampleRate, fadeSeconds);
+            amount.setCurrentAndTargetValue (amount.getTargetValue());
+            dcCut = (float) (1.0 - std::exp (-juce::MathConstants<double>::twoPi * 8.0 / sampleRate));
+            clear();
+        }
+
+        void set (const DriveSettings& newSettings) noexcept
+        {
+            blend.set (newSettings.on, newSettings.mix);
+            amount.setTargetValue (std::clamp (newSettings.amount, 0.0f, 1.0f));
+            shape = driveShapeOf (newSettings.shape);
+            tone  = std::clamp (newSettings.tone, 0.0f, 1.0f);
+        }
+
+        void process (float* left, float* right, int numSamples) noexcept
+        {
+            if (blend.isIdle())
+            {
+                if (holding)
+                    clear();
+                return;
+            }
+            holding = true;
+
+            // DRIVE and TONE move once per call (the engine's chunks are at
+            // most 32 samples).
+            amount.skip (numSamples);
+            const float  gain   = driveGain (amount.getCurrentValue());
+            const float  makeUp = driveMakeUp (shape, gain);
+            const double cutoff = 1000.0 * std::pow (18.0, (double) tone);
+            const auto   darken = (float) (1.0 - std::exp (-juce::MathConstants<double>::twoPi * cutoff / sampleRate));
+
+            std::array<float*, 2> channels { left, right };
+            for (int n = 0; n < numSamples; ++n)
+            {
+                const auto gains = blend.next();
+                for (size_t side = 0; side < 2; ++side)
+                {
+                    auto& state = sides[side];
+                    const float in     = channels[side][n];
+                    const float shaped = makeUp * state.curve (shape, gain * in);
+                    state.lowpass += darken * (shaped - state.lowpass);
+                    state.dc      += dcCut * (state.lowpass - state.dc);
+                    channels[side][n] = gains.dry * in + gains.wet * (state.lowpass - state.dc);
+                }
+            }
+        }
+
+        void clear() noexcept
+        {
+            sides = {};
+            holding = false;
+        }
+
+    private:
+        // One side's memory: the last input (for the antiderivative), the
+        // lowpass and the DC blocker.
+        struct Side
+        {
+            double previous = 0.0;
+            float  lowpass  = 0.0f;
+            float  dc       = 0.0f;
+
+            // The curve's average over the step from the last input to `x`:
+            // the difference of its antiderivative across the step, or the
+            // curve at the step's middle when the step is too small to divide by.
+            float curve (DriveShape s, float x) noexcept
+            {
+                const double step = (double) x - previous;
+                const double out  = std::abs (step) > 1.0e-4
+                                  ? (driveCurveIntegral (s, x) - driveCurveIntegral (s, previous)) / step
+                                  : (double) driveCurve (s, (float) (0.5 * ((double) x + previous)));
+                previous = x;
+                return (float) out;
+            }
+        };
+
+        double sampleRate = 44100.0;
+        Blend  blend;
+        juce::SmoothedValue<float> amount { 0.4f };
+        DriveShape shape = DriveShape::warm;
+        float  tone      = 0.7f;
+        float  dcCut     = 0.0f;
+        std::array<Side, 2> sides {};
+        bool   holding   = false;
     };
 
     /** The stereo delay: a line per side, read between samples so TIME can glide. */
@@ -321,18 +425,20 @@ namespace Effects
         bool  holding = false;
     };
 
-    /** Both effects, in the order the settings ask for. */
+    /** The drive, then the delay and the reverb in the order the settings ask for. */
     class Chain
     {
     public:
         void prepare (double sampleRate)
         {
+            drive.prepare (sampleRate);
             delay.prepare (sampleRate);
             reverb.prepare (sampleRate);
         }
 
         void set (const Settings& settings) noexcept
         {
+            drive.set (settings.drive);
             delay.set (settings.delay, settings.bpm);
             reverb.set (settings.reverb);
             reverbFirst = settings.reverbFirst;
@@ -341,6 +447,7 @@ namespace Effects
         /** Runs the stereo pair through both effects, in place. */
         void process (float* left, float* right, int numSamples) noexcept
         {
+            drive.process (left, right, numSamples);
             if (reverbFirst)
             {
                 reverb.process (left, right, numSamples);
@@ -355,11 +462,13 @@ namespace Effects
 
         void clear() noexcept
         {
+            drive.clear();
             delay.clear();
             reverb.clear();
         }
 
     private:
+        Drive  drive;
         Delay  delay;
         Reverb reverb;
         bool   reverbFirst = false;

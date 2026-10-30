@@ -9,8 +9,8 @@
 
     The effects' settings and the sums about them that both the engine (see
     Effects.h) and the editor's displays (see Synth2VisualModel.h) need: how
-    long the delay waits, how long the reverb rings, how MIX shares the dry
-    sound and the effect. Kept framework-free, like Unison.h, so the
+    long the delay waits, how long the reverb rings, the drive's curves, how
+    MIX shares the dry sound and the effect. Kept framework-free, like Unison.h, so the
     displays never drift from what plays.
 */
 namespace Effects
@@ -68,8 +68,96 @@ namespace Effects
 
     inline constexpr float maxPreDelayMs = 250.0f;
 
+    /** The drive's curves: WARM rounds both sides off alike (odd
+        harmonics, like a transistor pushed gently), TUBE leans one way
+        (even harmonics too, like a valve) and HARD clips flat. */
+    enum class DriveShape { warm, tube, hard };
+    inline constexpr std::array<const char*, 3> driveShapeNames { "WARM", "TUBE", "HARD" };
+
+    struct DriveSettings
+    {
+        bool  on     = false;
+        float amount = 0.4f;   // DRIVE: 0..1, up to maxDriveDb into the curve
+        int   shape  = 0;      // a DriveShape
+        float tone   = 0.7f;
+        float mix    = 1.0f;
+    };
+
+    inline constexpr float maxDriveDb = 36.0f;
+    inline constexpr float tubeBias   = 0.35f;   // how far TUBE leans
+
+    /** How hard DRIVE pushes into the curve: 0 dB to +36 dB. */
+    inline float driveGain (float amount) noexcept
+    {
+        return std::pow (10.0f, maxDriveDb * std::clamp (amount, 0.0f, 1.0f) / 20.0f);
+    }
+
+    inline DriveShape driveShapeOf (int shape) noexcept { return (DriveShape) std::clamp (shape, 0, 2); }
+
+    /** The curve itself, at gain 1: about x for small x, never past 1. */
+    inline float driveCurve (DriveShape shape, float x) noexcept
+    {
+        switch (shape)
+        {
+            case DriveShape::tube:
+            {
+                // tanh shifted off-centre, re-centred and re-scaled to slope 1 at 0.
+                const float lean = std::tanh (tubeBias);
+                return (std::tanh (x + tubeBias) - lean) / (1.0f - lean * lean);
+            }
+            case DriveShape::hard: return std::clamp (x, -1.0f, 1.0f);
+            case DriveShape::warm: break;
+        }
+        return std::tanh (x);
+    }
+
+    /** log(cosh(x)), without overflowing for large x. */
+    inline double logCosh (double x) noexcept
+    {
+        const double a = std::abs (x);
+        return a + std::log1p (std::exp (-2.0 * a)) - std::log (2.0);
+    }
+
+    /** The curve's antiderivative, which the engine differences between
+        samples to keep the new harmonics from folding back down as
+        aliasing. */
+    inline double driveCurveIntegral (DriveShape shape, double x) noexcept
+    {
+        switch (shape)
+        {
+            case DriveShape::tube:
+            {
+                const double lean = std::tanh ((double) tubeBias);
+                return (logCosh (x + tubeBias) - lean * x) / (1.0 - lean * lean);
+            }
+            case DriveShape::hard: return std::abs (x) <= 1.0 ? 0.5 * x * x : std::abs (x) - 0.5;
+            case DriveShape::warm: break;
+        }
+        return logCosh (x);
+    }
+
+    /** The output gain that keeps a moderate note (a quarter of full scale)
+        about as loud driven as it was clean, so turning DRIVE up changes the
+        colour more than the level. */
+    inline float driveMakeUp (DriveShape shape, float gain) noexcept
+    {
+        constexpr float level = 0.25f;
+        const float swing = driveCurve (shape, gain * level) - driveCurve (shape, -gain * level);
+        return swing > 0.0f ? 2.0f * level / swing : 1.0f;
+    }
+
+    /** What the drive does to an input `x`: pushed into the curve and
+        brought back to level (before TONE and MIX). */
+    inline float driveTransfer (const DriveSettings& drive, float x) noexcept
+    {
+        const auto  shape = driveShapeOf (drive.shape);
+        const float gain  = driveGain (drive.amount);
+        return driveMakeUp (shape, gain) * driveCurve (shape, gain * x);
+    }
+
     struct Settings
     {
+        DriveSettings  drive;
         DelaySettings  delay;
         ReverbSettings reverb;
         bool   reverbFirst = false;

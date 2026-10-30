@@ -976,6 +976,100 @@ void testReverb()
     check (energy (waited[0], 0, 4500) < 1.0e-10f && energy (waited[0], 4800, 9600) > 1.0e-4f, "PRE-DELAY holds the room back");
 }
 
+// The amplitude of the `hz` component of `x` over [start, end), Hann-windowed.
+float toneLevel (const std::vector<float>& x, double hz, int start, int end)
+{
+    double re = 0.0, im = 0.0, windowSum = 0.0;
+    for (int n = start; n < end; ++n)
+    {
+        const double w     = 0.5 - 0.5 * std::cos (juce::MathConstants<double>::twoPi * (n - start) / (end - start - 1));
+        const double phase = juce::MathConstants<double>::twoPi * hz * n / sampleRate;
+        re += w * x[(size_t) n] * std::cos (phase);
+        im -= w * x[(size_t) n] * std::sin (phase);
+        windowSum += w;
+    }
+    return (float) (2.0 * std::sqrt (re * re + im * im) / windowSum);
+}
+
+std::vector<std::vector<float>> sine (double hz, float amplitude, int numSamples)
+{
+    std::vector<float> wave ((size_t) numSamples);
+    for (int n = 0; n < numSamples; ++n)
+        wave[(size_t) n] = amplitude * (float) std::sin (juce::MathConstants<double>::twoPi * hz * n / sampleRate);
+    return { wave, wave };
+}
+
+// ---- Test 12b: the drive ----------------------------------------------------------------
+void testDrive()
+{
+    std::printf ("Drive:\n");
+
+    constexpr int length = 9600;
+    constexpr int from   = 2400;   // past the 20 ms fade in
+    const auto in = sine (220.0, 0.25f, length);
+
+    Effects::Settings off;
+    off.drive.amount = 1.0f;
+    off.drive.shape  = (int) Effects::DriveShape::hard;
+    check (throughEffects (off, in) == in, "switched off, the drive leaves the sound untouched");
+
+    const auto drivenWith = [&] (Effects::DriveShape shape, float amount, const std::vector<std::vector<float>>& signal)
+    {
+        Effects::Settings settings;
+        settings.drive.on     = true;
+        settings.drive.amount = amount;
+        settings.drive.shape  = (int) shape;
+        settings.drive.tone   = 1.0f;
+        settings.drive.mix    = 1.0f;
+        return throughEffects (settings, signal)[0];
+    };
+
+    const float inRms = 0.25f / std::sqrt (2.0f);
+    bool levelKept = true;
+    for (const auto shape : { Effects::DriveShape::warm, Effects::DriveShape::tube, Effects::DriveShape::hard })
+    {
+        const auto out = drivenWith (shape, 0.5f, in);
+        double sum = 0.0;
+        for (int n = from; n < length; ++n)
+            sum += (double) out[(size_t) n] * out[(size_t) n];
+        const auto outRms = (float) std::sqrt (sum / (length - from));
+        levelKept = levelKept && outRms > 0.75f * inRms && outRms < 1.33f * inRms;
+    }
+    check (levelKept, "driven +18 dB, a note comes out about as loud as it went in, whatever the shape");
+
+    const auto relative = [&] (const std::vector<float>& out, int harmonic)
+    {
+        return toneLevel (out, 220.0 * harmonic, from, length) / toneLevel (out, 220.0, from, length);
+    };
+    const auto warm   = drivenWith (Effects::DriveShape::warm, 0.5f, in);
+    const auto gentle = drivenWith (Effects::DriveShape::warm, 0.2f, in);
+    const auto tube   = drivenWith (Effects::DriveShape::tube, 0.5f, in);
+    check (relative (warm, 3) > 0.05f && relative (warm, 2) < 0.002f, "WARM adds odd harmonics only (3rd at "
+               + std::to_string (relative (warm, 3)) + ")");
+    check (relative (gentle, 3) < relative (warm, 3), "more DRIVE, more of them");
+    check (relative (tube, 2) > 0.02f, "TUBE adds even harmonics too (2nd at " + std::to_string (relative (tube, 2)) + ")");
+    double mean = 0.0;
+    for (int n = from; n < length; ++n)
+        mean += tube[(size_t) n];
+    check (std::abs (mean / (length - from)) < 0.005, "and its lean leaves no offset");
+
+    // Hard clipping a high note: the harmonics past the top of the band fold
+    // back down as aliasing. 3.7 kHz's 11th harmonic (40.7 kHz) lands at
+    // 7.3 kHz; compare it with the curve applied sample by sample.
+    const auto high    = sine (3700.0, 0.25f, length);
+    const auto clipped = drivenWith (Effects::DriveShape::hard, 1.0f, high);
+    std::vector<float> naive ((size_t) length);
+    Effects::DriveSettings hard;
+    hard.amount = 1.0f;
+    hard.shape  = (int) Effects::DriveShape::hard;
+    for (int n = 0; n < length; ++n)
+        naive[(size_t) n] = Effects::driveTransfer (hard, high[0][(size_t) n]);
+    const float alias      = toneLevel (clipped, 7300.0, from, length) / toneLevel (clipped, 3700.0, from, length);
+    const float naiveAlias = toneLevel (naive, 7300.0, from, length) / toneLevel (naive, 3700.0, from, length);
+    check (alias < 0.5f * naiveAlias, "its aliasing is well under the curve's applied sample by sample ("
+               + std::to_string (alias) + " against " + std::to_string (naiveAlias) + ")");
+}
+
 void testEffectsChain()
 {
     std::printf ("Effects chain:\n");
@@ -1088,6 +1182,7 @@ int main()
     testOutputAndMono();
     testDelay();
     testReverb();
+    testDrive();
     testEffectsChain();
     testEngineEffects();
 

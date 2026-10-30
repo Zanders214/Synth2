@@ -89,6 +89,15 @@ namespace Presets
         float preDelayMs = 20.0f;
     };
 
+    /** The drive: DRIVE, its shape (an Effects::DriveShape), TONE and MIX. */
+    struct Drive
+    {
+        float amount = 0.4f;
+        int   shape  = 0;
+        float tone   = 0.7f;
+        float mix    = 1.0f;
+    };
+
     struct Preset
     {
         const char* name;
@@ -97,6 +106,7 @@ namespace Presets
         float outputDb = 0.0f;
         std::optional<Delay>  delay {};    // empty: off
         std::optional<Reverb> reverb {};
+        std::optional<Drive>  drive {};
     };
 
     // Note lengths, by name.
@@ -168,7 +178,7 @@ namespace Presets
           { Oscillator { saw, 0, 0.0f, 1.0f,      { 4, 9.0f, 0.5f }, adsr (0.06f, 0.3f, 0.75f, 0.25f) },
             Oscillator { saw, 0, 10.0f, 0.8f,     { 4, 9.0f, 0.5f }, adsr (0.06f, 0.3f, 0.75f, 0.25f) },
             Oscillator { square, -12, 0.0f, 0.3f, {},                Envelope { 0.05f, 0.15f, 0.0f, 0.3f, 1.0f, 0.3f } } },
-          -7.0f, std::nullopt, Reverb { 0.5f, 0.5f, 1.0f, 0.18f, 20.0f } },
+          -7.0f, std::nullopt, Reverb { 0.5f, 0.5f, 1.0f, 0.18f, 20.0f }, Drive { 0.25f, 1, 0.65f, 1.0f } },
         { "Fifth Stack", "Root, fifth and sub for big chords",
           { Oscillator { saw, 0, 0.0f, 1.0f,      { 5, 16.0f, 0.6f }, adsr (0.01f, 0.6f, 0.75f, 0.4f) },
             Oscillator { saw, 7, 0.0f, 0.7f,      { 5, 16.0f, 0.6f }, adsr (0.01f, 0.6f, 0.75f, 0.4f) },
@@ -176,10 +186,10 @@ namespace Presets
           -9.0f, std::nullopt, Reverb { 0.55f, 0.45f, 1.0f, 0.18f, 20.0f } },
 
         // Bass
-        { "Reese Bass", "Two beating saws an octave down",
+        { "Reese Bass", "Two beating saws an octave down, warmly driven",
           { Oscillator { saw, -12, 0.0f, 1.0f,  { 3, 12.0f, 0.3f }, adsr (0.005f, 0.5f, 0.8f, 0.2f) },
             Oscillator { saw, -12, 18.0f, 0.9f, { 3, 12.0f, 0.3f }, adsr (0.005f, 0.5f, 0.8f, 0.2f) } },
-          -7.5f },
+          -7.5f, std::nullopt, std::nullopt, Drive { 0.35f, 0, 0.55f, 1.0f } },
         { "Sub Bass", "A clean sine sub with a plucked edge",
           { Oscillator { sine, -12, 0.0f, 1.0f,    {}, ar (0.002f, 0.12f) },
             Oscillator { triangle, 0, 0.0f, 0.35f, {}, adsr (0.002f, 0.2f, 0.3f, 0.08f) } },
@@ -220,6 +230,14 @@ namespace Presets
                 values.emplace_back (env.sustain, osc->envelope->sustainLevel);
                 values.emplace_back (env.release, osc->envelope->releaseSeconds);
             }
+        }
+        values.emplace_back (ParamID::driveOn, preset.drive.has_value() ? 1.0f : 0.0f);
+        if (preset.drive.has_value())
+        {
+            values.emplace_back (ParamID::driveAmount, preset.drive->amount);
+            values.emplace_back (ParamID::driveShape,  (float) preset.drive->shape);
+            values.emplace_back (ParamID::driveTone,   preset.drive->tone);
+            values.emplace_back (ParamID::driveMix,    preset.drive->mix);
         }
         values.emplace_back (ParamID::delayOn, preset.delay.has_value() ? 1.0f : 0.0f);
         if (preset.delay.has_value())

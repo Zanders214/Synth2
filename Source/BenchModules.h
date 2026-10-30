@@ -40,6 +40,8 @@ namespace BenchStyle
             return juce::String (juce::roundToInt (value)) + " ms";
         if (id == ParamID::reverbSize)
             return Format::seconds ((float) Effects::reverbSeconds (value));
+        if (id == ParamID::driveAmount)
+            return "+" + juce::String (Effects::maxDriveDb * value, 1) + " dB";
         if (id == ParamID::delayNote)
             return Effects::divisions[(size_t) juce::jlimit (0, (int) Effects::divisions.size() - 1, juce::roundToInt (value))].name;
         return Format::percent (value);   // the levels, WIDTH, SUSTAIN and the effects' amounts
