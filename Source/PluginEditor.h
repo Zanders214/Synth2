@@ -19,9 +19,13 @@
     A dark panel, top to bottom: the wordmark, the BENCH / EFFECTS tabs, the
     preset picker, the POLY badge and the gear (the signal-flow settings);
     the bench, which starts empty and holds whatever modules are put on it,
-    wherever they are put (see BenchView), or on the EFFECTS tab the delay
-    and the reverb every note goes through (see EffectsView); and along the
+    wherever they are put (see BenchView), or on the EFFECTS tab the drive,
+    delay and reverb every note goes through (see EffectsView); and along the
     bottom, on both tabs, the keyboard that plays it and the OUTPUT dial.
+
+    In the standalone app the computer's keys play that keyboard too (see
+    NeonKeyboard): the editor keeps the keyboard focus whenever nothing else
+    in the window has it, and passes on the keys nothing else used.
 
     Click an empty spot on the bench to add a module there: an oscillator,
     with its own unison stack, or an envelope (up to four of each). Drag a
@@ -56,6 +60,11 @@ public:
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
+    bool keyPressed (const juce::KeyPress&) override;
+    bool keyStateChanged (bool isKeyDown) override;
+
+    /** Whether the computer's keys play the keyboard: in the standalone app. */
+    bool playsTypedKeys() const noexcept { return processorRef.wrapperType == juce::AudioProcessor::wrapperType_Standalone; }
 
     static constexpr float designWidth  = 1040.0f;
     static constexpr float designHeight = 916.0f;

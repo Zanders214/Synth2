@@ -24,6 +24,7 @@
 #include <cstdio>
 #include <memory>
 #include <optional>
+#include <set>
 #include <tuple>
 #include <string>
 #include <thread>
@@ -1269,12 +1270,19 @@ void testEffectsTab()
            "EFFECTS swaps the bench for the effects, in its place");
     check (editor->getKeyboard().isVisible() && editor->getOutputDial().isVisible(), "with the keyboard and OUTPUT still below");
 
+    auto& drive  = effects.getDrive();
     auto& delay  = effects.getDelay();
     auto& reverb = effects.getReverb();
-    check (delay.getPlace() == 1 && reverb.getPlace() == 2 && delay.getX() < reverb.getX(), "the delay comes first, then the reverb");
-    check (delay.getNumDials() == 5 && reverb.getNumDials() == 5,
-           "TIME (or its note), FEEDBACK, TONE and MIX; SIZE, PRE-DELAY, DAMPING, WIDTH and MIX");
-    check (delay.getDial (0).getAlpha() < 0.5f && reverb.getDial (0).getAlpha() < 0.5f, "both off, so both greyed out");
+    check (drive.getPlace() == 1 && delay.getPlace() == 2 && reverb.getPlace() == 3
+               && drive.getRight() < delay.getX() && delay.getRight() < reverb.getX() && reverb.getRight() <= effects.getWidth(),
+           "the drive comes first, then the delay, then the reverb, side by side");
+    check (drive.getNumDials() == 3 && delay.getNumDials() == 5 && reverb.getNumDials() == 5,
+           "DRIVE, TONE and MIX; TIME (or its note), FEEDBACK, TONE and MIX; SIZE, PRE-DELAY, DAMPING, WIDTH and MIX");
+    check (reverb.getDial (3).getY() > reverb.getDial (0).getY() && delay.getDial (3).getY() > delay.getDial (2).getY()
+               && drive.getDisplay().getHeight() > delay.getDisplay().getHeight(),
+           "the dials sit in rows of up to three; the drive's one row leaves its well taller");
+    check (drive.getDial (0).getAlpha() < 0.5f && delay.getDial (0).getAlpha() < 0.5f && reverb.getDial (0).getAlpha() < 0.5f,
+           "all off, so all greyed out");
     snapshot (render (*editor), "11-effects-off");
 
     delay.getPower().setToggleState (true, juce::sendNotificationSync);
@@ -1301,24 +1309,45 @@ void testEffectsTab()
     delay.getPingPong().setToggleState (true, juce::sendNotificationSync);
     check (param (p, ParamID::delayPingPong) >= 0.5f, "PING-PONG switches on");
     pumpUntil ([&delay] { return delay.getDisplay().getDelayState().pingPong; });
+
+    // The drive: its power, DRIVE in decibels, the shape picked from its pills.
+    drive.getPower().triggerClick();
+    check (pumpUntil ([&] { return param (p, ParamID::driveOn) >= 0.5f && drive.getDial (0).getAlpha() >= 1.0f; }),
+           "the drive's power switches it on, and lights it");
+    drive.getDial (0).setValue (0.5, juce::sendNotificationSync);
+    check (approx (param (p, ParamID::driveAmount), 0.5f, 1e-4f)
+               && p.getState().getParameter (ParamID::driveAmount)->getCurrentValueAsText() == "+18.0 dB",
+           "DRIVE drives its parameter, reading in decibels");
+    check (pumpUntil ([&drive] { return approx (drive.getDisplay().getDriveState().amount, 0.5f, 1e-4f); }), "and the curve follows");
+    auto& shape = drive.getShape();
+    check (shape.getNumChoices() == 3 && shape.getSelected() == 0, "WARM, TUBE and HARD, WARM to start with");
+    shape.mouseDown (mouseAt (shape, shape.segmentBounds (1).getCentre()));
+    check (approx (param (p, ParamID::driveShape), 1.0f, 1e-6f) && shape.getSelected() == 1
+               && pumpUntil ([&drive] { return drive.getDisplay().getDriveState().shape == 1; }),
+           "clicking TUBE picks it, and the curve leans");
     snapshot (render (*editor), "12-effects-on");
 
-    // Dragging the delay past the middle puts the reverb first.
-    dragCard (delay, 480.0f);
-    check (param (p, ParamID::effectsOrder) >= 0.5f && p.currentSettings().effects.reverbFirst, "dragging the delay right puts it second");
-    check (reverb.getPlace() == 1 && delay.getPlace() == 2 && reverb.getBounds() == effects.slotBounds (1)
-               && delay.getBounds() == effects.slotBounds (2),
+    // The drive stays first: dragging it does nothing.
+    dragCard (drive, 400.0f);
+    check (drive.getPlace() == 1 && drive.getBounds() == effects.slotBounds (1) && param (p, ParamID::effectsOrder) < 0.5f,
+           "the drive can't be dragged out of first place");
+
+    // Dragging the delay past the reverb swaps them.
+    dragCard (delay, EffectsView::cardWidth + EffectsView::stub);
+    check (param (p, ParamID::effectsOrder) >= 0.5f && p.currentSettings().effects.reverbFirst, "dragging the delay right puts it last");
+    check (reverb.getPlace() == 2 && delay.getPlace() == 3 && reverb.getBounds() == effects.slotBounds (2)
+               && delay.getBounds() == effects.slotBounds (3),
            "and the cards swap places");
     dragCard (delay, 100.0f);
-    check (param (p, ParamID::effectsOrder) >= 0.5f && delay.getBounds() == effects.slotBounds (2), "a short drag puts it back where it was");
+    check (param (p, ParamID::effectsOrder) >= 0.5f && delay.getBounds() == effects.slotBounds (3), "a short drag puts it back where it was");
     snapshot (render (*editor), "13-effects-reordered");
     setParam (p, ParamID::effectsOrder, 0.0f);
-    check (pumpUntil ([&] { return delay.getPlace() == 1 && delay.getBounds() == effects.slotBounds (1); }),
+    check (pumpUntil ([&] { return delay.getPlace() == 2 && delay.getBounds() == effects.slotBounds (2); }),
            "a host changing the order moves the cards too");
 
     // Scaled up: the same face at 2x.
     editor->setSize (2080, 1832);
-    check (delay.getWidth() == 872 && approx ((float) delay.getDial (2).getWidth(), 104.0f, 1.0f), "at 2x the cards and dials double");
+    check (delay.getWidth() == 584 && approx ((float) delay.getDial (2).getWidth(), 104.0f, 1.0f), "at 2x the cards and dials double");
     check (hasDetail (render (*editor)), "renders at 2x");
     editor->setSize (1040, 916);
 
@@ -1518,6 +1547,89 @@ void testPresets()
     snapshot (render (*editor), "10-preset-loaded");
 }
 
+// ---- The computer's keys (standalone) ---------------------------------------------
+void testTypedKeys()
+{
+    std::printf ("Computer keys:\n");
+
+    {
+        Synth2AudioProcessor plugin;
+        std::unique_ptr<juce::AudioProcessorEditor> base (plugin.createEditor());
+        auto* editor = dynamic_cast<Synth2AudioProcessorEditor*> (base.get());
+        check (editor != nullptr && ! editor->playsTypedKeys() && ! editor->getWantsKeyboardFocus()
+                   && ! editor->keyPressed (juce::KeyPress ('a', {}, 'a')),
+               "in a host the computer's keys are left to the host");
+    }
+
+    juce::AudioProcessor::setTypeOfNextNewPlugin (juce::AudioProcessor::wrapperType_Standalone);
+    Synth2AudioProcessor p;
+    juce::AudioProcessor::setTypeOfNextNewPlugin (juce::AudioProcessor::wrapperType_Undefined);
+    p.prepareToPlay (48000.0, 512);
+    fillBench (p);
+    std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
+    auto* editor = dynamic_cast<Synth2AudioProcessorEditor*> (base.get());
+    if (editor == nullptr)
+        return;
+    auto& keyboard = editor->getKeyboard();
+    check (editor->playsTypedKeys() && editor->getWantsKeyboardFocus(), "in the standalone app the editor takes the keys");
+
+    std::set<char> down;
+    const auto press = [&] (char c)
+    {
+        down.insert (c);
+        keyboard.typedKeysChanged ([&down] (char key) { return down.count (key) > 0; });
+        return editor->keyPressed (juce::KeyPress (c, {}, (juce::juce_wchar) c));
+    };
+    const auto letGo = [&] (char c)
+    {
+        down.erase (c);
+        return keyboard.typedKeysChanged ([&down] (char key) { return down.count (key) > 0; });
+    };
+
+    check (press ('a') && p.getKeyboardState().isNoteOn (1, 60), "A plays middle C, and goes no further");
+    check (playAndMeasure (p, {}, 8) > 0.05f, "and it sounds");
+    press ('w');
+    press (';');
+    check (p.getKeyboardState().isNoteOn (1, 61) && p.getKeyboardState().isNoteOn (1, 76), "W the C sharp, ; the E above");
+    letGo ('w');
+    letGo (';');
+    check (! p.getKeyboardState().isNoteOn (1, 61) && ! p.getKeyboardState().isNoteOn (1, 76), "letting go stops them");
+
+    check (editor->keyPressed (juce::KeyPress ('z', {}, 'z')) && keyboard.getTypingC() == 48, "Z shifts down an octave");
+    check (p.getKeyboardState().isNoteOn (1, 60), "leaving the note held as it was");
+    letGo ('a');
+    check (! p.getKeyboardState().isNoteOn (1, 60) && ! p.getKeyboardState().isNoteOn (1, 48), "letting A go after the shift stops the note it played");
+    press ('a');
+    check (p.getKeyboardState().isNoteOn (1, 48), "and now A plays C3");
+    letGo ('a');
+    for (int i = 0; i < 6; ++i)
+        editor->keyPressed (juce::KeyPress ('x', {}, 'x'));
+    check (keyboard.getTypingC() == NeonKeyboard::highestTypingC, "X shifts up, as far as C7");
+    for (int i = 0; i < 9; ++i)
+        editor->keyPressed (juce::KeyPress ('z', {}, 'z'));
+    check (keyboard.getTypingC() == NeonKeyboard::lowestTypingC, "and Z down, as far as C1");
+    editor->keyPressed (juce::KeyPress ('x', {}, 'x'));
+    editor->keyPressed (juce::KeyPress ('x', {}, 'x'));
+    editor->keyPressed (juce::KeyPress ('x', {}, 'x'));
+
+    const auto modifiers = juce::ModifierKeys::currentModifiers;
+    juce::ModifierKeys::currentModifiers = juce::ModifierKeys (juce::ModifierKeys::commandModifier);
+    check (! editor->keyPressed (juce::KeyPress ('s', juce::ModifierKeys::commandModifier, 's')), "a shortcut (Cmd+S) passes on");
+    press ('s');
+    check (! p.getKeyboardState().isNoteOn (1, 62), "and plays nothing");
+    juce::ModifierKeys::currentModifiers = modifiers;
+    letGo ('s');
+    check (! editor->keyPressed (juce::KeyPress ('q', {}, 'q')), "a key that plays nothing passes on");
+
+    press ('d');
+    check (keyboard.holdsTypedNotes(), "a held key is a held note");
+    down.clear();
+    keyboard.typedKeysChanged ([] (char) { return false; });
+    check (! keyboard.holdsTypedNotes() && ! p.getKeyboardState().isNoteOn (1, 64),
+           "and keys found up later (let go in another window) are let go");
+    releaseAll (p);
+}
+
 } // namespace
 
 int main()
@@ -1535,6 +1647,7 @@ int main()
     testBypass();
     testViews();
     testEffectsTab();
+    testTypedKeys();
 
     std::printf ("\n%s\n", failures == 0 ? "ALL TESTS PASSED" : "SOME TESTS FAILED");
     return failures == 0 ? 0 : 1;

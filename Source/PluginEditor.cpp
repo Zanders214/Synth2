@@ -48,6 +48,8 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
     addAndMakeVisible (bench);
     addChildComponent (effects);
     addAndMakeVisible (keyboard);
+    setWantsKeyboardFocus (playsTypedKeys());
+    keyboard.setShowsTypingKeys (playsTypedKeys());
 
     BenchStyle::setUpDial (outputDial, BenchStyle::dialColour (1.0f), looks, p.getState(), ParamID::output);
     outputDial.onValueChange = [this] { repaint (layout.outputColumn); };
@@ -294,6 +296,30 @@ void Synth2AudioProcessorEditor::timerCallback()
     }
 
     processorRef.showHostNotesOnKeyboard();
+
+    if (playsTypedKeys())
+    {
+        // Keys let go while another window had them never reach us: ask
+        // which are still down. And with nothing in the window focused (it
+        // just opened, or a tray just closed), take the keys.
+        if (keyboard.holdsTypedNotes())
+            keyboard.typedKeysChanged();
+        if (const auto* peer = getPeer(); peer != nullptr && peer->isFocused() && isShowing()
+                                              && juce::Component::getCurrentlyFocusedComponent() == nullptr)
+            grabKeyboardFocus();
+    }
+}
+
+// ---- The computer's keys -------------------------------------------------------------
+
+bool Synth2AudioProcessorEditor::keyPressed (const juce::KeyPress& key)
+{
+    return playsTypedKeys() && keyboard.typedKeyPressed (key);
+}
+
+bool Synth2AudioProcessorEditor::keyStateChanged (bool)
+{
+    return playsTypedKeys() && keyboard.typedKeysChanged();
 }
 
 // ---- Tabs ----------------------------------------------------------------------------

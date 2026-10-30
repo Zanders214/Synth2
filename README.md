@@ -6,10 +6,10 @@ on it the modules you want, where you want them. Add up to four oscillators,
 each with one of the four basic wave shapes and its own stack of up to 16
 detuned, spread copies on every note, give each its own envelope, and play
 chords: the classic wide, detuned "supersaw" pad in a few turns. Then send the
-lot through a delay and a reverb on the EFFECTS tab.
+lot through a drive, a delay and a reverb on the EFFECTS tab.
 
 ```
-note -> OSC n (VOICES x shape, DETUNE + WIDTH) -> ENV n (DELAY ATTACK HOLD DECAY SUSTAIN RELEASE) -> + -> DELAY -> REVERB -> OUTPUT
+note -> OSC n (VOICES x shape, DETUNE + WIDTH) -> ENV n (DELAY ATTACK HOLD DECAY SUSTAIN RELEASE) -> + -> DRIVE -> DELAY -> REVERB -> OUTPUT
 ```
 
 ## The workbench
@@ -45,11 +45,12 @@ showing.
 
 The **BENCH | EFFECTS** tabs in the header swap the bench for the effects. Every note
 goes through them together, after the oscillators are mixed and before OUTPUT, as a
-chain read left to right: by default the delay, then the reverb. Drag a card by its
-header past the middle to swap the order (a reverb into a delay smears each repeat;
-a delay into a reverb sends the repeats into the room).
+chain read left to right: the drive first, then by default the delay, then the
+reverb. Drag the DELAY or REVERB card by its header past the other to swap them (a
+reverb into a delay smears each repeat; a delay into a reverb sends the repeats into
+the room). The drive always comes first, so the echoes and the room stay clean.
 
-Each effect has the same power switch at the left of its header (both start off, so
+Each effect has the same power switch at the left of its header (all three start off, so
 older sets sound as they did) and a **MIX**: up to the middle the dry sound stays at full level and the effect
 is added underneath; from there the dry sound fades out until only the effect is left.
 Switching an effect on or off fades it over 20 ms; once it is off it costs nothing,
@@ -57,6 +58,9 @@ and switching it back on starts clean.
 
 | Control       | What it does                                                        |
 |---------------|---------------------------------------------------------------------|
+| **Drive**     | How hard the sound is pushed into the curve, +0 to +36 dB. The level is made up afterwards, so turning it up adds grit, not volume. |
+| **Shape**     | **WARM** rounds the peaks off smoothly (odd harmonics, like a driven op-amp); **TUBE** leans to one side, adding even harmonics too, like a valve; **HARD** clips them flat for a buzzier edge. |
+| **Tone**      | How bright the driven sound stays: a lowpass after the curve, from 1 kHz up to 18 kHz. |
 | **Time**      | How long the delay waits before each repeat, 10 ms to 2 s. With **SYNC** on it picks a note length at your DAW's tempo instead, from 1/32 to a whole note, dotted (D) or triplet (T). Turning it while repeats ring bends their pitch, like tape. |
 | **Feedback**  | How loud each repeat comes back against the one before, 0 to 95%.    |
 | **Tone**      | How bright the repeats stay: each one passes a lowpass from 1 kHz (low) up to 18 kHz (high), so they darken as they fade. |
@@ -65,6 +69,12 @@ and switching it back on starts clean.
 | **Pre-Delay** | How long the room waits before it starts, 0 to 250 ms, so each note's attack stays clear of it. |
 | **Damping**   | How quickly the room's highs die away.                               |
 | **Width**     | How wide the room spreads: 0% is the same on both sides.             |
+
+The DRIVE card's well draws the curve itself: the dashed diagonal is the clean sound,
+the glowing line what comes out at the current DRIVE, SHAPE and MIX. The curve is
+applied with first-order antiderivative anti-aliasing, so even HARD on high notes
+stays free of the whistling, out-of-tune aliasing a plain clipper adds, and no DC
+offset is left behind by TUBE's lean.
 
 Like tape, each repeat of the delay also loses its deepest lows (so they don't pile up
 into mud), rounds off gently when driven hard, and wavers very slightly in pitch, so
@@ -236,8 +246,21 @@ fades the copies in and out rather than switching them, so it doesn't click.
 - The **sustain pedal** (CC 64) holds released notes until it lifts. All Sound Off
   (CC 120) silences everything at once; All Notes Off (CC 123) releases everything.
 - MIDI is played sample-accurately: a note starts on the exact sample the host sends it.
-- The keyboard along the bottom (C3 to C6) plays the synth with the mouse, which is
-  handy in the standalone app, and lights up the keys your DAW is playing.
+- The keyboard along the bottom (C3 to C6) plays the synth with the mouse, and lights
+  up the keys your DAW is playing.
+
+### In the standalone app
+
+The standalone app (ZandersSynth2.app) plays on its own, with no DAW:
+
+- **A MIDI keyboard** plugged in plays it straight away: the app listens to every MIDI
+  input it finds, including ones plugged in while it runs. Options > Audio/MIDI
+  Settings picks the sound output.
+- **The computer's keys** play it too, laid out like a piano: the middle row from
+  **A** to **;** plays the white keys from C, the row above (**W E T Y U O P**) the
+  black keys, and **Z** / **X** shift down and up an octave (C1 to C7). A small "A" on
+  the keyboard marks the key A plays (middle C to start with). Shortcuts with Cmd or
+  Ctrl play nothing.
 
 The saw and square are band-limited (PolyBLEP), so high notes don't fill up with
 aliasing; the sine and triangle are played as they are.
@@ -282,7 +305,7 @@ Source/
   ParamIDs.h                 the parameter IDs
   Presets.h                  the factory presets, and loading one onto the bench
   Synth2Engine.h             host-agnostic DSP core: 16 voices, up to four oscillators, MIDI, smoothing, effects, output
-  Effects.h                  the delay and the reverb after the mix, in either order
+  Effects.h                  the drive, then the delay and the reverb (in either order), after the mix
   Room.h                     the reverb's room: pre-delay, diffusion and an eight-line feedback delay network
   EffectSettings.h           the effects' settings and sums (note lengths, tails, MIX), shared with the displays
   SynthVoice.h               one note: each oscillator's unison copies, under that oscillator's envelope
@@ -292,12 +315,13 @@ Source/
   Bench.h                    the workbench model: modules, where they sit, cables, which envelope shapes which oscillator, older sessions
   BenchView.h                the bench itself: the dotted area the modules sit and are dragged on
   BenchModules.h             the oscillator and envelope modules, and the add / settings trays
-  EffectsView.h              the EFFECTS tab: the delay and reverb cards, their wells and switches
+  EffectsView.h              the EFFECTS tab: the drive, delay and reverb cards, their wells and switches
   PluginEditor.{h,cpp}       the Neon Plugins editor: header, tabs and gear, bench or effects, cables, keyboard, OUTPUT
   Synth2LookAndFeel.{h,cpp}  the dials (design-system Dial: arc + glowing core)
   WavePicker.h               an oscillator well's picker (pill, arrows, wheel) and its tray of shapes
   VoiceDisplays.h            the OSC and AMP wells
-  NeonKeyboard.h             the on-screen keyboard
+  NeonKeyboard.h             the on-screen keyboard, and playing it from the computer's keys
+  StandaloneApp.cpp          the standalone app: JUCE's, but opening every MIDI keyboard plugged in
   Synth2Theme.h              shared palette, fonts, colour + value formatting
   Synth2VisualModel.h        pure wave / unison / envelope / effects -> display math (uses the engine's own), the morph and its ease
   RtSafety.h                 the RealtimeSanitizer annotation

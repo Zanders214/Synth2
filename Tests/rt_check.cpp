@@ -116,6 +116,11 @@ int main()
         // The effects switch on and off, swap order and change time mid-note.
         if (b % 24 == 12)
         {
+            set (ParamID::driveOn,       (float) ((b / 24 + 2) % 3 != 0));
+            set (ParamID::driveAmount,   0.25f * (float) ((b / 24) % 5));
+            set (ParamID::driveShape,    (float) ((b / 24) % 3));
+            set (ParamID::driveTone,     0.2f * (float) ((b / 24) % 6));
+            set (ParamID::driveMix,      0.5f + 0.25f * (float) ((b / 24) % 3));
             set (ParamID::delayOn,       (float) ((b / 24) % 3 != 0));
             set (ParamID::reverbOn,      (float) ((b / 24 + 1) % 3 != 0));
             set (ParamID::delaySync,     (float) ((b / 24) % 2));
