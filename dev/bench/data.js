@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793319645536,
+  "lastUpdate": 1793321892582,
   "repoUrl": "https://github.com/Zanders214/Synth2",
   "entries": {
     "ZandersSynth2 DSP": [
@@ -785,6 +785,80 @@ window.BENCHMARK_DATA = {
           {
             "name": "DSP load 16x16 4-osc + effects @48k/512",
             "value": 15.321,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "152227414+Zanders214@users.noreply.github.com",
+            "name": "Dennis Zanders",
+            "username": "Zanders214"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "13c7b95f85d1f563ce672625f2fae70d4e184083",
+          "message": "Merge pull request #15 from Zanders214/claude/bypass\n\nPower switches: bypass any oscillator, envelope or effect",
+          "timestamp": "2026-10-30T01:56:34+01:00",
+          "tree_id": "b8006a59b0635e770b39d40be00e1a2e4ab69fa4",
+          "url": "https://github.com/Zanders214/Synth2/commit/13c7b95f85d1f563ce672625f2fae70d4e184083"
+        },
+        "date": 1793321891881,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "processBlock 8x7",
+            "value": 64565.913,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 8x7 @48k/512",
+            "value": 0.605,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16",
+            "value": 263522.944,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 @48k/512",
+            "value": 2.471,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 2-osc",
+            "value": 525464.771,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 2-osc @48k/512",
+            "value": 4.926,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 4-osc",
+            "value": 1041687.977,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 4-osc @48k/512",
+            "value": 9.766,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 4-osc + effects",
+            "value": 1123236.981,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 4-osc + effects @48k/512",
+            "value": 10.53,
             "unit": "%"
           }
         ]
