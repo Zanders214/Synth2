@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793373322122,
+  "lastUpdate": 1793376563583,
   "repoUrl": "https://github.com/Zanders214/Synth2",
   "entries": {
     "ZandersSynth2 DSP": [
@@ -1225,6 +1225,80 @@ window.BENCHMARK_DATA = {
           {
             "name": "DSP load 16x16 4-osc + effects @48k/512",
             "value": 16.947,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "152227414+Zanders214@users.noreply.github.com",
+            "name": "Dennis Zanders",
+            "username": "Zanders214"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bece65f8af6ee8448f47f9e05f47fa4a952b5aea",
+          "message": "Merge pull request #19 from Zanders214/claude/sonar-fixes\n\nClear SonarCloud's open issues: the float-counter bugs and 95 code smells",
+          "timestamp": "2026-10-30T17:06:43+01:00",
+          "tree_id": "e7fa40e9a39a42df0b981e7d5596b51ccb4b2e9a",
+          "url": "https://github.com/Zanders214/Synth2/commit/bece65f8af6ee8448f47f9e05f47fa4a952b5aea"
+        },
+        "date": 1793376562775,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "processBlock 8x7",
+            "value": 102462.615,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 8x7 @48k/512",
+            "value": 0.961,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16",
+            "value": 392149.059,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 @48k/512",
+            "value": 3.676,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 2-osc",
+            "value": 806128.917,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 2-osc @48k/512",
+            "value": 7.557,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 4-osc",
+            "value": 1573453.917,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 4-osc @48k/512",
+            "value": 14.751,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 4-osc + effects",
+            "value": 1751399.628,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 4-osc + effects @48k/512",
+            "value": 16.419,
             "unit": "%"
           }
         ]
