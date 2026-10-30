@@ -885,9 +885,12 @@ void testEditor()
     // and each envelope shapes the first oscillator before it without one.
     auto& settings = editor->getSettingsTray();
     editor->mouseDown (mouseAt (*editor, editor->gearBounds().getCentre()));
-    check (settings.isOpen() && settings.getTitle() == "SIGNAL FLOW" && settings.getNumChoices() == 3
+    check (settings.isOpen() && settings.getTitle() == "SIGNAL FLOW" && settings.getNumChoices() == 8
                && settings.getChoice (0).ticked && ! settings.getChoice (1).ticked,
            "the gear opens the signal-flow settings, Fixed order ticked");
+    check (settings.getChoice (3).heading == "ENVELOPES" && settings.getChoice (5).name == "Both" && settings.getChoice (5).ticked
+               && settings.getChoice (6).heading == "OSCILLATORS" && settings.getChoice (6).name == "Full" && settings.getChoice (6).ticked,
+           "then how envelopes and oscillators show, both and full ticked");
     check (editor->getLocalBounds().toFloat().contains (settings.trayBounds()) && settings.trayBounds().getY() > editor->gearBounds().getBottom(),
            "under the gear");
     check (pumpUntil ([&settings] { return settings.getAlpha() >= 1.0f; }), "fading in");
@@ -1082,6 +1085,129 @@ void testBypass()
     check (env1.getDial (0).getTooltip().contains ("no envelope"), "saying OSC 1 plays as if it had no envelope");
     env1.getPower().triggerClick();
     check (pumpUntil ([&] { return param (p, ParamID::env1Active) >= 0.5f; }) && ! env1.isDimmed(), "and back on");
+}
+
+// Counts the change gestures a host would see.
+struct GestureCount final : juce::AudioProcessorListener
+{
+    void audioProcessorParameterChanged (juce::AudioProcessor*, int, float) override {}
+    void audioProcessorChanged (juce::AudioProcessor*, const ChangeDetails&) override {}
+    void audioProcessorParameterChangeGestureBegin (juce::AudioProcessor*, int) override { ++begun; }
+    void audioProcessorParameterChangeGestureEnd (juce::AudioProcessor*, int) override   { ++ended; }
+    int begun = 0;
+    int ended = 0;
+};
+
+// Drags on `well` from `from` to `to`, in steps, as a mouse would.
+void dragOn (AmpDisplay& well, juce::Point<float> from, juce::Point<float> to)
+{
+    well.mouseDown (mouseAt (well, from));
+    well.mouseDrag (mouseAt (well, from + (to - from) * 0.5f, from));
+    well.mouseDrag (mouseAt (well, to, from));
+    well.mouseUp (mouseAt (well, to, from));
+}
+
+void testViews()
+{
+    std::printf ("Envelope graph and views:\n");
+
+    Synth2AudioProcessor p;
+    p.prepareToPlay (48000.0, 512);
+    fillBench (p);
+    std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
+    auto* editor = dynamic_cast<Synth2AudioProcessorEditor*> (base.get());
+    if (editor == nullptr)
+        return;
+    auto& bench = editor->getBench();
+    auto& osc1  = bench.getOscillator (0);
+    auto& env1  = bench.getEnvelope (0);
+    auto& well  = env1.getDisplay();
+    check (pumpUntil ([&] { return osc1.getAlpha() >= 1.0f && env1.getAlpha() >= 1.0f; }), "OSC 1 and ENV 1 are on the bench");
+
+    // Dragging the graph's corners.
+    using Handle = AmpDisplay::Handle;
+    auto* attack  = p.getState().getParameter (ParamID::attack);
+    auto* hold    = p.getState().getParameter (ParamID::env1Hold);
+    auto* sustain = p.getState().getParameter (ParamID::env1Sustain);
+    GestureCount gestures;
+    p.addListener (&gestures);
+
+    const auto attackAt = well.handleCentre (Handle::attack);
+    well.mouseMove (mouseAt (well, attackAt.translated (1.0f, 1.0f)));
+    check (well.getHotHandle() == (int) Handle::attack, "hovering ATTACK's corner picks it out");
+    const float attackBefore = attack->getValue();
+    dragOn (well, attackAt, attackAt.translated (24.0f, 0.0f));
+    const float expected = attackBefore + 24.0f / (Synth2VisualModel::handleSpans[1] * well.plotArea().getWidth());
+    check (approx (attack->getValue(), expected, 0.01f), "dragging it right lengthens ATTACK");
+    check (pumpUntil ([&] { return well.handleCentre (Handle::attack).getDistanceFrom (attackAt.translated (24.0f, 0.0f)) < 1.5f; }),
+           "and the corner stays under the pointer");
+    check (gestures.begun == 1 && gestures.ended == 1, "the whole drag is one gesture for the host");
+
+    // A HOLD of 0 puts its corner on ATTACK's: pressing just right of it pulls HOLD out.
+    const auto holdAt = well.handleCentre (Handle::hold);
+    check (holdAt.getDistanceFrom (well.handleCentre (Handle::attack)) < 0.5f, "with no HOLD, its corner sits on ATTACK's");
+    const float attackNow = attack->getValue();
+    well.mouseMove (mouseAt (well, holdAt.translated (4.0f, 0.0f)));
+    check (well.getHotHandle() == (int) Handle::hold, "just right of it, HOLD's corner is picked out");
+    dragOn (well, holdAt.translated (4.0f, 0.0f), holdAt.translated (16.0f, 0.0f));
+    check (hold->getValue() > 0.1f && approx (attack->getValue(), attackNow, 1e-6f), "and dragging there pulls HOLD out, ATTACK stays");
+
+    // DECAY's corner moves SUSTAIN up and down too.
+    check (pumpUntil ([&] { return approx (well.getAmpState().dials.hold, hold->getValue(), 1e-6f); }), "the well catches up");
+    const auto decayAt = well.handleCentre (Handle::decay);
+    dragOn (well, decayAt, decayAt.translated (10.0f, 20.0f));
+    check (sustain->convertFrom0to1 (sustain->getValue()) < 0.9f && p.getState().getParameter (ParamID::env1Decay)->getValue() > 0.4f,
+           "dragging DECAY's corner down and right lowers SUSTAIN and lengthens DECAY");
+    check (well.handleCentre (Handle::decay).getDistanceFrom (decayAt.translated (10.0f, 20.0f)) < 1.5f, "and it follows the pointer");
+
+    well.mouseDoubleClick (mouseAt (well, well.handleCentre (Handle::attack)));
+    check (approx (attack->getValue(), attack->getDefaultValue(), 1e-6f), "double-clicking ATTACK's corner puts it back");
+    p.removeListener (&gestures);
+    snapshot (render (*editor), "15-envelope-graph");
+
+    // The gear menu's views.
+    auto& settings = editor->getSettingsTray();
+    const auto pick = [&] (int choice)
+    {
+        editor->mouseDown (mouseAt (*editor, editor->gearBounds().getCentre()));
+        settings.mouseDown (mouseAt (settings, settings.choiceBounds (choice).getCentre()));
+    };
+    const auto oscAt = osc1.getPosition();
+    const auto envAt = env1.getPosition();
+    Bench::Model model (p.getState());
+
+    pick (3);
+    check (model.view().envelopes == Bench::EnvelopeView::knobs && env1.getHeight() == 240 && ! well.isVisible()
+               && env1.getDial (0).isVisible(),
+           "Knobs: the envelope keeps its dials on a shorter card");
+    pick (4);
+    check (model.view().envelopes == Bench::EnvelopeView::graph && env1.getHeight() == 336 && well.isVisible()
+               && well.getHeight() == 286 && ! env1.getDial (0).isVisible(),
+           "Graph: a big graph fills the card, no dials");
+    pick (7);
+    check (model.view().oscillators == Bench::OscillatorView::compact && osc1.getHeight() == 268
+               && ! osc1.getDisplay().isVisible() && osc1.getPicker().isCompact() && osc1.getPicker().getHeight() == 28,
+           "Compact: the oscillator shows just its shape's pill over its dials");
+    check (osc1.getPosition() == oscAt && env1.getPosition() == envAt, "the cards keep their places");
+    osc1.getPicker().mouseDown (mouseAt (osc1.getPicker(), osc1.getPicker().nextArrow().getCentre()));
+    check (approx (param (p, ParamID::wave), (float) Waveform::square, 1e-6f), "the pill still steps the shape");
+    snapshot (render (*editor), "16-graph-compact");
+
+    // The view is kept with the set, and presets leave it alone.
+    p.loadPreset (1);
+    check (model.view() == Bench::View { Bench::EnvelopeView::graph, Bench::OscillatorView::compact }, "loading a preset keeps the view");
+    juce::MemoryBlock saved;
+    p.getStateInformation (saved);
+    Synth2AudioProcessor restored;
+    restored.setStateInformation (saved.getData(), (int) saved.getSize());
+    check (Bench::Model (restored.getState()).view() == model.view(), "and a saved set opens with it");
+    check (Bench::Model (Synth2AudioProcessor().getState()).view() == Bench::View {}, "a new one opens with both and full");
+
+    pick (5);
+    pick (6);
+    check (env1.getHeight() == 336 && well.getHeight() == 96 && env1.getDial (0).isVisible() && osc1.getDisplay().isVisible()
+               && ! osc1.getPicker().isCompact(),
+           "Both and Full bring the cards back as they were");
 }
 
 // Drags `card` by its header sideways by `dx`.
@@ -1382,6 +1508,7 @@ int main()
     testPresets();
     testEditor();
     testBypass();
+    testViews();
     testEffectsTab();
 
     std::printf ("\n%s\n", failures == 0 ? "ALL TESTS PASSED" : "SOME TESTS FAILED");

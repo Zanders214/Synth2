@@ -113,7 +113,8 @@ you loaded is saved with your set.
 
 ### Signal flow
 
-The gear at the top right picks how sound flows between the modules:
+The gear at the top right picks how sound flows between the modules (and, below,
+how the cards show themselves: see [Views](#views)):
 
 - **Fixed order** (the default): by number, wherever the modules sit: ENV 1 shapes
   OSC 1, ENV 2 OSC 2, and so on. Each envelope shows the oscillator it shapes in its
@@ -191,6 +192,31 @@ Each module has a display right above its dials, drawn in the dials' colours:
   (HOLD; its height is OUTPUT, against a dashed 0 dB line), the fall (DECAY) to the
   SUSTAIN level, held while the key is down, and the fall to silence (RELEASE). Every note
   you play is a dot riding it through the stages, resting on the sustain while held.
+
+  You can also shape the envelope right on the graph: drag a corner sideways to
+  stretch its stage (the delay's end, the top of the rise, the end of the hold, the end
+  of the release), and the corner where the fall meets the sustain sideways for DECAY
+  and up or down for SUSTAIN. The corner stays under the pointer, and the readout names
+  the stage and its value. Hold Shift for fine moves; double-click a corner to put its
+  stage back to its default. With HOLD at 0 its corner sits on ATTACK's: a press on it
+  takes ATTACK, and a press just to its right pulls HOLD out. Each drag is one move for
+  your DAW, so it records and undoes like a turn of the dial.
+
+### Views
+
+Below the signal flow, the gear menu picks how the cards show themselves, for every
+module at once, saved with your set (presets leave it alone):
+
+| Setting         | Choice      | What the card shows                                         |
+|-----------------|-------------|-------------------------------------------------------------|
+| **Envelopes**   | Knobs       | Just the six dials, on a shorter card                       |
+|                 | Graph       | A big AMP graph to drag, filling the card, with no dials     |
+|                 | Both        | The graph over the dials (the default)                      |
+| **Oscillators** | Full        | The live wave over the dials (the default)                  |
+|                 | Compact     | Just a small pill with the shape's icon and name, over the dials; its arrows, the wheel and a click (for the wave menu) still pick the shape |
+
+A shorter card keeps its place: the bench still leaves room for the full-size card,
+so switching views never moves anything.
 
 ### How the voices spread
 

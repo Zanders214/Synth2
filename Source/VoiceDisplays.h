@@ -1,7 +1,9 @@
 #pragma once
 
-#include <juce_gui_basics/juce_gui_basics.h>
+#include <juce_audio_processors/juce_audio_processors.h>
 #include <array>
+#include <optional>
+#include <vector>
 
 #include "Synth2Theme.h"
 #include "Synth2VisualModel.h"
@@ -84,6 +86,13 @@ protected:
         g.drawText (readout, heading, juce::Justification::centredRight, false);
 
         return inner.withTrimmedTop (4.0f * s);
+    }
+
+    /** The area paintWell leaves for the plot, without painting. */
+    juce::Rectangle<float> plotBounds() const noexcept
+    {
+        const float s = uiScale;
+        return getLocalBounds().toFloat().reduced (12.0f * s, 9.0f * s).withTrimmedTop (16.0f * s);
     }
 
 private:
@@ -294,11 +303,117 @@ struct AmpDisplayState
     level over a faint 0 dB line. Each note that sounds is a glowing dot
     riding it through the stages, resting on the sustain while its key (or
     the pedal) is down.
+
+    Given its envelope's parameters (setParameters), the shape can be edited
+    in place: each corner is a handle (see Synth2VisualModel::Handle) to drag
+    sideways for its stage's time, DECAY's corner up and down for SUSTAIN
+    too. Shift drags finely, a double-click puts a corner's stage back to
+    its default, and the readout names the stage and value under the
+    pointer. Each drag is one gesture, so a host records and undoes it like a
+    turn of the dial.
 */
-class AmpDisplay final : public DisplayWell
+class AmpDisplay final : public DisplayWell,
+                         public juce::SettableTooltipClient
 {
 public:
+    using Handle = Synth2VisualModel::Handle;
+
+    /** DELAY, ATTACK, HOLD, DECAY, SUSTAIN and RELEASE, in that order. */
+    using Parameters = std::array<juce::RangedAudioParameter*, 6>;
+
     AmpDisplay() { setInterceptsMouseClicks (false, false); }
+
+    void setParameters (const Parameters& newParameters)
+    {
+        parameters = newParameters;
+        setInterceptsMouseClicks (true, false);
+        setTooltip ("Drag a corner to shape the envelope (Shift for fine moves); double-click one to reset it");
+    }
+
+    /** The plot the envelope is drawn in. */
+    juce::Rectangle<float> plotArea() const noexcept
+    {
+        const float s = getUiScale();
+        return plotBounds().withTrimmedBottom (10.0f * s).reduced (2.0f * s, 4.0f * s);
+    }
+
+    /** Where handle `h` is drawn, in this component. */
+    juce::Point<float> handleCentre (Handle h) const noexcept
+    {
+        const auto p = Synth2VisualModel::handlePosition (shape(), h);
+        return toPlot (p.x, p.y);
+    }
+
+    /** The handle under the pointer, or being dragged (-1 for none). */
+    int getHotHandle() const noexcept { return drag.has_value() ? (int) drag->handle : hot; }
+
+    void mouseMove (const juce::MouseEvent& e) override { setHot (handleAt (e.position)); }
+    void mouseExit (const juce::MouseEvent&) override   { setHot (-1); }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        const int h = handleAt (e.position);
+        setHot (h);
+        if (h < 0)
+            return;
+        drag = Drag { (Handle) h, e.position, amp.dials };
+        for (auto* p : parametersFor (drag->handle))
+            p->beginChangeGesture();
+        repaint();
+    }
+
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (! drag.has_value())
+            return;
+        const auto  plot   = plotArea();
+        const float fine   = e.mods.isShiftDown() ? 0.25f : 1.0f;
+        const float width  = juce::jmax (1.0f, plot.getWidth());
+        const float height = juce::jmax (1.0f, plot.getHeight());
+        const float dx     = fine * (e.position.x - drag->from.x) / width;
+        auto dials = drag->dials;
+        const auto time = [&dx, h = drag->handle] (float& dial) { dial = Synth2VisualModel::dragDial (dial, dx, h); };
+        switch (drag->handle)
+        {
+            case Handle::delay:   time (dials.delay);   break;
+            case Handle::attack:  time (dials.attack);  break;
+            case Handle::hold:    time (dials.hold);    break;
+            case Handle::release: time (dials.release); break;
+            case Handle::decay:
+            {
+                time (dials.decay);
+                const auto start = Synth2VisualModel::envelope (drag->dials, amp.outputDb);
+                const float dy   = fine * (drag->from.y - e.position.y) / height;
+                dials.sustain = Synth2VisualModel::sustainAt (start, start.sustain + dy);
+                break;
+            }
+        }
+        apply (dials);
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (! drag.has_value())
+            return;
+        for (auto* p : parametersFor (drag->handle))
+            p->endChangeGesture();
+        drag.reset();
+        setHot (handleAt (e.position));
+        repaint();
+    }
+
+    void mouseDoubleClick (const juce::MouseEvent& e) override
+    {
+        const int h = handleAt (e.position);
+        if (h < 0)
+            return;
+        for (auto* p : parametersFor ((Handle) h))
+        {
+            p->beginChangeGesture();
+            p->setValueNotifyingHost (p->getDefaultValue());
+            p->endChangeGesture();
+        }
+    }
 
     /** The dials' colours (DELAY, ATTACK, HOLD, DECAY, SUSTAIN, RELEASE), so
         each stage of the envelope matches its dial. */
@@ -310,9 +425,14 @@ public:
 
     void setAmpState (const AmpDisplayState& newState)
     {
-        if (newState == amp)
+        // While a corner is dragged its dials are already where they are
+        // going: only the notes and the readouts come from outside.
+        auto next = newState;
+        if (drag.has_value())
+            next.dials = amp.dials;
+        if (next == amp)
             return;
-        amp = newState;
+        amp = next;
         repaint();
     }
 
@@ -321,7 +441,7 @@ public:
     void paint (juce::Graphics& g) override
     {
         const float s = getUiScale();
-        auto plot = paintWell (g, "AMP", Synth2::Format::decibels (amp.outputDb));
+        auto plot = paintWell (g, "AMP", readout());
 
         // The times along the bottom: attack on the left, release on the right.
         auto times = plot.removeFromBottom (10.0f * s);
@@ -332,11 +452,8 @@ public:
         g.drawText ("R " + Synth2::Format::seconds (amp.releaseSeconds), times, juce::Justification::centredRight, false);
 
         plot = plot.reduced (2.0f * s, 4.0f * s);
-        const auto e  = Synth2VisualModel::envelope (amp.dials, amp.outputDb);
-        const auto at = [&plot] (float x, float y)
-        {
-            return juce::Point (plot.getX() + x * plot.getWidth(), plot.getBottom() - y * plot.getHeight());
-        };
+        const auto e  = shape();
+        const auto at = [this] (float x, float y) { return toPlot (x, y); };
 
         // Baseline and the 0 dB line.
         const float line = juce::jmax (1.0f, s);
@@ -400,10 +517,122 @@ public:
             g.setColour (juce::Colours::white);
             g.fillPath (body);
         }
+
+        if (parameters[0] != nullptr)
+            paintHandles (g);
     }
 
 private:
     using Stage = NoteActivity::Stage;
+
+    struct Drag
+    {
+        Handle handle;
+        juce::Point<float> from;
+        Synth2VisualModel::EnvelopeDials dials;   // where they were when the drag began
+    };
+
+    Synth2VisualModel::Envelope shape() const noexcept { return Synth2VisualModel::envelope (amp.dials, amp.outputDb); }
+
+    juce::Point<float> toPlot (float x, float y) const noexcept
+    {
+        const auto plot = plotArea();
+        return { plot.getX() + x * plot.getWidth(), plot.getBottom() - y * plot.getHeight() };
+    }
+
+    int handleAt (juce::Point<float> position) const noexcept
+    {
+        if (parameters[0] == nullptr)
+            return -1;
+        const auto plot = plotArea();
+        const Synth2VisualModel::Dot at { (position.x - plot.getX()) / juce::jmax (1.0f, plot.getWidth()),
+                                          (plot.getBottom() - position.y) / juce::jmax (1.0f, plot.getHeight()) };
+        return Synth2VisualModel::handleAt (shape(), at, plot.getWidth(), plot.getHeight(), 9.0f * getUiScale());
+    }
+
+    void setHot (int h)
+    {
+        if (h == hot)
+            return;
+        hot = h;
+        setMouseCursor (h >= 0 ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::NormalCursor);
+        repaint();
+    }
+
+    // Which of DELAY..RELEASE (0..5) handle `h` moves: its stage's time, and
+    // for DECAY's corner SUSTAIN as well.
+    static std::vector<size_t> indicesFor (Handle h)
+    {
+        switch (h)
+        {
+            case Handle::delay:   return { 0 };
+            case Handle::attack:  return { 1 };
+            case Handle::hold:    return { 2 };
+            case Handle::decay:   return { 3, 4 };
+            case Handle::release: return { 5 };
+        }
+        return {};
+    }
+
+    std::vector<juce::RangedAudioParameter*> parametersFor (Handle h) const
+    {
+        std::vector<juce::RangedAudioParameter*> moved;
+        for (const auto i : indicesFor (h))
+            moved.push_back (parameters[i]);
+        return moved;
+    }
+
+    // Sets the dragged corner's parameters to `dials` (the times as dial
+    // positions, SUSTAIN as its level) and shows them at once.
+    void apply (const Synth2VisualModel::EnvelopeDials& dials)
+    {
+        const std::array<float, 6> positions { dials.delay, dials.attack, dials.hold, dials.decay,
+                                               parameters[4]->convertTo0to1 (dials.sustain), dials.release };
+        for (const auto i : indicesFor (drag->handle))
+            if (! juce::exactlyEqual (parameters[i]->getValue(), positions[i]))
+                parameters[i]->setValueNotifyingHost (positions[i]);
+        amp.dials = dials;
+        repaint();
+    }
+
+    // The readout: OUTPUT's level, or the stage (and value) under the pointer.
+    juce::String readout() const
+    {
+        static constexpr std::array<const char*, Synth2VisualModel::numHandles> names { "DELAY", "ATTACK", "HOLD", "DECAY", "RELEASE" };
+        const int h = getHotHandle();
+        if (h < 0 || parameters[0] == nullptr)
+            return Synth2::Format::decibels (amp.outputDb);
+        juce::String text (names[(size_t) h]);
+        for (auto* p : parametersFor ((Handle) h))
+            text << "  " << p->getCurrentValueAsText();
+        return text;
+    }
+
+    // A ring on each corner that can be dragged, filled on the one under
+    // the pointer.
+    void paintHandles (juce::Graphics& g) const
+    {
+        static constexpr std::array<size_t, Synth2VisualModel::numHandles> colourOf { 0, 1, 2, 4, 5 };
+        const float s = getUiScale();
+        for (int h = 0; h < Synth2VisualModel::numHandles; ++h)
+        {
+            const auto  colour = colours[colourOf[(size_t) h]];
+            const bool  isHot  = h == getHotHandle();
+            const float size   = (isHot ? 11.0f : 8.0f) * s;
+            const auto  ring   = juce::Rectangle<float> (size, size).withCentre (handleCentre ((Handle) h));
+            g.setColour (Synth2::Palette::well);
+            g.fillEllipse (ring);
+            if (isHot)
+            {
+                g.setColour (colour.withAlpha (0.35f));
+                g.fillEllipse (ring.expanded (3.0f * s));
+                g.setColour (colour);
+                g.fillEllipse (ring);
+            }
+            g.setColour (colour);
+            g.drawEllipse (ring, juce::jmax (1.0f, 1.4f * s));
+        }
+    }
 
     /** The colour of the stage of the envelope a note in `stage` is on. */
     juce::Colour colourFor (Stage stage) const noexcept
@@ -411,7 +640,10 @@ private:
         return stage == Stage::idle ? colours[4] : colours[(size_t) stage - 1];
     }
 
-    AmpDisplayState amp;
+    AmpDisplayState     amp;
+    Parameters          parameters {};
+    std::optional<Drag> drag;
+    int                 hot = -1;
     std::array<juce::Colour, 6> colours { Synth2::Palette::pink, Synth2::Palette::pink, Synth2::Palette::amber,
                                           Synth2::Palette::pink, Synth2::Palette::amber, Synth2::Palette::pink };
 };

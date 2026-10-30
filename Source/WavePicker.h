@@ -50,6 +50,9 @@ namespace WaveGlyph
     well opens the wave menu (onOpenMenu). Hovering lights the well's border
     in the accent, the design system's mark of a well you can act on.
 
+    Compact (the oscillators' compact view), there is no well: the pill
+    fills the picker, with the shape's icon and its full name.
+
     It is tied to the parameter directly (ParameterAttachment), so host
     automation and undo see each pick as one gesture.
 */
@@ -71,6 +74,8 @@ public:
 
     void setUiScale (float newScale) { uiScale = newScale; repaint(); }
     void setMenuOpen (bool open)     { menuOpen = open; repaint(); }
+    void setCompact (bool shouldBeCompact) { if (compact != shouldBeCompact) { compact = shouldBeCompact; repaint(); } }
+    bool isCompact() const noexcept  { return compact; }
 
     int getSelected() const noexcept { return selected; }
 
@@ -83,6 +88,8 @@ public:
     juce::Rectangle<float> pillBounds() const noexcept
     {
         const float s = uiScale;
+        if (compact)
+            return getLocalBounds().toFloat().reduced (0.0f, 2.0f * s);
         return { (float) getWidth() - (8.0f + 116.0f) * s, 6.0f * s, 116.0f * s, 20.0f * s };
     }
 
@@ -128,7 +135,7 @@ public:
 
         // The well's border lights up in the accent: faint on hover, firm while
         // its menu is open.
-        if (over || menuOpen)
+        if ((over || menuOpen) && ! compact)
         {
             g.setColour (Palette::accent.withAlpha (menuOpen ? 0.60f : 0.30f));
             g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), 12.0f * s, juce::jmax (1.0f, s));
@@ -157,15 +164,27 @@ public:
         arrow (previousArrow(), false);
         arrow (nextArrow(), true);
 
-        const auto middle = pill.reduced (24.0f * s, 0.0f);
-        const auto glyph  = middle.withWidth (16.0f * s).withSizeKeepingCentre (16.0f * s, 8.0f * s);
+        if (compact && menuOpen)
+        {
+            g.setColour (Palette::accent.withAlpha (0.60f));
+            g.drawRoundedRectangle (pill.reduced (0.5f), pill.getHeight() * 0.5f, juce::jmax (1.0f, s));
+        }
+
+        // The shape's icon and name, centred in the compact pill.
+        const auto  name      = juce::String ((compact ? WaveGlyph::longNames : WaveGlyph::shortNames)[(size_t) selected]);
+        const auto  font      = Fonts::sans ((compact ? 11.0f : 10.0f) * s, true, 0.14f);
+        const float glyphSize = (compact ? 20.0f : 16.0f) * s;
+        auto middle = pill.reduced (24.0f * s, 0.0f);
+        if (compact)
+            middle = middle.withSizeKeepingCentre (glyphSize + 8.0f * s + juce::GlyphArrangement::getStringWidth (font, name), middle.getHeight());
+        const auto glyph = middle.withWidth (glyphSize).withSizeKeepingCentre (glyphSize, glyphSize * 0.5f);
         g.setGradientFill (WaveGlyph::spectrum (glyph));
         g.strokePath (WaveGlyph::path ((Waveform) selected, glyph, 1.0f),
                       juce::PathStrokeType (1.5f * s, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
-        g.setFont (Fonts::sans (10.0f * s, true, 0.14f));
+        g.setFont (font);
         g.setColour (Palette::textStrong);
-        g.drawText (WaveGlyph::shortNames[(size_t) selected], middle.withTrimmedLeft (glyph.getWidth() + 6.0f * s),
+        g.drawText (name, middle.withTrimmedLeft (glyph.getWidth() + (compact ? 8.0f : 6.0f) * s),
                     juce::Justification::centredLeft, false);
     }
 
@@ -182,6 +201,7 @@ private:
     float uiScale     = 1.0f;
     float wheelTravel = 0.0f;
     bool  menuOpen    = false;
+    bool  compact     = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WavePicker)
 };

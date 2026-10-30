@@ -68,12 +68,24 @@ public:
         repaint();
     }
 
-    /** Where module `id` sits in this view. */
-    juce::Rectangle<int> boundsFor (const Bench::ModuleId& id) const
+    /** Where module `id` sits in this view, as tall as its card is drawn. */
+    juce::Rectangle<int> boundsFor (const Bench::ModuleId& id)
     {
         const auto bounds = model.boundsOf (id);
         return (bounds * uiScale).getSmallestIntegerContainer().withSize (juce::roundToInt (Bench::moduleWidth * uiScale),
-                                                                           juce::roundToInt (Bench::heightOf (id.kind) * uiScale));
+                                                                           juce::roundToInt (getModule (id).cardHeight() * uiScale));
+    }
+
+    /** Shows every card as `view` says. */
+    void setView (const Bench::View& view)
+    {
+        for (const auto& id : Bench::allModules)
+        {
+            auto& module = getModule (id);
+            module.setView (view);
+            if (! juce::Desktop::getInstance().getAnimator().isAnimating (&module))
+                module.setBounds (boundsFor (id));
+        }
     }
 
     /** Adds a module of `kind` at `at` (design pixels), fading it in. */

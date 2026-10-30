@@ -108,6 +108,7 @@ private:
     void paintCable (juce::Graphics&, juce::Point<float> from, juce::Point<float> to, juce::Colour colour) const;
 
     Synth2AudioProcessor::SignalFlow signalFlow() const;
+    void showView();   // shows the cards as the bench's view says (gear menu, or a restored set)
     void showFlow();
     void openAddTray (juce::Point<float> benchAt, juce::Point<int> editorAt);
     void openSettings();
@@ -160,6 +161,7 @@ private:
         float output = 0.0f;
         int   flow   = -1;
         int   preset = -1;
+        Bench::View view;
     };
     Shown shown;
     Tab   tab     = Tab::bench;
