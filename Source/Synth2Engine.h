@@ -30,7 +30,8 @@
 
     An oscillator with no envelope simply opens and closes over a few
     milliseconds, so it never clicks. One that is on but not routed to the
-    output (see OscillatorSettings::routed) is silent, as if it were off.
+    output (see OscillatorSettings::routed), or switched off with its power
+    switch (OscillatorSettings::active), is silent, as if it were off.
 
     Every note goes through the effects together, the delay and the reverb
     (see Effects.h), before OUTPUT.
@@ -61,9 +62,10 @@ public:
     static constexpr float gateAttackSeconds  = 0.005f;
     static constexpr float gateReleaseSeconds = 0.03f;
 
-    /** One oscillator: whether it is switched on, and routed to the output,
-        its shape, its tuning against the note, its level, its unison stack
-        and which envelope shapes it (-1 for none). */
+    /** One oscillator: whether it is on the bench, and routed to the output,
+        its shape, its tuning against the note, its level, its unison stack,
+        which envelope shapes it (-1 for none) and whether its power switch
+        is on. */
     struct OscillatorSettings
     {
         bool     on          = false;
@@ -76,6 +78,7 @@ public:
         float    detuneCents = 15.0f;
         float    width       = 0.5f;
         int      envelope    = -1;
+        bool     active      = true;
     };
 
     /** One envelope (see Envelope.h): how long a note waits, takes to fade
@@ -399,11 +402,11 @@ private:
         return std::exp2 (((float) semitones + fineCents / 100.0f) / 12.0f);
     }
 
-    /** Where an oscillator's level heads: its LEVEL while it is on and routed
-        to the output, silence otherwise. */
+    /** Where an oscillator's level heads: its LEVEL while it is on, routed
+        to the output and switched on, silence otherwise. */
     static float levelTarget (const OscillatorSettings& oscillator) noexcept
     {
-        return oscillator.on && oscillator.routed ? oscillator.level : 0.0f;
+        return oscillator.on && oscillator.routed && oscillator.active ? oscillator.level : 0.0f;
     }
 
     // The voice that has been releasing longest, or failing that the oldest.

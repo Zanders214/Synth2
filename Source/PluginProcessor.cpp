@@ -104,6 +104,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
     addOscillator (2, 3);
     addOscillator (3, 3);
 
+    // Each oscillator's and envelope's power switch (version 7), on to start
+    // with. Unlike whether a module is on the bench, these can be automated.
+    for (int index = 0; index < Synth2Engine::numOscillators; ++index)
+        layout.add (std::make_unique<AudioParameterBool> (
+            ParameterID { ParamID::oscillators[index].active, 7 }, "Osc " + String (index + 1) + " Active", true));
+    for (int index = 0; index < Synth2Engine::numEnvelopes; ++index)
+        layout.add (std::make_unique<AudioParameterBool> (
+            ParameterID { ParamID::envelopes[index].active, 7 }, "Env " + String (index + 1) + " Active", true));
+
     // The four envelopes: each on the bench or not, its times in seconds,
     // skewed so the short times, where the ear is fussiest, get most of the
     // knob, and its sustain level. (ENV 1's attack and release keep their
@@ -236,7 +245,11 @@ Synth2Engine::Settings Synth2AudioProcessor::currentSettings() const noexcept
         oscillator.voices      = juce::roundToInt (param (ids.voices));
         oscillator.detuneCents = param (ids.detune);
         oscillator.width       = param (ids.width);
-        oscillator.envelope    = envelopeFor[(size_t) flow][k].load (std::memory_order_relaxed);
+        oscillator.active      = param (ids.active) >= 0.5f;
+
+        // A switched-off envelope lets its oscillator through unshaped.
+        const int shapedBy  = envelopeFor[(size_t) flow][k].load (std::memory_order_relaxed);
+        oscillator.envelope = shapedBy >= 0 && param (ParamID::envelopes[shapedBy].active) >= 0.5f ? shapedBy : -1;
     }
     for (size_t e = 0; e < settings.envelopes.size(); ++e)
     {
@@ -410,7 +423,7 @@ double Synth2AudioProcessor::getTailLengthSeconds() const
     const auto settings = currentSettings();
     double tail = Synth2Engine::gateReleaseSeconds;
     for (const auto& oscillator : settings.oscillators)
-        if (oscillator.on && oscillator.envelope >= 0)
+        if (oscillator.on && oscillator.active && oscillator.envelope >= 0)
             tail = juce::jmax (tail, (double) settings.envelopes[(size_t) oscillator.envelope].releaseSeconds);
     return tail + Effects::tailSeconds (settings.effects);
 }

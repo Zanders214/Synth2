@@ -42,6 +42,18 @@ namespace ParamID
     inline constexpr const char* osc4Detune = "osc4Detune";
     inline constexpr const char* osc4Width  = "osc4Width";
 
+    // Each oscillator's and envelope's power switch: switched off, an
+    // oscillator falls silent and an envelope lets its oscillator through
+    // unshaped, both staying on the bench.
+    inline constexpr const char* osc1Active = "osc1Active";
+    inline constexpr const char* osc2Active = "osc2Active";
+    inline constexpr const char* osc3Active = "osc3Active";
+    inline constexpr const char* osc4Active = "osc4Active";
+    inline constexpr const char* env1Active = "env1Active";
+    inline constexpr const char* env2Active = "env2Active";
+    inline constexpr const char* env3Active = "env3Active";
+    inline constexpr const char* env4Active = "env4Active";
+
     /** Oscillator `index`'s (0..3) parameters, by role. */
     struct Oscillator
     {
@@ -53,12 +65,13 @@ namespace ParamID
         const char* voices;
         const char* detune;
         const char* width;
+        const char* active;
     };
     inline constexpr Oscillator oscillators[] {
-        { osc1On, wave,     osc1Pitch, osc1Fine, osc1Level, voices,     detune,     width },
-        { osc2On, osc2Wave, osc2Pitch, osc2Fine, osc2Level, osc2Voices, osc2Detune, osc2Width },
-        { osc3On, osc3Wave, osc3Pitch, osc3Fine, osc3Level, osc3Voices, osc3Detune, osc3Width },
-        { osc4On, osc4Wave, osc4Pitch, osc4Fine, osc4Level, osc4Voices, osc4Detune, osc4Width } };
+        { osc1On, wave,     osc1Pitch, osc1Fine, osc1Level, voices,     detune,     width,      osc1Active },
+        { osc2On, osc2Wave, osc2Pitch, osc2Fine, osc2Level, osc2Voices, osc2Detune, osc2Width,  osc2Active },
+        { osc3On, osc3Wave, osc3Pitch, osc3Fine, osc3Level, osc3Voices, osc3Detune, osc3Width,  osc3Active },
+        { osc4On, osc4Wave, osc4Pitch, osc4Fine, osc4Level, osc4Voices, osc4Detune, osc4Width,  osc4Active } };
 
     // The four envelopes. ENV 1's attack and release are `attack` and
     // `release` above.
@@ -99,12 +112,13 @@ namespace ParamID
         const char* decay;
         const char* sustain;
         const char* release;
+        const char* active;
     };
     inline constexpr Envelope envelopes[] {
-        { env1On, env1Delay, attack,     env1Hold, env1Decay, env1Sustain, release },
-        { env2On, env2Delay, env2Attack, env2Hold, env2Decay, env2Sustain, env2Release },
-        { env3On, env3Delay, env3Attack, env3Hold, env3Decay, env3Sustain, env3Release },
-        { env4On, env4Delay, env4Attack, env4Hold, env4Decay, env4Sustain, env4Release } };
+        { env1On, env1Delay, attack,     env1Hold, env1Decay, env1Sustain, release,     env1Active },
+        { env2On, env2Delay, env2Attack, env2Hold, env2Decay, env2Sustain, env2Release, env2Active },
+        { env3On, env3Delay, env3Attack, env3Hold, env3Decay, env3Sustain, env3Release, env3Active },
+        { env4On, env4Delay, env4Attack, env4Hold, env4Decay, env4Sustain, env4Release, env4Active } };
 
     // How sound flows between the modules on the bench.
     inline constexpr const char* signalFlow = "signalFlow";

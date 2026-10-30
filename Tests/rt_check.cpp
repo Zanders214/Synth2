@@ -98,6 +98,8 @@ int main()
             set (ParamID::osc4Voices, (float) (1 + (b / 24) % 16));
             set (ParamID::env2On,     (float) ((b / 24 + 1) % 2));
             set (ParamID::env4On,     (float) ((b / 72 + 1) % 2));
+            set (ParamID::osc1Active, (float) ((b / 24) % 3 != 1));   // switched off and on mid-note
+            set (ParamID::env1Active, (float) ((b / 24) % 4 != 2));
             set (ParamID::signalFlow, (float) ((b / 24) % 3));
             if ((b / 24) % 2 == 0)
             {

@@ -98,6 +98,56 @@ namespace BenchStyle
 }
 
 /**
+    PowerSwitch — a module's or an effect's power switch, at the left of its
+    header: the power symbol in a ring, lit in its colour while it is on and
+    grey while it is off. Tied to an on/off parameter.
+*/
+class PowerSwitch final : public juce::Button
+{
+public:
+    PowerSwitch (juce::Colour onColour, juce::AudioProcessorValueTreeState& state, const char* paramId)
+        : juce::Button ("Power"), colour (onColour), attachment (state, paramId, *this)
+    {
+        setClickingTogglesState (true);
+        setComponentID (paramId);
+        setTooltip ("Switch " + state.getParameter (paramId)->getName (64).upToLastOccurrenceOf (" ", false, false) + " on or off");
+    }
+
+    void paintButton (juce::Graphics& g, bool highlighted, bool down) override
+    {
+        using namespace Synth2;
+        const float s    = (float) getHeight() / 18.0f;
+        const auto  area = getLocalBounds().toFloat().reduced (1.0f * s);
+        const bool  on   = getToggleState();
+        auto tint = on ? colour : Palette::textFaint;
+        if (highlighted || down)
+            tint = on ? tint.brighter (0.25f) : Palette::textDim;
+
+        if (on)
+        {
+            g.setColour (colour.withAlpha (0.18f));
+            g.fillEllipse (area);
+        }
+        g.setColour (on ? colour.withAlpha (0.6f) : Palette::strongLine.withMultipliedAlpha (2.0f));
+        g.drawEllipse (area, juce::jmax (1.0f, s));
+
+        // The power symbol: a ring open at the top, and a stroke through the gap.
+        const auto  c = area.getCentre();
+        const float r = area.getWidth() * 0.27f;
+        juce::Path symbol;
+        symbol.addCentredArc (c.x, c.y, r, r, 0.0f, juce::degreesToRadians (40.0f), juce::degreesToRadians (320.0f), true);
+        symbol.startNewSubPath (c.x, c.y - r * 1.25f);
+        symbol.lineTo (c.x, c.y - r * 0.15f);
+        g.setColour (tint);
+        g.strokePath (symbol, juce::PathStrokeType (juce::jmax (1.0f, 1.4f * s), juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
+
+private:
+    juce::Colour colour;
+    juce::AudioProcessorValueTreeState::ButtonAttachment attachment;
+};
+
+/**
     ChoiceTray — a small floating list of choices, opened over the editor at
     a point: the bench's "add a module" menu and the signal-flow settings.
 
@@ -271,9 +321,13 @@ private:
 
 /**
     BenchModule — one module on the bench: a card with a header bar (its
-    name, which drags it about, and a cross that takes it off the bench) over
-    its display well and its dials, in rows of three, their names and values
-    beneath.
+    power switch, its name, which drags it about, and a cross that takes it
+    off the bench) over its display well and its dials, in rows of three,
+    their names and values beneath.
+
+    Switched off, a module stays where it is with its settings, greyed out
+    (an oscillator falls silent; an envelope lets its oscillator through
+    unshaped).
 
     When sound follows the cables, the header carries the module's jacks: an
     OUT jack to drag a cable from, and on an envelope an IN jack to patch an
@@ -285,10 +339,14 @@ class BenchModule : public juce::Component
 {
 public:
     BenchModule (Bench::ModuleId moduleId, const juce::String& moduleTitle, Synth2LookAndFeel& looksToUse,
-                 juce::AudioProcessorValueTreeState& stateToUse)
-        : id (moduleId), title (moduleTitle), looks (looksToUse), state (stateToUse)
+                 juce::AudioProcessorValueTreeState& stateToUse, const char* activeParam, const juce::String& offWhy)
+        : id (moduleId), title (moduleTitle), looks (looksToUse), state (stateToUse),
+          power (Synth2::Palette::accent, stateToUse, activeParam)
     {
         setRepaintsOnMouseActivity (true);
+        dim.offWhy = offWhy;
+        addAndMakeVisible (power);
+        power.onClick = [this] { showDim(); };
     }
 
     ~BenchModule() override
@@ -327,21 +385,19 @@ public:
     bool isJackShown (Jack which = Jack::out) const noexcept { return which == Jack::out ? jacks.out : jacks.in; }
     juce::Colour getJackColour() const noexcept { return jacks.colour; }
 
-    /** Greys the module's insides out (not heard, or not shaping anything),
-        saying why in the dials' tooltips. */
+    /** Greys the module's insides out because of how sound flows (not
+        heard, or not shaping anything), saying why in the dials' tooltips.
+        A module switched off is greyed out whatever this says. */
     void setDimmed (bool shouldBeDimmed, const juce::String& why = {})
     {
-        if (dimmed == shouldBeDimmed && dimmedWhy == why)
-            return;
-        dimmed    = shouldBeDimmed;
-        dimmedWhy = why;
-        for (auto* child : getChildren())
-            child->setAlpha (dimmed ? 0.4f : 1.0f);
-        for (auto& dial : dials)
-            dial->slider.setTooltip (dimmed ? why : state.getParameter (dial->paramId)->getName (64));
-        repaint();
+        dim.flow    = shouldBeDimmed;
+        dim.flowWhy = why;
+        showDim();
     }
-    bool isDimmed() const noexcept { return dimmed; }
+    bool isDimmed() const noexcept { return dim.shown; }
+
+    PowerSwitch& getPower() noexcept { return power; }
+    bool isSwitchedOff() const noexcept { return ! power.getToggleState(); }
 
     bool isBeingDragged() const noexcept { return dragging; }
 
@@ -390,6 +446,8 @@ public:
     {
         const float s = uiScale;
         const auto px = [s] (float v) { return juce::roundToInt (v * s); };
+
+        power.setBounds (px (10.0f), px (6.0f), px (18.0f), px (18.0f));
 
         auto area = getLocalBounds().withTrimmedTop (px (30.0f)).reduced (px (12.0f), 0);
         area.removeFromTop (px (8.0f));
@@ -501,6 +559,7 @@ protected:
         addAndMakeVisible (dial->slider);
         dial->attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (state, paramId, dial->slider);
         dials.push_back (std::move (dial));
+        showDim (true);
     }
 
     /** Lays the module's display well (and anything over it) out in `well`. */
@@ -540,6 +599,7 @@ private:
         const bool  over  = isMouseOver (true);
 
         auto header = headerBounds().reduced (12.0f * s, 0.0f);
+        header.removeFromLeft (26.0f * s);   // the power switch
         if (order > 0)
         {
             const auto badge = header.removeFromLeft (18.0f * s).withSizeKeepingCentre (18.0f * s, 18.0f * s);
@@ -551,13 +611,13 @@ private:
             header.removeFromLeft (6.0f * s);
         }
         g.setFont (Fonts::sans (10.0f * s, true, 0.22f));
-        g.setColour (dimmed ? Palette::textFaint : Palette::textMid);
+        g.setColour (dim.shown ? Palette::textFaint : Palette::textMid);
         g.drawText (title, header, juce::Justification::centredLeft, false);
 
         if (tag.isNotEmpty())
         {
             g.setFont (Fonts::sans (9.0f * s, true, 0.14f));
-            g.setColour (dimmed ? Palette::textFaint : Palette::accent);
+            g.setColour (dim.shown ? Palette::textFaint : Palette::accent);
             g.drawText (tag, header.withRight (closeBounds().getX() - 8.0f * s), juce::Justification::centredRight, false);
         }
 
@@ -594,7 +654,7 @@ private:
         for (const auto& dial : dials)
             BenchStyle::paintDialLabel (g, dial->column.toFloat(), dial->slider.getBounds().toFloat().getBottom(), dial->name,
                                         BenchStyle::dialText (dial->paramId, state.getRawParameterValue (dial->paramId)->load()),
-                                        dial->colour, dimmed ? 0.4f : 1.0f, uiScale);
+                                        dial->colour, dim.shown ? 0.4f : 1.0f, uiScale);
     }
 
     Bench::ModuleId id;
@@ -607,14 +667,44 @@ private:
     std::function<void (juce::Point<int>)> movedHandler;
     std::function<void (Jack, const juce::MouseEvent&, int)> jackHandler;
 
+    // Why the module is greyed out: switched off, or left out of the flow.
+    struct Dim
+    {
+        bool         flow  = false;
+        bool         shown = false;
+        juce::String flowWhy;
+        juce::String offWhy;
+        juce::String shownWhy;
+    };
+
+    // Greys the insides out (all but the power switch) when the module is
+    // switched off or out of the flow; being off is the reason given.
+    // `again` reapplies it to children added since.
+    void showDim (bool again = false)
+    {
+        const bool   off = isSwitchedOff();
+        const bool   now = off || dim.flow;
+        const auto&  why = off ? dim.offWhy : dim.flowWhy;
+        if (! again && now == dim.shown && why == dim.shownWhy)
+            return;
+        dim.shown    = now;
+        dim.shownWhy = why;
+        for (auto* child : getChildren())
+            if (child != &power)
+                child->setAlpha (now ? 0.4f : 1.0f);
+        for (auto& dial : dials)
+            dial->slider.setTooltip (now ? why : state.getParameter (dial->paramId)->getName (64));
+        repaint();
+    }
+
+    PowerSwitch         power;
     Jacks               jacks;
     std::optional<Jack> heldJack;   // the jack a press began on
     juce::String        tag;
-    juce::String        dimmedWhy;
+    Dim                 dim;
     juce::Point<int>    dragStart;
     float uiScale  = 1.0f;
     int   order    = 0;
-    bool  dimmed   = false;
     bool  dragging = false;
 };
 
@@ -624,7 +714,8 @@ class OscillatorModule final : public BenchModule
 {
 public:
     OscillatorModule (int slot, Synth2LookAndFeel& looksToUse, juce::AudioProcessorValueTreeState& stateToUse)
-        : BenchModule ({ Bench::Kind::oscillator, slot }, "OSC " + juce::String (slot + 1), looksToUse, stateToUse),
+        : BenchModule ({ Bench::Kind::oscillator, slot }, "OSC " + juce::String (slot + 1), looksToUse, stateToUse,
+                       ParamID::oscillators[slot].active, "Switched off: silent until you switch it back on"),
           picker (*stateToUse.getParameter (ParamID::oscillators[slot].wave))
     {
         display.setCaption ("WAVE");
@@ -675,7 +766,8 @@ class EnvelopeModule final : public BenchModule
 {
 public:
     EnvelopeModule (int slot, Synth2LookAndFeel& looksToUse, juce::AudioProcessorValueTreeState& stateToUse)
-        : BenchModule ({ Bench::Kind::envelope, slot }, "ENV " + juce::String (slot + 1), looksToUse, stateToUse)
+        : BenchModule ({ Bench::Kind::envelope, slot }, "ENV " + juce::String (slot + 1), looksToUse, stateToUse,
+                       ParamID::envelopes[slot].active, "Switched off: its oscillator plays as if it had no envelope")
     {
         addAndMakeVisible (display);
         const auto& ids = ParamID::envelopes[slot];
