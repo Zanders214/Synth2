@@ -21,6 +21,18 @@ namespace
         ChoiceTray::Choice { "Follow layout", "Row by row: each ENV after its OSC" },
         ChoiceTray::Choice { "Patch cables",  "OSC to ENV to OUT, as patched" } };
 
+    // The gear menu's view choices, in Bench::EnvelopeView's and
+    // Bench::OscillatorView's order, after the signal-flow choices.
+    const std::array<ChoiceTray::Choice, 3> envelopeViewChoices {
+        ChoiceTray::Choice { "Knobs", "Just the dials, on a shorter card", true, false, "ENVELOPES" },
+        ChoiceTray::Choice { "Graph", "A big graph to drag, without dials" },
+        ChoiceTray::Choice { "Both",  "The graph to drag, over the dials" } };
+    const std::array<ChoiceTray::Choice, 2> oscillatorViewChoices {
+        ChoiceTray::Choice { "Full",    "The live wave over the dials", true, false, "OSCILLATORS" },
+        ChoiceTray::Choice { "Compact", "Just the shape's icon and name" } };
+    constexpr int firstEnvelopeView   = 3;
+    constexpr int firstOscillatorView = firstEnvelopeView + 3;
+
     // How much of each end of the preset picker steps to the previous / next.
     constexpr float kPresetArrowWidth = 28.0f;
 }
@@ -59,9 +71,10 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
 
         // Each well opens its tray of shapes under it; hovering one previews
         // it in the well, picking one sets that oscillator's shape.
-        picker.onOpenMenu ([this, &menu, &picker, &well]
+        picker.onOpenMenu ([this, &menu, &picker]
         {
-            const auto wellBounds = getLocalArea (&well, well.getLocalBounds());
+            // The picker covers the well (or, compact, is the pill).
+            const auto wellBounds = getLocalArea (&picker, picker.getLocalBounds());
             const auto row = wellBounds.withSizeKeepingCentre (juce::jmax (wellBounds.getWidth(), juce::roundToInt (440.0f * uiScale)),
                                                                wellBounds.getHeight())
                                        .constrainedWithin (getLocalBounds().reduced (juce::roundToInt (kPanelPad * uiScale)));
@@ -87,6 +100,17 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
     });
     settingsTray.onChoose ([this] (int choice)
     {
+        if (choice >= firstEnvelopeView)
+        {
+            auto view = model.view();
+            if (choice >= firstOscillatorView)
+                view.oscillators = (Bench::OscillatorView) (choice - firstOscillatorView);
+            else
+                view.envelopes = (Bench::EnvelopeView) (choice - firstEnvelopeView);
+            model.setView (view);
+            showView();
+            return;
+        }
         auto* flow = processorRef.getState().getParameter (ParamID::signalFlow);
         flow->beginChangeGesture();
         flow->setValueNotifyingHost (flow->convertTo0to1 ((float) choice));
@@ -152,6 +176,15 @@ Synth2AudioProcessor::SignalFlow Synth2AudioProcessorEditor::signalFlow() const
 // The modules' headers follow the signal flow: their place in the order when
 // sound follows the layout, and which oscillator each envelope shapes; with
 // the cables, their jacks instead (see showCables).
+void Synth2AudioProcessorEditor::showView()
+{
+    if (const auto view = model.view(); view != shown.view)
+    {
+        shown.view = view;
+        bench.setView (view);
+    }
+}
+
 void Synth2AudioProcessorEditor::showFlow()
 {
     const auto flow = signalFlow();
@@ -240,6 +273,7 @@ void Synth2AudioProcessorEditor::timerCallback()
     }
     for (int e = 0; e < Bench::numEnvelopes; ++e)
         bench.getEnvelope (e).refresh (ampState (settings, e, shapedBy));
+    showView();
     showFlow();
 
     if (const auto signature = cableSignature(); signature != shown.cables)
@@ -295,8 +329,13 @@ void Synth2AudioProcessorEditor::openAddTray (juce::Point<float> benchAt, juce::
 
 void Synth2AudioProcessorEditor::openSettings()
 {
+    const auto view = model.view();
     std::vector<ChoiceTray::Choice> choices (flowChoices.begin(), flowChoices.end());
+    choices.insert (choices.end(), envelopeViewChoices.begin(), envelopeViewChoices.end());
+    choices.insert (choices.end(), oscillatorViewChoices.begin(), oscillatorViewChoices.end());
     choices[(size_t) signalFlow()].ticked = true;
+    choices[(size_t) (firstEnvelopeView + (int) view.envelopes)].ticked     = true;
+    choices[(size_t) (firstOscillatorView + (int) view.oscillators)].ticked = true;
     settingsTray.setBounds (getLocalBounds());
     const auto gear = layout.gear;
     settingsTray.open ("SIGNAL FLOW", std::move (choices),

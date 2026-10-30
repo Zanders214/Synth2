@@ -157,15 +157,26 @@ struct Synth2VisualModel
     /** How high a level in dB sits on the AMP well's scale (0 = -24 dB, 1 = +6 dB). */
     static float heightForDb (float db) noexcept { return clamp01 ((db - minDb) / (maxDb - minDb)); }
 
+    /** The corners of the AMP well's envelope that can be dragged: each
+        stretches its stage sideways, and DECAY's corner also sets SUSTAIN
+        up and down. */
+    enum class Handle { delay, attack, hold, decay, release };
+    static constexpr int numHandles = 5;
+
+    /** How much of the well's width each handle's stage takes, from its
+        dial at 0 to its dial at 1. */
+    static constexpr std::array<float, numHandles> handleSpans { 0.10f, 0.17f, 0.08f, 0.15f, 0.20f };
+
     static Envelope envelope (const EnvelopeDials& dials, float outputDb) noexcept
     {
+        const auto span = [] (Handle h) { return handleSpans[(size_t) h]; };
         Envelope e;
-        e.delayEnd   = 0.10f * clamp01 (dials.delay);
-        e.attackEnd  = e.delayEnd + 0.03f + 0.17f * clamp01 (dials.attack);
-        e.holdEnd    = e.attackEnd + 0.08f * clamp01 (dials.hold);
-        e.decayEnd   = e.holdEnd + 0.03f + 0.15f * clamp01 (dials.decay);
+        e.delayEnd   = span (Handle::delay) * clamp01 (dials.delay);
+        e.attackEnd  = e.delayEnd + 0.03f + span (Handle::attack) * clamp01 (dials.attack);
+        e.holdEnd    = e.attackEnd + span (Handle::hold) * clamp01 (dials.hold);
+        e.decayEnd   = e.holdEnd + 0.03f + span (Handle::decay) * clamp01 (dials.decay);
         e.sustainEnd = e.decayEnd + 0.14f;
-        e.releaseEnd = e.sustainEnd + 0.03f + 0.20f * clamp01 (dials.release);
+        e.releaseEnd = e.sustainEnd + 0.03f + span (Handle::release) * clamp01 (dials.release);
         e.peak       = heightForDb (outputDb);
         e.sustain    = e.peak * clamp01 (dials.sustain);
         return e;
@@ -199,6 +210,59 @@ struct Synth2VisualModel
         }
         d.x = clamp01 (d.x);
         return d;
+    }
+
+    /** Where handle `h` sits, 0..1 across and up the well. */
+    static Dot handlePosition (const Envelope& e, Handle h) noexcept
+    {
+        switch (h)
+        {
+            case Handle::delay:   return { e.delayEnd, 0.0f };
+            case Handle::attack:  return { e.attackEnd, e.peak };
+            case Handle::hold:    return { e.holdEnd, e.peak };
+            case Handle::decay:   return { e.decayEnd, e.sustain };
+            case Handle::release: return { e.releaseEnd, 0.0f };
+        }
+        return {};
+    }
+
+    /** The handle under a point (0..1 across and up a well `width` by
+        `height` pixels), within `radius` pixels, or -1 for none. Where two
+        handles sit on each other (a HOLD of 0 puts its corner on ATTACK's), a
+        press on them takes the earlier one, and a press a few pixels to
+        their right the later one, so it can be pulled out. */
+    static int handleAt (const Envelope& e, Dot at, float width, float height, float radius) noexcept
+    {
+        int   best     = -1;
+        float bestDist = radius;
+        for (int h = 0; h < numHandles; ++h)
+        {
+            const auto  p    = handlePosition (e, (Handle) h);
+            const float dist = std::hypot ((at.x - p.x) * width, (at.y - p.y) * height);
+            const bool  tied = best >= 0 && std::abs (dist - bestDist) < 1.0f && (at.x - p.x) * width >= 3.0f;
+            if (dist <= radius && (dist < bestDist - 1.0f || tied))
+            {
+                best     = h;
+                bestDist = std::min (dist, bestDist);
+            }
+        }
+        return best;
+    }
+
+    /** A time dial's position after its handle moved `dx` of the well's
+        width: the handle stays under the pointer, as only the stages after
+        it move. */
+    static float dragDial (float startDial, float dx, Handle h) noexcept
+    {
+        return clamp01 (startDial + dx / handleSpans[(size_t) h]);
+    }
+
+    /** The SUSTAIN level for DECAY's handle dragged to height `y` (0..1 up
+        the well). With OUTPUT at the bottom of the scale the top has no
+        height to measure against, so SUSTAIN stays at `current`. */
+    static float sustainAt (const Envelope& e, float y, float current) noexcept
+    {
+        return e.peak > 0.0f ? clamp01 (y / e.peak) : current;
     }
 
     // ---- EFFECTS -----------------------------------------------------------

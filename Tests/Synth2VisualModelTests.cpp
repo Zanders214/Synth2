@@ -298,6 +298,39 @@ void testEnvelope()
     check (approx (resting.x, 0.5f * (e.decayEnd + e.sustainEnd), 1e-6f) && approx (resting.y, e.sustain, 1e-6f),
            "sustaining, it rests on the sustain stretch");
     check (leaving.x > e.sustainEnd && leaving.x < e.releaseEnd && approx (leaving.y, 0.25f * e.peak, 1e-6f), "releasing, it walks down the fall");
+
+    // The corners that can be dragged.
+    using Handle = M::Handle;
+    const auto at = [] (const M::Envelope& env, Handle h) { return M::handlePosition (env, h); };
+    check (approx (at (e, Handle::attack).x, e.attackEnd, 1e-6f) && approx (at (e, Handle::attack).y, e.peak, 1e-6f)
+               && approx (at (e, Handle::decay).y, e.sustain, 1e-6f) && approx (at (e, Handle::release).x, e.releaseEnd, 1e-6f),
+           "each handle sits on its stage's corner");
+
+    constexpr float width = 200.0f, height = 80.0f, radius = 9.0f;
+    const auto near = [&] (const M::Envelope& env, Handle h, float dxPixels)
+    {
+        const auto p = at (env, h);
+        return M::handleAt (env, { p.x + dxPixels / width, p.y }, width, height, radius);
+    };
+    check (near (e, Handle::decay, 2.0f) == (int) Handle::decay && near (e, Handle::release, -3.0f) == (int) Handle::release,
+           "a press near a corner takes its handle");
+    check (M::handleAt (e, { 0.5f, 0.95f }, width, height, radius) == -1, "a press away from them takes none");
+    check (near (shortest, Handle::attack, 0.0f) == (int) Handle::attack && near (shortest, Handle::attack, -2.0f) == (int) Handle::attack,
+           "with no HOLD, a press on the shared corner takes ATTACK");
+    check (near (shortest, Handle::attack, 4.0f) == (int) Handle::hold, "and a press just right of it takes HOLD, to pull it out");
+
+    check (approx (M::dragDial (0.2f, 0.5f * M::handleSpans[1], Handle::attack), 0.7f, 1e-6f)
+               && approx (M::dragDial (0.9f, 0.5f, Handle::release), 1.0f, 1e-6f) && approx (M::dragDial (0.1f, -0.5f, Handle::hold), 0.0f, 1e-6f),
+           "a drag moves a time dial by how much of its stage's width it covers, kept within 0..1");
+    M::EnvelopeDials moved = none;
+    moved.attack = M::dragDial (none.attack, 0.05f, Handle::attack);
+    check (approx (M::envelope (moved, 0.0f).attackEnd - shortest.attackEnd, 0.05f, 1e-6f), "so the corner follows the pointer");
+    check (approx (M::sustainAt (e, 0.5f * e.peak, 1.0f), 0.5f, 1e-6f) && approx (M::sustainAt (e, 2.0f, 0.5f), 1.0f, 1e-6f)
+               && approx (M::sustainAt (e, -1.0f, 0.5f), 0.0f, 1e-6f),
+           "DECAY's corner dragged up and down sets SUSTAIN as a share of the top");
+    const auto flat = M::envelope (all, M::minDb);
+    check (approx (flat.peak, 0.0f, 1e-6f) && approx (M::sustainAt (flat, 0.3f, 0.7f), 0.7f, 1e-6f),
+           "with OUTPUT at the bottom of the scale (no height to measure), SUSTAIN is left where it was");
 }
 } // namespace
 

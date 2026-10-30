@@ -22,7 +22,7 @@
     on it. Where each module sits, and the cables, live in a BENCH child of the
     plugin's state tree, saved and restored with the session:
 
-        BENCH { version: 2 }
+        BENCH { version: 2, envelopeView: "both", oscillatorView: "full" }
           MODULE { id: "osc:0" .. "osc:3" | "env:0" .. "env:3", x, y }
           CABLE  { from: "osc:2", to: "env:1" | "out" }
           CABLE  { from: "env:1", to: "out" }
@@ -33,6 +33,10 @@
 
     Each envelope shapes one oscillator, picked by how sound flows (see
     envelopeAssignment): by number, by the layout, or along the cables.
+
+    How the modules show themselves (see View), from the gear menu, is kept
+    on the BENCH too, so a set opens looking as it was left. Presets leave it
+    alone.
 */
 namespace Bench
 {
@@ -201,6 +205,66 @@ namespace Bench
         return { x, id.kind == Kind::envelope ? oscillatorHeight + gap : 0.0f };
     }
 
+    // ---- How the modules show themselves -----------------------------------------------
+
+    /** What an envelope card shows: its dials, its AMP graph (which can be
+        dragged to edit), or both. */
+    enum class EnvelopeView { knobs, graph, both };
+
+    /** What an oscillator card shows: its WAVE well over its dials, or just
+        a small pill with the shape's icon and name. */
+    enum class OscillatorView { full, compact };
+
+    struct View
+    {
+        EnvelopeView   envelopes   = EnvelopeView::both;
+        OscillatorView oscillators = OscillatorView::full;
+
+        friend bool operator== (const View& a, const View& b) noexcept
+        {
+            return a.envelopes == b.envelopes && a.oscillators == b.oscillators;
+        }
+        friend bool operator!= (const View& a, const View& b) noexcept { return ! (a == b); }
+    };
+
+    inline constexpr std::array<const char*, 3> envelopeViewNames   { "knobs", "graph", "both" };
+    inline constexpr std::array<const char*, 2> oscillatorViewNames { "full", "compact" };
+
+    // Card heights in each view (design pixels): a 30 px header, 8 px under
+    // it, the well (if shown), two rows of dials (if shown) and 12 px at the
+    // bottom. The bench keeps every card's full-size footprint whatever it
+    // shows, so switching views never moves anything.
+    inline constexpr float dialRowsHeight   = 2.0f * (12.0f + 52.0f + 31.0f);
+    inline constexpr float fullWellHeight   = 96.0f;
+    inline constexpr float compactWell      = 28.0f;   // the wave pill
+    inline constexpr float graphOnlyWell    = fullWellHeight + dialRowsHeight;
+
+    /** How tall the well of a card of `kind` is under `view` (0 for none). */
+    inline float wellHeightOf (Kind kind, const View& view) noexcept
+    {
+        if (kind == Kind::oscillator)
+            return view.oscillators == OscillatorView::compact ? compactWell : fullWellHeight;
+        switch (view.envelopes)
+        {
+            case EnvelopeView::knobs: return 0.0f;
+            case EnvelopeView::graph: return graphOnlyWell;
+            case EnvelopeView::both:  break;
+        }
+        return fullWellHeight;
+    }
+
+    /** Whether a card of `kind` shows its dials under `view`. */
+    inline bool showsDials (Kind kind, const View& view) noexcept
+    {
+        return kind == Kind::oscillator || view.envelopes != EnvelopeView::graph;
+    }
+
+    /** How tall a card of `kind` is drawn under `view`. */
+    inline float cardHeightOf (Kind kind, const View& view) noexcept
+    {
+        return 30.0f + 8.0f + wellHeightOf (kind, view) + (showsDials (kind, view) ? dialRowsHeight : 0.0f) + 12.0f;
+    }
+
     // ---- The model ----------------------------------------------------------------
 
     inline const juce::Identifier benchType  { "BENCH" };
@@ -212,6 +276,8 @@ namespace Bench
     inline const juce::Identifier fromProperty    { "from" };
     inline const juce::Identifier toProperty      { "to" };
     inline const juce::Identifier versionProperty { "version" };
+    inline const juce::Identifier envelopeViewProperty   { "envelopeView" };
+    inline const juce::Identifier oscillatorViewProperty { "oscillatorView" };
     inline const juce::String     outputJack      { "out" };
     inline constexpr int          currentVersion = 2;
 
@@ -515,6 +581,32 @@ namespace Bench
                 heard[(size_t) k] = ! to->has_value() || isPatchedToOutput (**to);
             }
             return heard;
+        }
+
+        // ---- How the modules show themselves ---------------------------------------
+
+        /** The view the gear menu picked (both and full when none was saved). */
+        View view() const
+        {
+            const auto tree  = bench();
+            const auto index = [&tree] (const juce::Identifier& property, const auto& names, int fallback)
+            {
+                const auto name = tree.getProperty (property).toString();
+                for (size_t i = 0; i < names.size(); ++i)
+                    if (name == names[i])
+                        return (int) i;
+                return fallback;
+            };
+            return { (EnvelopeView) index (envelopeViewProperty, envelopeViewNames, (int) EnvelopeView::both),
+                     (OscillatorView) index (oscillatorViewProperty, oscillatorViewNames, (int) OscillatorView::full) };
+        }
+
+        void setView (const View& newView)
+        {
+            ensureBench();
+            auto tree = bench();
+            tree.setProperty (envelopeViewProperty, envelopeViewNames[(size_t) newView.envelopes], nullptr);
+            tree.setProperty (oscillatorViewProperty, oscillatorViewNames[(size_t) newView.oscillators], nullptr);
         }
 
     private:

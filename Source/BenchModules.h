@@ -149,10 +149,11 @@ private:
 
 /**
     ChoiceTray — a small floating list of choices, opened over the editor at
-    a point: the bench's "add a module" menu and the signal-flow settings.
+    a point: the bench's "add a module" menu and the gear menu's settings.
 
     Each choice has a name and a line of detail; a choice can be greyed out
-    (it can't be picked) or ticked (the current one). Click a choice to pick
+    (it can't be picked) or ticked (the current one), and can start a new
+    section under a heading of its own. Click a choice to pick
     it; click anywhere else, or press Escape, to close. The arrow keys move
     through the choices and Return picks.
 */
@@ -165,6 +166,7 @@ public:
         juce::String detail;
         bool enabled = true;
         bool ticked  = false;
+        juce::String heading = {};   // starts a new section under this heading
     };
 
     void onChoose (std::function<void (int)> handler) { chooseHandler = std::move (handler); }
@@ -200,7 +202,7 @@ public:
     {
         const float s = uiScale;
         const float width  = 260.0f * s;
-        const float height = (34.0f + 44.0f * (float) choices.size() + 8.0f) * s;
+        const float height = (rowTop ((int) choices.size()) + 8.0f) * s;
         const auto  area   = getLocalBounds().toFloat().reduced (8.0f * s);
         return juce::Rectangle<float> ((float) origin.x, (float) origin.y, width, height).constrainedWithin (area);
     }
@@ -208,8 +210,7 @@ public:
     juce::Rectangle<float> choiceBounds (int index) const noexcept
     {
         const float s = uiScale;
-        return trayBounds().reduced (8.0f * s, 0.0f).withTrimmedTop (34.0f * s)
-                           .withHeight (44.0f * s).translated (0.0f, 44.0f * s * (float) index);
+        return trayBounds().reduced (8.0f * s, 0.0f).withTrimmedTop (rowTop (index) * s).withHeight (44.0f * s);
     }
 
     int choiceAt (juce::Point<float> position) const noexcept
@@ -270,6 +271,15 @@ public:
         {
             const auto& choice = choices[(size_t) i];
             const auto  row    = choiceBounds (i);
+            if (choice.heading.isNotEmpty())
+            {
+                const auto above = row.withY (row.getY() - headingHeight * s).withHeight (headingHeight * s).reduced (8.0f * s, 0.0f);
+                g.setColour (Palette::hairline);
+                g.fillRect (above.withHeight (juce::jmax (1.0f, s)).translated (0.0f, 4.0f * s));
+                g.setFont (Fonts::sans (9.0f * s, true, 0.22f));
+                g.setColour (Palette::textFaint);
+                g.drawText (choice.heading, above.withTrimmedTop (6.0f * s), juce::Justification::centredLeft, false);
+            }
             if (i == highlighted && choice.enabled)
             {
                 g.setColour (Palette::idleFill.withMultipliedAlpha (1.6f));
@@ -294,6 +304,20 @@ public:
     }
 
 private:
+    static constexpr float headingHeight = 30.0f;
+
+    // How far below the tray's top (design pixels) choice `index` starts:
+    // under the title, the choices before it and any section headings.
+    float rowTop (int index) const noexcept
+    {
+        float top = 34.0f + 44.0f * (float) index;
+        const int upTo = juce::jmin (index + 1, (int) choices.size());
+        for (int i = 0; i < upTo; ++i)
+            if (choices[(size_t) i].heading.isNotEmpty())
+                top += headingHeight;
+        return top;
+    }
+
     void setHighlighted (int index)
     {
         if (index == highlighted)
@@ -375,6 +399,24 @@ public:
         repaint();
     }
 
+    /** Shows the card as the gear menu's view says: with or without its
+        well or its dials (see Bench::View). Its height follows (cardHeight). */
+    void setView (const Bench::View& newView)
+    {
+        if (newView == view)
+            return;
+        view = newView;
+        const bool withDials = Bench::showsDials (id.kind, view);
+        for (auto& dial : dials)
+            dial->slider.setVisible (withDials);
+        resized();
+        repaint();
+    }
+    const Bench::View& getView() const noexcept { return view; }
+
+    /** How tall the card is drawn (design pixels) in its view. */
+    float cardHeight() const noexcept { return Bench::cardHeightOf (id.kind, view); }
+
     void setOrder (int newOrder)                { if (order != newOrder) { order = newOrder; repaint(); } }
     void setTag (const juce::String& newTag)    { if (tag != newTag) { tag = newTag; repaint(); } }
     void setJacksShown (bool out, bool in)      { if (jacks.out != out || jacks.in != in) { jacks.out = out; jacks.in = in; repaint(); } }
@@ -451,7 +493,9 @@ public:
 
         auto area = getLocalBounds().withTrimmedTop (px (30.0f)).reduced (px (12.0f), 0);
         area.removeFromTop (px (8.0f));
-        layoutWell (area.removeFromTop (px (96.0f)));
+        layoutWell (area.removeFromTop (px (Bench::wellHeightOf (id.kind, view))));
+        if (! Bench::showsDials (id.kind, view))
+            return;
 
         // Rows of (up to) three dials across the card, each with its name and
         // value beneath.
@@ -652,9 +696,10 @@ private:
     void paintDialLabels (juce::Graphics& g) const
     {
         for (const auto& dial : dials)
-            BenchStyle::paintDialLabel (g, dial->column.toFloat(), dial->slider.getBounds().toFloat().getBottom(), dial->name,
-                                        BenchStyle::dialText (dial->paramId, state.getRawParameterValue (dial->paramId)->load()),
-                                        dial->colour, dim.shown ? 0.4f : 1.0f, uiScale);
+            if (dial->slider.isVisible())
+                BenchStyle::paintDialLabel (g, dial->column.toFloat(), dial->slider.getBounds().toFloat().getBottom(), dial->name,
+                                            BenchStyle::dialText (dial->paramId, state.getRawParameterValue (dial->paramId)->load()),
+                                            dial->colour, dim.shown ? 0.4f : 1.0f, uiScale);
     }
 
     Bench::ModuleId id;
@@ -702,6 +747,7 @@ private:
     std::optional<Jack> heldJack;   // the jack a press began on
     juce::String        tag;
     Dim                 dim;
+    Bench::View         view;
     juce::Point<int>    dragStart;
     float uiScale  = 1.0f;
     int   order    = 0;
@@ -750,8 +796,11 @@ public:
 private:
     void layoutWell (juce::Rectangle<int> well) override
     {
+        const bool compact = getView().oscillators == Bench::OscillatorView::compact;
         display.setUiScale (getUiScale());
         picker.setUiScale (getUiScale());
+        picker.setCompact (compact);
+        display.setVisible (! compact);
         display.setBounds (well);
         picker.setBounds (well);
     }
@@ -781,6 +830,10 @@ public:
             addDial (stages[i].first, stages[i].second, colours[i]);
         }
         display.setColours (colours);
+        AmpDisplay::Parameters parameters {};
+        for (size_t i = 0; i < stages.size(); ++i)
+            parameters[i] = stateToUse.getParameter (stages[i].first);
+        display.setParameters (parameters);
         setJackColour (BenchStyle::dialColour (0.6f + 0.1f * (float) slot));
     }
 
@@ -791,6 +844,7 @@ private:
     void layoutWell (juce::Rectangle<int> well) override
     {
         display.setUiScale (getUiScale());
+        display.setVisible (! well.isEmpty());
         display.setBounds (well);
     }
 
