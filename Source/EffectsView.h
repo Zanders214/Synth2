@@ -10,6 +10,7 @@
 #include "BenchModules.h"
 #include "EffectSettings.h"
 #include "ParamIDs.h"
+#include "Rack.h"
 #include "Synth2LookAndFeel.h"
 #include "Synth2Theme.h"
 #include "Synth2VisualModel.h"
@@ -438,10 +439,10 @@ private:
 
 /**
     EffectCard — one effect on the EFFECTS tab: its power switch, its place
-    in the chain and its name in the header, its well, a row of dials and any
-    switches of its own. Off, everything but the switch greys out. Drag the
-    header sideways to move the card to the other place in the chain (unless
-    it has a fixed place: see setMovable).
+    in the chain, its name and a cross that takes it out of the chain in the
+    header, over its well, a row of dials and any switches of its own. Off,
+    everything but the switch greys out, and the card keeps its place. Drag
+    the header to move the card anywhere on the tab (and so along the chain).
 
     Its dials sit in rows of three under the well, by slot (0..2 the first
     row, 3..5 the second), each row spread across the card; a card with one
@@ -455,6 +456,7 @@ public:
         : title (cardTitle), colour (cardColour), looks (looksToUse), state (stateToUse),
           power (cardColour, stateToUse, onParam)
     {
+        setRepaintsOnMouseActivity (true);
         addAndMakeVisible (power);
         power.onClick = [this] { showPower(); };
     }
@@ -465,8 +467,13 @@ public:
             dial->slider.setLookAndFeel (nullptr);
     }
 
-    /** The header was dragged sideways and let go, the card's centre now at x (in its parent). */
-    void onDropped (std::function<void (int)> handler) { droppedHandler = std::move (handler); }
+    /** The cross was clicked. */
+    void onRemove (std::function<void()> handler) { removeHandler = std::move (handler); }
+    /** The header was dragged and let go, the card's top left now here (in its parent). */
+    void onMoved (std::function<void (juce::Point<int>)> handler) { movedHandler = std::move (handler); }
+
+    /** Where in its parent the card can be dragged (all of it, if empty). */
+    void setDragArea (juce::Rectangle<int> area) { dragArea = area; }
 
     void setUiScale (float newScale)
     {
@@ -476,8 +483,6 @@ public:
     }
 
     void setPlace (int newPlace) { if (place != newPlace) { place = newPlace; repaint(); } }
-    void setMovable (bool canMove) { movable = canMove; repaint(); }
-    bool isMovable() const noexcept { return movable; }
     int  getPlace() const noexcept { return place; }
     const juce::String& getTitle() const noexcept { return title; }
     juce::Colour getColour() const noexcept { return colour; }
@@ -488,6 +493,11 @@ public:
     int getNumDials() const noexcept  { return (int) dials.size(); }
 
     juce::Rectangle<float> headerBounds() const noexcept { return getLocalBounds().toFloat().withHeight (30.0f * uiScale); }
+    juce::Rectangle<float> closeBounds() const noexcept
+    {
+        const float s = uiScale;
+        return { (float) getWidth() - 30.0f * s, 5.0f * s, 20.0f * s, 20.0f * s };
+    }
 
     void paint (juce::Graphics& g) override
     {
@@ -514,15 +524,18 @@ public:
         g.setColour (Palette::textStrong);
         g.drawText (title, header.withTrimmedLeft (64.0f * s), juce::Justification::centredLeft, false);
 
-        // A grip, saying the card can be dragged.
-        if (movable)
+        // The cross, as on the bench's modules.
+        const auto cross    = closeBounds();
+        const bool crossHot = isMouseOver (true) && cross.contains (getMouseXYRelative().toFloat());
+        if (crossHot)
         {
-            g.setColour (Palette::textFaint);
-            const auto grip = header.withSizeKeepingCentre (18.0f * s, 8.0f * s).withX (header.getRight() - 34.0f * s);
-            for (int row = 0; row < 2; ++row)
-                for (int dot = 0; dot < 3; ++dot)
-                    g.fillEllipse (grip.getX() + (float) dot * 7.0f * s, grip.getY() + (float) row * 6.0f * s, 2.2f * s, 2.2f * s);
+            g.setColour (Palette::idleFill.withMultipliedAlpha (2.0f));
+            g.fillEllipse (cross);
         }
+        g.setColour (crossHot ? Palette::textStrong : Palette::textDim);
+        const auto x = cross.reduced (6.5f * s);
+        g.drawLine ({ x.getTopLeft(), x.getBottomRight() }, juce::jmax (1.0f, 1.4f * s));
+        g.drawLine ({ x.getTopRight(), x.getBottomLeft() }, juce::jmax (1.0f, 1.4f * s));
 
         g.setColour (Palette::hairline);
         g.fillRect (header.withTop (header.getBottom() - juce::jmax (1.0f, s)).reduced (12.0f * s, 0.0f));
@@ -583,7 +596,13 @@ public:
 
     void mouseDown (const juce::MouseEvent& e) override
     {
-        if (! movable || ! headerBounds().contains (e.position))
+        if (closeBounds().contains (e.position))
+        {
+            if (removeHandler != nullptr)
+                removeHandler();
+            return;
+        }
+        if (! headerBounds().contains (e.position))
             return;
         dragging  = true;
         dragStart = getPosition();
@@ -595,8 +614,16 @@ public:
     {
         if (! dragging)
             return;
-        const int right = getParentComponent() != nullptr ? getParentWidth() - getWidth() : dragStart.x;
-        setTopLeftPosition (juce::jlimit (0, juce::jmax (0, right), dragStart.x + e.getDistanceFromDragStartX()), dragStart.y);
+        auto area = dragArea;
+        if (area.isEmpty() && getParentComponent() != nullptr)
+            area = getParentComponent()->getLocalBounds();
+        auto topLeft = dragStart + e.getOffsetFromDragStart();
+        if (! area.isEmpty())
+            topLeft = { juce::jlimit (area.getX(), juce::jmax (area.getX(), area.getRight() - getWidth()), topLeft.x),
+                        juce::jlimit (area.getY(), juce::jmax (area.getY(), area.getBottom() - getHeight()), topLeft.y) };
+        setTopLeftPosition (topLeft);
+        if (auto* parent = getParentComponent())
+            parent->repaint();   // the arrows between the cards follow
     }
 
     void mouseUp (const juce::MouseEvent&) override
@@ -605,14 +632,16 @@ public:
             return;
         dragging = false;
         repaint();
-        if (droppedHandler != nullptr)
-            droppedHandler (getBounds().getCentreX());
+        if (movedHandler != nullptr)
+            movedHandler (getPosition());
     }
 
     juce::MouseCursor getMouseCursor() override
     {
-        return movable && headerBounds().contains (getMouseXYRelative().toFloat()) ? juce::MouseCursor::DraggingHandCursor
-                                                                                    : juce::MouseCursor::NormalCursor;
+        const auto mouse = getMouseXYRelative().toFloat();
+        if (closeBounds().contains (mouse))
+            return juce::MouseCursor::PointingHandCursor;
+        return headerBounds().contains (mouse) ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::NormalCursor;
     }
 
 protected:
@@ -683,11 +712,12 @@ private:
     juce::AudioProcessorValueTreeState& state;
     PowerSwitch power;
     std::vector<std::unique_ptr<Dial>> dials;
-    std::function<void (int)> droppedHandler;
+    std::function<void()> removeHandler;
+    std::function<void (juce::Point<int>)> movedHandler;
+    juce::Rectangle<int> dragArea;
     juce::Point<int> dragStart;
     float uiScale  = 1.0f;
     int   place    = 1;
-    bool  movable  = true;
     bool  dragging = false;
 };
 
@@ -807,7 +837,7 @@ private:
 };
 
 /** The DRIVE card: its curve in the well over DRIVE, TONE and MIX, with
-    its shape (WARM, TUBE or HARD) beneath. It always comes first. */
+    its shape (WARM, TUBE or HARD) beneath. */
 class DriveCard final : public EffectCard
 {
 public:
@@ -815,7 +845,6 @@ public:
         : EffectCard ("DRIVE", ParamID::driveOn, Synth2::Palette::amber, looksToUse, stateToUse),
           shape (*stateToUse.getParameter (ParamID::driveShape), { "WARM", "TUBE", "HARD" }, Synth2::Palette::amber)
     {
-        setMovable (false);
         addAndMakeVisible (display);
         display.setColour (Synth2::Palette::amber);
         addDial (ParamID::driveAmount, "DRIVE", BenchStyle::dialColour (0.0f), 0);
@@ -856,52 +885,144 @@ private:
     SegmentedChoice shape;
 };
 
+
 /**
-    EffectsView — the EFFECTS tab: the effects every note goes through
-    together, as a chain read left to right, from the notes to OUTPUT: the
-    drive first, then the delay and the reverb. Drag the delay or the reverb
-    past the other to swap them.
+    EffectsView — the EFFECTS tab, laid out like the bench: a dark, faintly
+    dotted area where the effects sit wherever they were put, under a line
+    spelling out the chain. Every note goes through the effects in the chain
+    in reading order, row by row and left to right (see Rack::Model), from
+    the notes to OUTPUT; each card's header shows its place.
+
+    Empty, it invites a click; a click on any empty spot asks the editor to
+    offer the effects not yet in the chain. Dragging a card by its header
+    moves it, and its effect along the chain; letting go lands it there, or
+    on the nearest free spot if it would cover another. Let go with its
+    middle on another card, the two swap places (which is how a full row of
+    three is reordered). Its cross takes it out of the chain, and its power switch bypasses
+    it in place. A card that arrives fades in, one that is taken out fades
+    out, and one that has to make way glides.
 */
 class EffectsView final : public juce::Component
 {
 public:
-    static constexpr float cardWidth  = 292.0f;
-    static constexpr float cardHeight = 448.0f;
-    static constexpr float stub       = 29.0f;   // the arrows into, between and out of the cards
-
     EffectsView (juce::AudioProcessorValueTreeState& stateToUse, Synth2LookAndFeel& looks)
-        : state (stateToUse), drive (looks, stateToUse), delay (looks, stateToUse), reverb (looks, stateToUse)
+        : model (stateToUse), drive (looks, stateToUse), delay (looks, stateToUse), reverb (looks, stateToUse)
     {
-        reverbFirst = state.getRawParameterValue (ParamID::effectsOrder)->load() >= 0.5f;
-        shownOn     = { drive.getPower().getToggleState(), delay.getPower().getToggleState(), reverb.getPower().getToggleState() };
-        for (auto* card : cards())
+        for (const auto kind : Rack::allEffects)
         {
-            card->showPower();
-            addAndMakeVisible (*card);
-            card->onDropped ([this, card] (int centreX)
-            {
-                // The delay and the reverb share the second and third places.
-                const int  between    = (slotBounds (2).getCentreX() + slotBounds (3).getCentreX()) / 2;
-                const bool wantsFirst = centreX < between;
-                if (card->isMovable() && wantsFirst != (card->getPlace() == 2))
-                    swapOrder();
-                layOut();
-            });
+            auto& card = getCard (kind);
+            card.showPower();
+            addChildComponent (card);
+            card.onRemove ([this, kind] { remove (kind); });
+            card.onMoved ([this, kind] (juce::Point<int> topLeft) { land (kind, topLeft); });
         }
+        shownOn = { drive.getPower().getToggleState(), delay.getPower().getToggleState(), reverb.getPower().getToggleState() };
+        setRepaintsOnMouseActivity (false);
+        sync();
     }
+
+    /** A click on an empty spot: where, in design pixels on the rack area, and in this view. */
+    void onEmptyClick (std::function<void (juce::Point<float>, juce::Point<int>)> handler) { emptyClickHandler = std::move (handler); }
 
     DriveCard&  getDrive() noexcept  { return drive; }
     DelayCard&  getDelay() noexcept  { return delay; }
     ReverbCard& getReverb() noexcept { return reverb; }
 
+    EffectCard& getCard (Rack::Kind kind) noexcept
+    {
+        switch (kind)
+        {
+            case Rack::Kind::delay:  return delay;
+            case Rack::Kind::reverb: return reverb;
+            case Rack::Kind::drive:  break;
+        }
+        return drive;
+    }
+
+    /** The effects in the chain, in the order the cards show. */
+    const std::vector<Rack::Kind>& getChain() const noexcept { return chain; }
+
     void setUiScale (float newScale)
     {
         uiScale = newScale;
-        drive.setUiScale (newScale);
-        delay.setUiScale (newScale);
-        reverb.setUiScale (newScale);
-        layOut();
+        for (const auto kind : Rack::allEffects)
+        {
+            auto& card = getCard (kind);
+            juce::Desktop::getInstance().getAnimator().cancelAnimation (&card, true);
+            card.setUiScale (newScale);
+            card.setDragArea (rackArea());
+            card.setBounds (boundsFor (kind));
+        }
         repaint();
+    }
+
+    /** The dotted area the cards sit on, under the line spelling out the chain. */
+    juce::Rectangle<int> rackArea() const noexcept
+    {
+        return (juce::Rectangle<float> (0.0f, Rack::chainHeight, Rack::areaWidth, Rack::areaHeight) * uiScale).toNearestInt();
+    }
+
+    /** Where `kind`'s card sits in this view. */
+    juce::Rectangle<int> boundsFor (Rack::Kind kind) const
+    {
+        const auto bounds = model.boundsOf (kind).translated (0.0f, Rack::chainHeight) * uiScale;
+        return bounds.getSmallestIntegerContainer().withSize (juce::roundToInt (Rack::cardWidth * uiScale),
+                                                              juce::roundToInt (Rack::cardHeight * uiScale));
+    }
+
+    /** Puts `kind` in the chain at `at` (design pixels on the rack area), fading it in. */
+    void add (Rack::Kind kind, juce::Point<float> at)
+    {
+        if (model.add (kind, at))
+            show (kind);
+        sync();
+    }
+
+    /** Takes `kind` out of the chain, fading it out. */
+    void remove (Rack::Kind kind)
+    {
+        model.remove (kind);
+        hide (kind);
+        sync();
+    }
+
+    /** Catches up with the rack: effects that came or went (from the host,
+        undo, a preset or a restored session), where they sit (gliding
+        there), and so each card's place in the chain. A card being dragged,
+        or gliding or fading, is left to finish first. */
+    void sync()
+    {
+        auto& animator = juce::Desktop::getInstance().getAnimator();
+        std::array<juce::Rectangle<int>, 3> cardBounds {};
+        for (const auto kind : Rack::allEffects)
+        {
+            auto& card = getCard (kind);
+            const bool inChain = model.isInChain (kind);
+            if (inChain && ! card.isVisible())
+                show (kind);
+            else if (! inChain && card.isVisible())
+                hide (kind);
+            else if (inChain && ! card.isBeingDragged() && ! animator.isAnimating (&card))
+                if (const auto bounds = boundsFor (kind); card.getBounds() != bounds)
+                    animator.animateComponent (&card, bounds, 1.0f, 150, false, 0.4, 0.0);   // --dur-base
+            if (card.isVisible())
+                cardBounds[(size_t) kind] = card.getBounds();
+        }
+
+        // The arrows between the cards follow them, gliding too.
+        if (cardBounds != shownBounds)
+        {
+            shownBounds = cardBounds;
+            repaint();
+        }
+
+        if (auto order = model.readingOrder(); order != chain)
+        {
+            chain = std::move (order);
+            for (size_t place = 0; place < chain.size(); ++place)
+                getCard (chain[place]).setPlace ((int) place + 1);
+            repaint();
+        }
     }
 
     /** The cards follow the settings, however they change. */
@@ -910,100 +1031,139 @@ public:
         drive.refresh (settings.drive);
         delay.refresh (settings.delay, settings.bpm);
         reverb.refresh (settings.reverb);
-        if (const std::array<bool, 3> on { settings.drive.on, settings.delay.on, settings.reverb.on }; on != shownOn)
+        const std::array<bool, 3> on { drive.getPower().getToggleState(), delay.getPower().getToggleState(),
+                                       reverb.getPower().getToggleState() };
+        if (on != shownOn)
         {
             shownOn = on;
-            for (auto* card : cards())
-                card->showPower();
-            repaint();
-        }
-        if (settings.reverbFirst != reverbFirst)
-        {
-            reverbFirst = settings.reverbFirst;
-            layOut();
+            for (const auto kind : Rack::allEffects)
+                getCard (kind).showPower();
             repaint();
         }
     }
 
-    /** Puts the other effect first. */
-    void swapOrder()
-    {
-        auto* order = state.getParameter (ParamID::effectsOrder);
-        order->beginChangeGesture();
-        order->setValueNotifyingHost (order->getValue() < 0.5f ? 1.0f : 0.0f);
-        order->endChangeGesture();
-        reverbFirst = order->getValue() >= 0.5f;
-        layOut();
-        repaint();
-    }
+    bool isShowingHint() const { return model.isEmpty(); }
 
-    /** Where the card in `place` (1 to 3) sits. */
-    juce::Rectangle<int> slotBounds (int place) const noexcept
-    {
-        const float s = uiScale;
-        const float x = stub + (float) (place - 1) * (cardWidth + stub);
-        return juce::Rectangle<float> (x * s, cardTop() * s, cardWidth * s, cardHeight * s).toNearestInt();
-    }
-
-    void resized() override { layOut(); }
+    void resized() override { setUiScale (uiScale); }
 
     void paint (juce::Graphics& g) override
     {
         using namespace Synth2;
-        const float s = uiScale;
+        const float s    = uiScale;
+        const auto  area = rackArea().toFloat();
 
-        // The chain in words over the cards, each effect in its own colour.
-        const auto& second = reverbFirst ? static_cast<const EffectCard&> (reverb) : static_cast<const EffectCard&> (delay);
-        const auto& third  = reverbFirst ? static_cast<const EffectCard&> (delay) : static_cast<const EffectCard&> (reverb);
-        const auto  line   = juce::Rectangle<float> (stub * s, (cardTop() - 40.0f) * s, (3.0f * cardWidth + 2.0f * stub) * s, 16.0f * s);
-        const auto  arrow  = juce::String (juce::CharPointer_UTF8 ("  \xe2\x86\x92  "));
-        juce::AttributedString chain;
-        const auto font = Fonts::sans (10.0f * s, true, 0.18f);
-        chain.append ("THE NOTES", font, Palette::textDim);
-        for (const auto* card : { static_cast<const EffectCard*> (&drive), &second, &third })
+        // The chain in words over the area, each effect in its own colour.
+        const auto line  = juce::Rectangle<float> (4.0f * s, 0.0f, area.getWidth() - 8.0f * s, (Rack::chainHeight - 8.0f) * s);
+        const auto arrow = juce::String (juce::CharPointer_UTF8 ("  \xe2\x86\x92  "));
+        const auto font  = Fonts::sans (10.0f * s, true, 0.18f);
+        juce::AttributedString words;
+        words.append ("THE NOTES", font, Palette::textDim);
+        for (const auto kind : chain)
         {
-            chain.append (arrow, font, Palette::textDim);
-            chain.append (card->getTitle(), font, card->getColour());
+            const auto& card = getCard (kind);
+            words.append (arrow, font, Palette::textDim);
+            words.append (card.getTitle(), font, card.getColour());
         }
-        chain.append (arrow + "OUTPUT", font, Palette::textDim);
-        chain.setJustification (juce::Justification::centredLeft);
-        chain.draw (g, line);
+        words.append (arrow + "OUTPUT", font, Palette::textDim);
+        words.setJustification (juce::Justification::centredLeft);
+        words.draw (g, line);
+        if (! chain.empty())
+        {
+            g.setFont (Fonts::sans (9.5f * s, false, 0.04f));
+            g.setColour (Palette::textFaint);
+            g.drawText ("Drag a card to move it along the chain", line, juce::Justification::centredRight, false);
+        }
 
-        g.setFont (Fonts::sans (9.5f * s, false, 0.04f));
-        g.setColour (Palette::textFaint);
-        g.drawText ("Drag DELAY or REVERB by its header to swap them", line, juce::Justification::centredRight, false);
+        // The area, like the bench: a faint dot grid, texture only.
+        g.setColour (Palette::well.withAlpha (0.55f));
+        g.fillRoundedRectangle (area, 16.0f * s);
+        g.setColour (Palette::hairline);
+        g.drawRoundedRectangle (area.reduced (0.5f), 16.0f * s, juce::jmax (1.0f, s));
+        g.setColour (Palette::gridLine.withMultipliedAlpha (1.6f));
+        const float spacing = 24.0f * s;
+        const float dot     = juce::jmax (1.5f, 2.0f * s);
+        for (float y = area.getY() + spacing; y < area.getBottom() - spacing * 0.5f; y += spacing)
+            for (float x = area.getX() + spacing; x < area.getRight() - spacing * 0.5f; x += spacing)
+                g.fillEllipse (x - dot * 0.5f, y - dot * 0.5f, dot, dot);
 
-        // Arrows into the first card, between them, and out to OUTPUT.
-        const float y = (cardTop() + 30.0f + 10.0f + 82.0f) * s;   // level with the wells' middles
+        if (model.isEmpty())
+        {
+            const auto hint = area.withSizeKeepingCentre (460.0f * s, 60.0f * s);
+            g.setFont (Fonts::sans (15.0f * s, true));
+            g.setColour (Palette::textMid);
+            g.drawText ("Click anywhere to add an effect", hint.withHeight (24.0f * s), juce::Justification::centred, false);
+            g.setFont (Fonts::sans (11.0f * s));
+            g.setColour (Palette::textDim);
+            g.drawText ("Sound goes through them in order, left to right and row by row",
+                        hint.withTrimmedTop (30.0f * s), juce::Justification::centredTop, false);
+        }
+
+        // An arrow from each card to the next one in the chain, level with
+        // the wells, wherever the next one sits to the right of it.
         g.setColour (Palette::strongLine.withMultipliedAlpha (2.5f));
-        for (int gap = 0; gap <= 3; ++gap)
+        const float wellMiddle = (30.0f + 10.0f + 82.0f) * s;
+        for (size_t i = 1; i < chain.size(); ++i)
         {
-            const float from = (float) gap * (stub + cardWidth) + 4.0f;
-            g.drawArrow ({ from * s, y, (from + stub - 8.0f) * s, y }, juce::jmax (1.0f, 1.5f * s), 7.0f * s, 7.0f * s);
+            const auto from = getCard (chain[i - 1]).getBounds().toFloat();
+            const auto to   = getCard (chain[i]).getBounds().toFloat();
+            if (to.getX() - from.getRight() < 12.0f * s)
+                continue;
+            g.drawArrow ({ from.getRight() + 4.0f * s, from.getY() + wellMiddle, to.getX() - 4.0f * s, to.getY() + wellMiddle },
+                         juce::jmax (1.0f, 1.5f * s), 7.0f * s, 7.0f * s);
         }
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        const auto area = rackArea();
+        if (emptyClickHandler == nullptr || ! area.contains (e.getPosition()))
+            return;
+        const auto design  = (e.position - area.getPosition().toFloat()) / uiScale;
+        const auto topLeft = juce::Point<float> (design.x - Rack::cardWidth * 0.5f, design.y - 15.0f);
+        emptyClickHandler (topLeft, e.getPosition());
     }
 
 private:
-    std::array<EffectCard*, 3> cards() noexcept { return { &drive, &delay, &reverb }; }
+    const EffectCard& getCard (Rack::Kind kind) const noexcept { return const_cast<EffectsView*> (this)->getCard (kind); }
 
-    float cardTop() const noexcept { return 0.5f * ((float) Bench::areaHeight - cardHeight) + 20.0f; }
-
-    // Each card in its place, unless it is being dragged.
-    void layOut()
+    void show (Rack::Kind kind)
     {
-        drive.setPlace (1);
-        delay.setPlace (reverbFirst ? 3 : 2);
-        reverb.setPlace (reverbFirst ? 2 : 3);
-        for (auto* card : cards())
-            if (! card->isBeingDragged())
-                card->setBounds (slotBounds (card->getPlace()));
+        auto& card = getCard (kind);
+        card.setBounds (boundsFor (kind));
+        card.toFront (false);
+        juce::Desktop::getInstance().getAnimator().fadeIn (&card, 150);   // --dur-base
+        repaint();
     }
 
-    juce::AudioProcessorValueTreeState& state;
-    DriveCard  drive;
-    DelayCard  delay;
-    ReverbCard reverb;
+    void hide (Rack::Kind kind)
+    {
+        auto& card = getCard (kind);
+        if (card.isVisible())
+            juce::Desktop::getInstance().getAnimator().fadeOut (&card, 150);
+        repaint();
+    }
+
+    void land (Rack::Kind kind, juce::Point<int> topLeft)
+    {
+        const auto wanted = (topLeft - rackArea().getPosition()).toFloat() / uiScale;
+        const auto landed = model.move (kind, wanted);
+        auto& card = getCard (kind);
+        const auto target = boundsFor (kind);
+        if (landed != wanted && card.getBounds() != target)
+            juce::Desktop::getInstance().getAnimator().animateComponent (&card, target, 1.0f, 150, false, 0.4, 0.0);
+        else
+            card.setBounds (target);
+        sync();   // a card it swapped with glides to where it was
+        repaint();
+    }
+
+    Rack::Model model;
+    DriveCard   drive;
+    DelayCard   delay;
+    ReverbCard  reverb;
+    std::vector<Rack::Kind> chain;
     std::array<bool, 3> shownOn {};   // drive, delay, reverb
-    float uiScale     = 1.0f;
-    bool  reverbFirst = false;
+    std::array<juce::Rectangle<int>, 3> shownBounds {};
+    std::function<void (juce::Point<float>, juce::Point<int>)> emptyClickHandler;
+    float uiScale = 1.0f;
 };

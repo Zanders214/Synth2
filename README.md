@@ -6,10 +6,11 @@ on it the modules you want, where you want them. Add up to four oscillators,
 each with one of the four basic wave shapes and its own stack of up to 16
 detuned, spread copies on every note, give each its own envelope, and play
 chords: the classic wide, detuned "supersaw" pad in a few turns. Then send the
-lot through a drive, a delay and a reverb on the EFFECTS tab.
+lot through a drive, a delay and a reverb, in any order, on the EFFECTS tab,
+laid out the same way.
 
 ```
-note -> OSC n (VOICES x shape, DETUNE + WIDTH) -> ENV n (DELAY ATTACK HOLD DECAY SUSTAIN RELEASE) -> + -> DRIVE -> DELAY -> REVERB -> OUTPUT
+note -> OSC n (VOICES x shape, DETUNE + WIDTH) -> ENV n (DELAY ATTACK HOLD DECAY SUSTAIN RELEASE) -> + -> DRIVE / DELAY / REVERB (any order) -> OUTPUT
 ```
 
 ## The workbench
@@ -44,17 +45,29 @@ showing.
 ## Effects
 
 The **BENCH | EFFECTS** tabs in the header swap the bench for the effects. Every note
-goes through them together, after the oscillators are mixed and before OUTPUT, as a
-chain read left to right: the drive first, then by default the delay, then the
-reverb. Drag the DELAY or REVERB card by its header past the other to swap them (a
-reverb into a delay smears each repeat; a delay into a reverb sends the repeats into
-the room). The drive always comes first, so the echoes and the room stay clean.
+goes through them together, after the oscillators are mixed and before OUTPUT.
 
-Each effect has the same power switch at the left of its header (all three start off, so
-older sets sound as they did) and a **MIX**: up to the middle the dry sound stays at full level and the effect
+The EFFECTS tab works like the bench. It opens empty: click anywhere on it and a tray
+offers a **Drive**, a **Delay** and a **Reverb** (one of each; one already in the chain
+is greyed out). The effect lands where you clicked, switched on. Drag a card by its
+header to move it anywhere on the tab; drop it with its middle on another card and the
+two swap places. The cross in its header takes it out of the chain (its settings are
+kept for when it comes back).
+
+The chain is read like a page: left to right, row by row. Each card's header shows its
+place, the line over the tab spells the chain out ("THE NOTES → REVERB → DELAY →
+OUTPUT"), and arrows join the cards that follow one another. So moving a card moves its
+effect along the chain: a reverb into a delay smears each repeat, a delay into a reverb
+sends the repeats into the room, and a drive after the reverb distorts the room along
+with the notes (before it, the echoes and the room stay clean).
+
+Each effect has the same power switch at the left of its header as the bench's modules:
+switched off, it greys out and keeps its place in the chain, silent. The switches are
+automatable; being in the chain is not. Each effect also has a **MIX**: up to the middle the dry sound stays at full level and the effect
 is added underneath; from there the dry sound fades out until only the effect is left.
-Switching an effect on or off fades it over 20 ms; once it is off it costs nothing,
-and switching it back on starts clean.
+Switching an effect on or off, or taking it out of the chain, fades it over 20 ms; once
+it is off it costs nothing, and switching it back on starts clean. A set saved before
+effects could be moved opens with all three on the tab, in the order they played.
 
 | Control       | What it does                                                        |
 |---------------|---------------------------------------------------------------------|
@@ -97,8 +110,9 @@ The pill in the middle of the header holds the factory presets: its arrows step 
 previous and next one, and a click on its name opens a tray of them all. Your DAW lists
 the same presets as the plugin's programs. Loading one puts its modules on the bench
 (oscillators along the top, each with its own unison stack, and each DAHDSR envelope
-under the oscillator it shapes, in a fixed order with no cables), switches its effects
-on (most pads and keys have a reverb, some a delay on the beat), and sets everything
+under the oscillator it shapes, in a fixed order with no cables), puts just its effects
+on the EFFECTS tab, side by side and switched on (most pads and keys have a reverb,
+some a delay on the beat), and sets everything
 it doesn't use back to its default; picking it again undoes your edits. Which preset
 you loaded is saved with your set.
 
@@ -305,7 +319,7 @@ Source/
   ParamIDs.h                 the parameter IDs
   Presets.h                  the factory presets, and loading one onto the bench
   Synth2Engine.h             host-agnostic DSP core: 16 voices, up to four oscillators, MIDI, smoothing, effects, output
-  Effects.h                  the drive, then the delay and the reverb (in either order), after the mix
+  Effects.h                  the drive, the delay and the reverb (in any order), after the mix
   Room.h                     the reverb's room: pre-delay, diffusion and an eight-line feedback delay network
   EffectSettings.h           the effects' settings and sums (note lengths, tails, MIX), shared with the displays
   SynthVoice.h               one note: each oscillator's unison copies, under that oscillator's envelope
@@ -315,7 +329,8 @@ Source/
   Bench.h                    the workbench model: modules, where they sit, cables, which envelope shapes which oscillator, older sessions
   BenchView.h                the bench itself: the dotted area the modules sit and are dragged on
   BenchModules.h             the oscillator and envelope modules, and the add / settings trays
-  EffectsView.h              the EFFECTS tab: the drive, delay and reverb cards, their wells and switches
+  Rack.h                     the EFFECTS tab's model: which effects are in the chain, where their cards sit, the order
+  EffectsView.h              the EFFECTS tab: the area, the drive, delay and reverb cards, their wells and switches
   PluginEditor.{h,cpp}       the Neon Plugins editor: header, tabs and gear, bench or effects, cables, keyboard, OUTPUT
   Synth2LookAndFeel.{h,cpp}  the dials (design-system Dial: arc + glowing core)
   WavePicker.h               an oscillator well's picker (pill, arrows, wheel) and its tray of shapes

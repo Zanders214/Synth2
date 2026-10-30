@@ -19,9 +19,10 @@
     A dark panel, top to bottom: the wordmark, the BENCH / EFFECTS tabs, the
     preset picker, the POLY badge and the gear (the signal-flow settings);
     the bench, which starts empty and holds whatever modules are put on it,
-    wherever they are put (see BenchView), or on the EFFECTS tab the drive,
-    delay and reverb every note goes through (see EffectsView); and along the
-    bottom, on both tabs, the keyboard that plays it and the OUTPUT dial.
+    wherever they are put (see BenchView), or on the EFFECTS tab the effects
+    every note goes through, put there and arranged the same way (see
+    EffectsView); and along the bottom, on both tabs, the keyboard that plays
+    it and the OUTPUT dial.
 
     In the standalone app the computer's keys play that keyboard too (see
     NeonKeyboard): the editor keeps the keyboard focus whenever nothing else
@@ -29,7 +30,9 @@
 
     Click an empty spot on the bench to add a module there: an oscillator,
     with its own unison stack, or an envelope (up to four of each). Drag a
-    module by its header to move it; its cross takes it off the bench.
+    module by its header to move it; its cross takes it off the bench. The
+    EFFECTS tab works the same way, with a drive, a delay and a reverb (one
+    of each), played in the order their cards read in.
 
     The preset picker shows the factory preset last loaded: its arrows step
     to the previous and next one, and a click on its name opens a tray of
@@ -84,6 +87,7 @@ public:
     BenchView&    getBench() noexcept                  { return bench; }
     EffectsView&  getEffects() noexcept                { return effects; }
     ChoiceTray&   getAddTray() noexcept                { return addTray; }
+    ChoiceTray&   getEffectTray() noexcept             { return effectTray; }
     ChoiceTray&   getSettingsTray() noexcept           { return settingsTray; }
     ChoiceTray&   getPresetTray() noexcept             { return presetTray; }
     WaveMenu&     getWaveMenu (int slot) noexcept      { return waveMenus[(size_t) slot]; }
@@ -120,6 +124,7 @@ private:
     void showView();   // shows the cards as the bench's view says (gear menu, or a restored set)
     void showFlow();
     void openAddTray (juce::Point<float> benchAt, juce::Point<int> editorAt);
+    void openEffectTray (juce::Point<float> rackAt, juce::Point<int> editorAt);
     void openSettings();
     void openPresets();
     void stepPreset (int delta);
@@ -141,9 +146,11 @@ private:
     CableLayer   cables { *this };
     std::array<WaveMenu, Bench::numOscillators> waveMenus;
     ChoiceTray   addTray;
+    ChoiceTray   effectTray;
     ChoiceTray   settingsTray;
     ChoiceTray   presetTray;
-    juce::Point<float> addAt;   // where on the bench the add tray was opened
+    juce::Point<float> addAt;      // where on the bench the add tray was opened
+    juce::Point<float> effectAt;   // and on the EFFECTS tab, the effect tray
 
     // Painted regions computed by resized() and read back by paint().
     struct Layout

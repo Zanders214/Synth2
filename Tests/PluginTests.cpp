@@ -18,6 +18,7 @@
 #include "Bench.h"
 #include "ParamIDs.h"
 #include "Presets.h"
+#include "Rack.h"
 
 #include <algorithm>
 #include <cmath>
@@ -178,12 +179,17 @@ void testProcessorBasics()
     setParam (p, ParamID::env1On, 0.0f);
     setParam (p, ParamID::osc1On, 0.0f);
 
-    // The effects: both off to start with, so older sessions sound as they did.
+    // The effects: off and out of the chain to start with, like the bench.
     for (const auto* id : { ParamID::delayOn, ParamID::delaySync, ParamID::delayTime, ParamID::delayNote, ParamID::delayFeedback,
                             ParamID::delayTone, ParamID::delayMix, ParamID::delayPingPong, ParamID::reverbOn, ParamID::reverbSize,
-                            ParamID::reverbDamping, ParamID::reverbWidth, ParamID::reverbMix, ParamID::effectsOrder })
+                            ParamID::reverbDamping, ParamID::reverbWidth, ParamID::reverbMix, ParamID::driveInChain,
+                            ParamID::delayInChain, ParamID::reverbInChain })
         check (p.getState().getParameter (id) != nullptr, std::string ("has the '") + id + "' parameter");
+    check (p.getState().getParameter (ParamID::effectsOrder) == nullptr, "the order is where the cards sit, not a parameter");
     check (param (p, ParamID::delayOn) < 0.5f && param (p, ParamID::reverbOn) < 0.5f, "both effects start off");
+    check (Rack::Model (p.getState()).isEmpty(), "and none is in the chain");
+    for (const auto kind : Rack::allEffects)
+        check (! p.getState().getParameter (Rack::inChainParameter (kind))->isAutomatable(), "being in the chain isn't automated");
     auto* note = p.getState().getParameter (ParamID::delayNote);
     auto* time = p.getState().getParameter (ParamID::delayTime);
     check (note->getCurrentValueAsText() == "1/8D" && time->getCurrentValueAsText() == "375 ms",
@@ -193,14 +199,24 @@ void testProcessorBasics()
     setParam (p, ParamID::delayOn, 1.0f);
     setParam (p, ParamID::delayTime, 500.0f);
     setParam (p, ParamID::delayFeedback, 0.5f);
+    check (! p.currentSettings().effects.delay.on && approx ((float) p.getTailLengthSeconds(), Synth2Engine::gateReleaseSeconds, 1e-4f),
+           "switched on but out of the chain, the delay plays nothing");
+    setParam (p, ParamID::delayInChain, 1.0f);
+    setParam (p, ParamID::reverbInChain, 1.0f);
+    check (p.currentSettings().effects.delay.on, "in the chain and switched on, it plays");
     const double delayTail = 0.5 * (1.0 + std::log (0.001) / std::log (0.5));
     check (approx ((float) p.getTailLengthSeconds(), (float) (Synth2Engine::gateReleaseSeconds + delayTail), 0.01f),
            "the delay's repeats add to the tail");
     setParam (p, ParamID::reverbOn, 1.0f);
     check (p.getTailLengthSeconds() > Synth2Engine::gateReleaseSeconds + delayTail + 1.0, "and so does the reverb's ring");
-    setParam (p, ParamID::effectsOrder, 1.0f);
-    check (p.currentSettings().effects.reverbFirst && approx (p.currentSettings().effects.delay.feedback, 0.5f, 1e-4f),
-           "the engine gets the effects' settings and order");
+    check (p.currentSettings().effects.order == Effects::Order { Rack::Kind::delay, Rack::Kind::reverb, Rack::Kind::drive },
+           "the delay, then the reverb, as their cards sit (the drive, out of the chain, last)");
+    Rack::Model rack (p.getState());
+    rack.move (Rack::Kind::reverb, { 0.0f, Rack::defaultPosition (0).y });
+    check (p.currentSettings().effects.order == Effects::Order { Rack::Kind::reverb, Rack::Kind::delay, Rack::Kind::drive }
+               && approx (p.currentSettings().effects.delay.feedback, 0.5f, 1e-4f),
+           "the engine gets the effects' settings, and the order the cards read in");
+    rack.move (Rack::Kind::reverb, Rack::defaultPosition (Rack::Kind::reverb));
 
     // A synced delay follows the host's tempo.
     struct Tempo final : juce::AudioPlayHead
@@ -217,7 +233,7 @@ void testProcessorBasics()
     playAndMeasure (p, {}, 1);
     p.setPlayHead (nullptr);
     check (approx ((float) p.currentSettings().effects.bpm, 100.0f, 1e-4f), "the host's tempo reaches the delay");
-    for (const auto* id : { ParamID::delayOn, ParamID::reverbOn, ParamID::effectsOrder, ParamID::osc1On })
+    for (const auto* id : { ParamID::delayOn, ParamID::reverbOn, ParamID::delayInChain, ParamID::reverbInChain, ParamID::osc1On })
         setParam (p, id, 0.0f);
     setParam (p, ParamID::delayTime, 375.0f);
     setParam (p, ParamID::delayFeedback, 0.35f);
@@ -1236,14 +1252,14 @@ void testViews()
            "Both and Full bring the cards back as they were");
 }
 
-// Drags `card` by its header sideways by `dx`.
-void dragCard (EffectCard& card, float dx)
+// Drags `card` by its header so its top left moves by `by`.
+void dragCard (EffectCard& card, juce::Point<float> by)
 {
     const auto grab = card.headerBounds().getCentre().translated (-60.0f, 0.0f);
     card.mouseDown (mouseAt (card, grab));
-    card.mouseDrag (mouseAt (card, grab.translated (dx * 0.5f, 0.0f), grab));
-    card.mouseDrag (mouseAt (card, grab.translated (dx, 0.0f), grab));
-    card.mouseUp (mouseAt (card, grab.translated (dx, 0.0f), grab));
+    card.mouseDrag (mouseAt (card, grab + by * 0.5f, grab));
+    card.mouseDrag (mouseAt (card, grab + by, grab));
+    card.mouseUp (mouseAt (card, grab + by, grab));
 }
 
 void testEffectsTab()
@@ -1257,6 +1273,7 @@ void testEffectsTab()
     if (editor == nullptr)
         return;
     using Tab = Synth2AudioProcessorEditor::Tab;
+    using Kind = Rack::Kind;
 
     auto& bench   = editor->getBench();
     auto& effects = editor->getEffects();
@@ -1273,23 +1290,77 @@ void testEffectsTab()
     auto& drive  = effects.getDrive();
     auto& delay  = effects.getDelay();
     auto& reverb = effects.getReverb();
+    const Rack::Model rack (p.getState());
+    check (! drive.isVisible() && ! delay.isVisible() && ! reverb.isVisible() && effects.isShowingHint() && effects.getChain().empty(),
+           "it starts empty, like the bench, with a hint to click it");
+    check (effects.rackArea().getY() > 0 && effects.rackArea().getBottom() == effects.getHeight(),
+           "the area the cards sit on runs under the line spelling out the chain");
+    snapshot (render (*editor), "11-effects-empty");
+
+    // A click on an empty spot offers the effects, there.
+    auto& tray = editor->getEffectTray();
+    const auto area = effects.rackArea().toFloat();
+    // A click that puts a card's top left at `topLeft` (design pixels on the area).
+    const auto clickFor = [&] (juce::Point<float> topLeft)
+    {
+        effects.mouseDown (mouseAt (effects, area.getPosition() + topLeft + juce::Point<float> (0.5f * Rack::cardWidth, 15.0f)));
+    };
+    const auto addAt = [&] (int choice, juce::Point<float> topLeft)
+    {
+        clickFor (topLeft);
+        tray.mouseDown (mouseAt (tray, tray.choiceBounds (choice).getCentre()));
+    };
+
+    clickFor (Rack::defaultPosition (0));
+    check (tray.isOpen() && tray.getTitle() == "ADD AN EFFECT" && tray.getNumChoices() == 3
+               && tray.getChoice (0).name == "Drive" && tray.getChoice (1).name == "Delay" && tray.getChoice (2).name == "Reverb",
+           "a click on the area offers a drive, a delay and a reverb");
+    check (tray.getChoice (0).enabled && tray.getChoice (1).enabled && tray.getChoice (2).enabled, "all three free");
+    snapshot (render (*editor), "12-effects-tray");
+    tray.keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
+    check (! tray.isOpen() && effects.isShowingHint(), "Escape closes it, adding nothing");
+
+    addAt (0, Rack::defaultPosition (0));
+    check (param (p, ParamID::driveInChain) >= 0.5f && param (p, ParamID::driveOn) >= 0.5f && p.currentSettings().effects.drive.on,
+           "picking Drive puts the drive in the chain, switched on");
+    check (pumpUntil ([&drive] { return drive.isVisible() && drive.getAlpha() >= 1.0f; }), "its card fades in");
+    check (rack.positionOf (Kind::drive) == Rack::defaultPosition (0)
+               && drive.getBounds() == effects.boundsFor (Kind::drive) && drive.getY() >= effects.rackArea().getY(),
+           "under the click, its header where the click was");
+    check (! effects.isShowingHint() && drive.getPlace() == 1 && effects.getChain() == std::vector<Kind> { Kind::drive },
+           "first in the chain");
+
+    clickFor (Rack::defaultPosition (1));
+    check (! tray.getChoice (0).enabled && tray.getChoice (0).detail == "Already in the chain" && tray.getChoice (1).enabled,
+           "one of each: the drive is greyed out in the tray now");
+    tray.mouseDown (mouseAt (tray, tray.choiceBounds (1).getCentre()));
+    addAt (2, Rack::defaultPosition (2));
+    check (pumpUntil ([&] { return delay.getAlpha() >= 1.0f && reverb.getAlpha() >= 1.0f; }), "the delay and the reverb fade in");
     check (drive.getPlace() == 1 && delay.getPlace() == 2 && reverb.getPlace() == 3
                && drive.getRight() < delay.getX() && delay.getRight() < reverb.getX() && reverb.getRight() <= effects.getWidth(),
-           "the drive comes first, then the delay, then the reverb, side by side");
+           "side by side, in the order they read in");
+    check (p.currentSettings().effects.order == Effects::Order { Kind::drive, Kind::delay, Kind::reverb }, "and they play in that order");
+    clickFor ({ 0.0f, 0.0f });
+    check (! tray.getChoice (0).enabled && ! tray.getChoice (1).enabled && ! tray.getChoice (2).enabled, "with all three in, none is left");
+    tray.keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
+
     check (drive.getNumDials() == 3 && delay.getNumDials() == 5 && reverb.getNumDials() == 5,
            "DRIVE, TONE and MIX; TIME (or its note), FEEDBACK, TONE and MIX; SIZE, PRE-DELAY, DAMPING, WIDTH and MIX");
     check (reverb.getDial (3).getY() > reverb.getDial (0).getY() && delay.getDial (3).getY() > delay.getDial (2).getY()
                && drive.getDisplay().getHeight() > delay.getDisplay().getHeight(),
            "the dials sit in rows of up to three; the drive's one row leaves its well taller");
-    check (drive.getDial (0).getAlpha() < 0.5f && delay.getDial (0).getAlpha() < 0.5f && reverb.getDial (0).getAlpha() < 0.5f,
-           "all off, so all greyed out");
-    snapshot (render (*editor), "11-effects-off");
+    check (drive.getDial (0).getAlpha() >= 1.0f && delay.getDial (0).getAlpha() >= 1.0f && reverb.getDial (0).getAlpha() >= 1.0f,
+           "all on, so all lit");
 
-    delay.getPower().setToggleState (true, juce::sendNotificationSync);
-    delay.getPower().onClick();
-    check (param (p, ParamID::delayOn) >= 0.5f && delay.getDial (0).getAlpha() >= 1.0f, "ON switches the delay on, and lights it");
-    setParam (p, ParamID::reverbOn, 1.0f);
-    check (pumpUntil ([&reverb] { return reverb.getDial (0).getAlpha() >= 1.0f; }), "a host switching the reverb on lights it too");
+    // The power switch bypasses an effect in place.
+    delay.getPower().triggerClick();
+    check (pumpUntil ([&] { return param (p, ParamID::delayOn) < 0.5f && delay.getDial (0).getAlpha() < 0.5f; }),
+           "the delay's power switches it off, greying it out");
+    check (delay.isVisible() && param (p, ParamID::delayInChain) >= 0.5f && ! p.currentSettings().effects.delay.on
+               && effects.getChain().size() == 3,
+           "it stays in its place in the chain, silent");
+    setParam (p, ParamID::delayOn, 1.0f);
+    check (pumpUntil ([&delay] { return delay.getDial (0).getAlpha() >= 1.0f; }), "a host switching it back on lights it");
 
     delay.getDial (2).setValue (0.6, juce::sendNotificationSync);
     check (approx (param (p, ParamID::delayFeedback), 0.6f, 1e-4f), "FEEDBACK drives its parameter");
@@ -1310,10 +1381,6 @@ void testEffectsTab()
     check (param (p, ParamID::delayPingPong) >= 0.5f, "PING-PONG switches on");
     pumpUntil ([&delay] { return delay.getDisplay().getDelayState().pingPong; });
 
-    // The drive: its power, DRIVE in decibels, the shape picked from its pills.
-    drive.getPower().triggerClick();
-    check (pumpUntil ([&] { return param (p, ParamID::driveOn) >= 0.5f && drive.getDial (0).getAlpha() >= 1.0f; }),
-           "the drive's power switches it on, and lights it");
     drive.getDial (0).setValue (0.5, juce::sendNotificationSync);
     check (approx (param (p, ParamID::driveAmount), 0.5f, 1e-4f)
                && p.getState().getParameter (ParamID::driveAmount)->getCurrentValueAsText() == "+18.0 dB",
@@ -1325,34 +1392,154 @@ void testEffectsTab()
     check (approx (param (p, ParamID::driveShape), 1.0f, 1e-6f) && shape.getSelected() == 1
                && pumpUntil ([&drive] { return drive.getDisplay().getDriveState().shape == 1; }),
            "clicking TUBE picks it, and the curve leans");
-    snapshot (render (*editor), "12-effects-on");
+    snapshot (render (*editor), "13-effects-on");
 
-    // The drive stays first: dragging it does nothing.
-    dragCard (drive, 400.0f);
-    check (drive.getPlace() == 1 && drive.getBounds() == effects.slotBounds (1) && param (p, ParamID::effectsOrder) < 0.5f,
-           "the drive can't be dragged out of first place");
+    // Dragging a card moves it anywhere on the area.
+    dragCard (delay, { 0.0f, 80.0f });
+    check (pumpUntil ([&] { return delay.getBounds() == effects.boundsFor (Kind::delay); })
+               && approx (rack.positionOf (Kind::delay).y, Rack::defaultPosition (1).y + 80.0f, 0.5f),
+           "dragging the delay's header moves it down, and the area keeps the spot");
+    check (effects.getChain() == std::vector<Kind> { Kind::drive, Kind::delay, Kind::reverb }, "still in the same row, so the order holds");
 
-    // Dragging the delay past the reverb swaps them.
-    dragCard (delay, EffectsView::cardWidth + EffectsView::stub);
-    check (param (p, ParamID::effectsOrder) >= 0.5f && p.currentSettings().effects.reverbFirst, "dragging the delay right puts it last");
-    check (reverb.getPlace() == 2 && delay.getPlace() == 3 && reverb.getBounds() == effects.slotBounds (2)
-               && delay.getBounds() == effects.slotBounds (3),
-           "and the cards swap places");
-    dragCard (delay, 100.0f);
-    check (param (p, ParamID::effectsOrder) >= 0.5f && delay.getBounds() == effects.slotBounds (3), "a short drag puts it back where it was");
-    snapshot (render (*editor), "13-effects-reordered");
-    setParam (p, ParamID::effectsOrder, 0.0f);
-    check (pumpUntil ([&] { return delay.getPlace() == 2 && delay.getBounds() == effects.slotBounds (2); }),
-           "a host changing the order moves the cards too");
+    // Dropping one card on another swaps the two (how a full row is reordered).
+    dragCard (reverb, { -2.0f * (Rack::cardWidth + Rack::gap), 0.0f });
+    check (pumpUntil ([&] { return reverb.getBounds() == effects.boundsFor (Kind::reverb) && drive.getBounds() == effects.boundsFor (Kind::drive); })
+               && rack.positionOf (Kind::reverb) == Rack::defaultPosition (0) && rack.positionOf (Kind::drive) == Rack::defaultPosition (2),
+           "dropping the reverb on the drive swaps them, the drive gliding over");
+    check (reverb.getPlace() == 1 && delay.getPlace() == 2 && drive.getPlace() == 3
+               && p.currentSettings().effects.order == Effects::Order { Kind::reverb, Kind::delay, Kind::drive },
+           "so the reverb now comes first and the drive last, in the headers and the sound");
+    snapshot (render (*editor), "14-effects-reordered");
+
+    // The cross takes an effect out of the chain, keeping its settings and place.
+    const auto cross = delay.closeBounds().getCentre();
+    delay.mouseDown (mouseAt (delay, cross));
+    check (param (p, ParamID::delayInChain) < 0.5f && ! p.currentSettings().effects.delay.on && param (p, ParamID::delayOn) >= 0.5f,
+           "the delay's cross takes it out of the chain, silent, its switch as it was");
+    check (pumpUntil ([&delay] { return ! delay.isVisible(); }) && effects.getChain() == std::vector<Kind> { Kind::reverb, Kind::drive }
+               && drive.getPlace() == 2,
+           "its card fades out, and the drive moves up to second");
+    const auto delayWas = rack.positionOf (Kind::delay);
+    clickFor ({ 0.0f, 0.0f });
+    check (tray.getChoice (1).enabled && ! tray.getChoice (0).enabled, "the delay is back in the tray");
+    tray.mouseDown (mouseAt (tray, tray.choiceBounds (1).getCentre()));
+    check (pumpUntil ([&delay] { return delay.isVisible() && delay.getAlpha() >= 1.0f; })
+               && approx (param (p, ParamID::delayFeedback), 0.6f, 1e-4f) && param (p, ParamID::delaySync) >= 0.5f,
+           "adding it again brings it back with its settings");
+    check (rack.positionOf (Kind::delay) != delayWas && effects.getChain() == std::vector<Kind> { Kind::reverb, Kind::delay, Kind::drive },
+           "on the free spot nearest the click, back in the chain where it now reads");
+
+    // A host taking an effect out (undo, a restored set) takes its card away too.
+    setParam (p, ParamID::reverbInChain, 0.0f);
+    check (pumpUntil ([&reverb] { return ! reverb.isVisible(); })
+               && std::find (effects.getChain().begin(), effects.getChain().end(), Kind::reverb) == effects.getChain().end(),
+           "a host taking the reverb out hides its card");
 
     // Scaled up: the same face at 2x.
     editor->setSize (2080, 1832);
     check (delay.getWidth() == 584 && approx ((float) delay.getDial (2).getWidth(), 104.0f, 1.0f), "at 2x the cards and dials double");
+    check (delay.getBounds() == effects.boundsFor (Kind::delay), "each card where the area keeps it");
     check (hasDetail (render (*editor)), "renders at 2x");
     editor->setSize (1040, 916);
 
     editor->mouseDown (mouseAt (*editor, editor->tabBounds (Tab::bench).getCentre()));
     check (editor->getTab() == Tab::bench && bench.isVisible() && ! effects.isVisible(), "BENCH brings the bench back");
+}
+
+// The effects' layout as the processor keeps it: saved and restored, an
+// older session brought over, a preset setting them out.
+void testEffectsRack()
+{
+    std::printf ("Effects rack:\n");
+    using Kind = Rack::Kind;
+
+    Synth2AudioProcessor a;
+    Rack::Model rack (a.getState());
+    check (rack.add (Kind::reverb, Rack::defaultPosition (0)) && rack.add (Kind::drive, Rack::defaultPosition (1)),
+           "effects go into the chain");
+    check (! rack.add (Kind::reverb, Rack::defaultPosition (2)), "one of each");
+    check (a.currentSettings().effects.order == Effects::Order { Kind::reverb, Kind::drive, Kind::delay },
+           "the reverb, then the drive, as they read in");
+
+    // A card brushing another slides off to the nearest free spot.
+    const auto drivePlace = rack.positionOf (Kind::drive);
+    const auto landed = rack.move (Kind::reverb, Rack::defaultPosition (0) + juce::Point<float> (Rack::cardWidth * 0.4f, 0.0f));
+    check (! Rack::boundsAt (landed).intersects (rack.boundsOf (Kind::drive)) && rack.positionOf (Kind::drive) == drivePlace,
+           "a card dropped partly over another slides off it, leaving it be");
+    rack.move (Kind::reverb, Rack::defaultPosition (1));
+    check (rack.positionOf (Kind::reverb) == drivePlace && rack.positionOf (Kind::drive) == landed,
+           "dropped right on it, the two swap places");
+
+    // A card moved to a lower row comes after the row above.
+    rack.move (Kind::drive, { Rack::defaultPosition (0).x, Rack::areaHeight - Rack::cardHeight });
+    rack.move (Kind::reverb, { Rack::defaultPosition (1).x, 0.0f });
+    check (rack.readingOrder() == std::vector<Kind> { Kind::reverb, Kind::drive }
+               && a.currentSettings().effects.order == Effects::Order { Kind::reverb, Kind::drive, Kind::delay },
+           "a card well below the other starts a new row, after it, even to its left");
+
+    juce::MemoryBlock saved;
+    a.getStateInformation (saved);
+    Synth2AudioProcessor b;
+    b.setStateInformation (saved.getData(), (int) saved.getSize());
+    const Rack::Model rackB (b.getState());
+    check (rackB.inChain() == std::vector<Kind> { Kind::drive, Kind::reverb } && rackB.positionOf (Kind::reverb) == rack.positionOf (Kind::reverb)
+               && rackB.positionOf (Kind::drive) == rack.positionOf (Kind::drive),
+           "a saved set comes back with the same effects, where they were");
+    check (b.currentSettings().effects.order == a.currentSettings().effects.order, "playing in the same order");
+
+    Synth2AudioProcessor fresh;
+    fresh.getStateInformation (saved);
+    Synth2AudioProcessor c;
+    c.setStateInformation (saved.getData(), (int) saved.getSize());
+    check (Rack::Model (c.getState()).isEmpty(), "an empty chain comes back empty");
+
+    // A session from before the rack had all three on the tab, side by side
+    // in the order they played: it opens as it was, sounding the same.
+    for (const float order : { 0.0f, 1.0f })
+    {
+        auto older = fresh.getState().copyState().createCopy();
+        older.removeChild (older.getChildWithName (Rack::rackType), nullptr);
+        for (const auto kind : Rack::allEffects)
+            older.removeChild (older.getChildWithProperty ("id", juce::String (Rack::inChainParameter (kind))), nullptr);
+        juce::ValueTree parameter ("PARAM");
+        parameter.setProperty ("id", ParamID::effectsOrder, nullptr);
+        parameter.setProperty ("value", order, nullptr);
+        older.appendChild (parameter, nullptr);
+        older.getChildWithProperty ("id", juce::String (ParamID::reverbOn)).setProperty ("value", 1.0f, nullptr);
+
+        juce::MemoryBlock block;
+        juce::AudioProcessor::copyXmlToBinary (*older.createXml(), block);
+        Synth2AudioProcessor d;
+        d.setStateInformation (block.getData(), (int) block.getSize());
+        const Rack::Model rackD (d.getState());
+        const auto expected = order > 0.5f ? Effects::Order { Kind::drive, Kind::reverb, Kind::delay } : Effects::defaultOrder;
+        check (rackD.inChain().size() == 3 && rackD.readingOrder() == std::vector<Kind> (expected.begin(), expected.end())
+                   && d.currentSettings().effects.order == expected,
+               order > 0.5f ? "an older set with the reverb first opens with all three, the reverb before the delay"
+                            : "an older set opens with all three: the drive, the delay, the reverb");
+        check (d.currentSettings().effects.reverb.on && ! d.currentSettings().effects.delay.on,
+               "each switched on or off as it was");
+    }
+
+    // A preset puts just its effects in the chain, side by side.
+    const auto presetNamed = [] (const char* name)
+    {
+        for (int i = 0; i < Presets::numPresets; ++i)
+            if (juce::String (Presets::factory[(size_t) i].name) == name)
+                return i;
+        return 0;
+    };
+    a.loadPreset (presetNamed ("Supersaw Pad"));
+    check (rack.inChain() == std::vector<Kind> { Kind::delay, Kind::reverb }
+               && rack.positionOf (Kind::delay) == Rack::defaultPosition (0) && rack.positionOf (Kind::reverb) == Rack::defaultPosition (1),
+           "a preset with a delay and a reverb puts those two in, side by side");
+    check (a.currentSettings().effects.order == Effects::Order { Kind::delay, Kind::reverb, Kind::drive }
+               && a.currentSettings().effects.delay.on && a.currentSettings().effects.reverb.on,
+           "playing the delay, then the reverb");
+    a.loadPreset (presetNamed ("Sub Bass"));
+    check (rack.isEmpty() && ! a.currentSettings().effects.reverb.on, "one with none empties the chain");
+    a.loadPreset (0);
+    check (rack.isEmpty(), "and Empty Bench leaves it empty");
 }
 
 // ---- Presets ----------------------------------------------------------------------
@@ -1647,6 +1834,7 @@ int main()
     testBypass();
     testViews();
     testEffectsTab();
+    testEffectsRack();
     testTypedKeys();
 
     std::printf ("\n%s\n", failures == 0 ? "ALL TESTS PASSED" : "SOME TESTS FAILED");

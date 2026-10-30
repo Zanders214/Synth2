@@ -13,6 +13,7 @@
 #include "PluginProcessor.h"
 #include "Bench.h"
 #include "ParamIDs.h"
+#include "Rack.h"
 #include <cstdio>
 
 // The whole audio callback, not just the engine, runs as a real-time context:
@@ -45,6 +46,9 @@ int main()
     set (ParamID::osc2Voices, 16.0f);
     set (ParamID::env1On, 1.0f);
     Bench::Model bench (proc.getState());
+    Rack::Model rack (proc.getState());
+    for (const auto kind : Rack::allEffects)   // and an empty EFFECTS tab
+        set (Rack::inChainParameter (kind), 1.0f);
 
     juce::AudioBuffer<float> buffer (2, bs);
     const int blocks = (int) (sr / bs) * 2;          // ~2 s of callbacks
@@ -116,6 +120,14 @@ int main()
         // The effects switch on and off, swap order and change time mid-note.
         if (b % 24 == 12)
         {
+            // A new order every 72 blocks: every card out, then back in, rotated.
+            if (b % 72 == 12)
+            {
+                for (const auto kind : Rack::allEffects)
+                    rack.remove (kind);
+                for (int place = 0; place < Effects::numKinds; ++place)
+                    rack.add (Rack::allEffects[(size_t) ((place + b / 72) % Effects::numKinds)], Rack::defaultPosition (place));
+            }
             set (ParamID::driveOn,       (float) ((b / 24 + 2) % 3 != 0));
             set (ParamID::driveAmount,   0.25f * (float) ((b / 24) % 5));
             set (ParamID::driveShape,    (float) ((b / 24) % 3));
@@ -131,7 +143,6 @@ int main()
             set (ParamID::reverbSize,    0.2f * (float) ((b / 24) % 6));
             set (ParamID::reverbPreDelay, 40.0f * (float) ((b / 24) % 7));
             set (ParamID::reverbDamping, 0.25f * (float) ((b / 24) % 5));
-            set (ParamID::effectsOrder,  (float) ((b / 72) % 2));
         }
 
         audioCallback (proc, buffer, midi);         // the full callback, under RTSan

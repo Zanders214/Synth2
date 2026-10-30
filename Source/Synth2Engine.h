@@ -33,8 +33,9 @@
     output (see OscillatorSettings::routed), or switched off with its power
     switch (OscillatorSettings::active), is silent, as if it were off.
 
-    Every note goes through the effects together, the delay and the reverb
-    (see Effects.h), before OUTPUT.
+    Every note goes through the effects together, the drive, the delay and
+    the reverb in whichever order the settings say (see Effects.h), before
+    OUTPUT.
 
     MIDI is read sample-accurately: the block is rendered up to each event,
     then the event applied. A seventeenth note takes over the voice that has

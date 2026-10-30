@@ -63,6 +63,11 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
     {
         openAddTray (benchAt, viewAt + bench.getPosition());
     });
+    // And on the EFFECTS tab, offers the effects not yet in the chain.
+    effects.onEmptyClick ([this] (juce::Point<float> rackAt, juce::Point<int> viewAt)
+    {
+        openEffectTray (rackAt, viewAt + effects.getPosition());
+    });
 
     for (int slot = 0; slot < Bench::numOscillators; ++slot)
     {
@@ -119,6 +124,7 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
         flow->endChangeGesture();
         showFlow();
     });
+    effectTray.onChoose ([this] (int choice) { effects.add (Rack::allEffects[(size_t) choice], effectAt); });
     presetTray.onChoose ([this] (int choice) { processorRef.loadPreset (choice); });
 
     setResizable (true, true);
@@ -131,6 +137,7 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
     for (auto& menu : waveMenus)
         addChildComponent (menu);   // last, so the trays open over everything
     addChildComponent (addTray);
+    addChildComponent (effectTray);
     addChildComponent (settingsTray);
     addChildComponent (presetTray);
     resized();
@@ -265,6 +272,7 @@ void Synth2AudioProcessorEditor::timerCallback()
     // automation, a restored session), and the envelope the notes as they
     // play; each display repaints only when its state moved.
     bench.sync();
+    effects.sync();
     const auto settings = processorRef.currentSettings();
     effects.refresh (settings.effects);
     std::array<int, Bench::numOscillators> shapedBy {};
@@ -351,6 +359,24 @@ void Synth2AudioProcessorEditor::openAddTray (juce::Point<float> benchAt, juce::
                                           : juce::String ("All four are on the bench"), envelopesLeft > 0 } };
     addTray.setBounds (getLocalBounds());
     addTray.open ("ADD TO THE BENCH", std::move (choices), editorAt);
+}
+
+void Synth2AudioProcessorEditor::openEffectTray (juce::Point<float> rackAt, juce::Point<int> editorAt)
+{
+    effectAt = rackAt;
+    const Rack::Model rack (processorRef.getState());
+    std::vector<ChoiceTray::Choice> choices {
+        { "Drive",  "Grit and warmth: WARM, TUBE or HARD" },
+        { "Delay",  "Repeats, free or on the beat" },
+        { "Reverb", "A room, from a small one to a hall" } };
+    for (size_t i = 0; i < choices.size(); ++i)
+        if (rack.isInChain (Rack::allEffects[i]))
+        {
+            choices[i].detail  = "Already in the chain";
+            choices[i].enabled = false;
+        }
+    effectTray.setBounds (getLocalBounds());
+    effectTray.open ("ADD AN EFFECT", std::move (choices), editorAt);
 }
 
 void Synth2AudioProcessorEditor::openSettings()
@@ -734,7 +760,7 @@ void Synth2AudioProcessorEditor::resized()
     auto& animator = juce::Desktop::getInstance().getAnimator();
     for (auto& menu : waveMenus)
         animator.cancelAnimation (&menu, true);
-    for (auto* tray : { &addTray, &settingsTray, &presetTray })
+    for (auto* tray : { &addTray, &effectTray, &settingsTray, &presetTray })
         animator.cancelAnimation (tray, true);
 
     uiScale = (float) getWidth() / designWidth;
@@ -748,7 +774,7 @@ void Synth2AudioProcessorEditor::resized()
         menu.setUiScale (s);
         menu.setBounds (getLocalBounds());
     }
-    for (auto* tray : { &addTray, &settingsTray, &presetTray })
+    for (auto* tray : { &addTray, &effectTray, &settingsTray, &presetTray })
     {
         tray->setUiScale (s);
         tray->setBounds (getLocalBounds());
