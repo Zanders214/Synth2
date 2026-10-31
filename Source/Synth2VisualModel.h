@@ -287,42 +287,57 @@ struct Synth2VisualModel
 
     /** Whether handle `h` is there to drag in a well `width` by `height`
         pixels, its dots `radius` across: every corner is, and a ramp's dot
-        once its ramp is long enough to keep the dot clear of the corners
-        (a decay to a SUSTAIN at the top, or a release from silence, has no
-        fall to bend). */
+        while its ramp is long enough to bend (a decay to a SUSTAIN at the
+        top, or a release from silence, has no fall to bend) and the dot,
+        wherever its bend has taken it, stays clear enough of every corner
+        to be pressed (see handleAt). */
     static bool isShown (const Envelope& e, Handle h, float width, float height, float radius) noexcept
     {
         const auto longEnough = [&] (float x0, float y0, float x1, float y1)
         {
             return std::hypot ((x1 - x0) * width, (y1 - y0) * height) >= 3.0f * radius && std::abs (y1 - y0) * height >= radius;
         };
+        bool canBend = true;
         switch (h)
         {
-            case Handle::attackCurve:  return longEnough (e.delayEnd, 0.0f, e.attackEnd, e.peak);
-            case Handle::decayCurve:   return longEnough (e.holdEnd, e.peak, e.decayEnd, e.sustain);
-            case Handle::releaseCurve: return longEnough (e.sustainEnd, e.sustain, e.releaseEnd, 0.0f);
+            case Handle::attackCurve:  canBend = longEnough (e.delayEnd, 0.0f, e.attackEnd, e.peak); break;
+            case Handle::decayCurve:   canBend = longEnough (e.holdEnd, e.peak, e.decayEnd, e.sustain); break;
+            case Handle::releaseCurve: canBend = longEnough (e.sustainEnd, e.sustain, e.releaseEnd, 0.0f); break;
             case Handle::delay:
             case Handle::attack:
             case Handle::hold:
             case Handle::decay:
-            case Handle::release:      break;
+            case Handle::release:      return true;
         }
-        return true;
+        const auto dot = handlePosition (e, h);
+        for (int corner = 0; corner < numCorners && canBend; ++corner)
+        {
+            const auto p = handlePosition (e, (Handle) corner);
+            canBend = std::hypot ((dot.x - p.x) * width, (dot.y - p.y) * height) >= minDotGap;
+        }
+        return canBend;
     }
+
+    /** How near (in pixels) a ramp's dot may come to a corner and still be
+        pressed: a press takes the dot when it is nearer to it than to the
+        corner by a pixel. */
+    static constexpr float minDotGap = 2.0f;
 
     /** The handle under a point (0..1 across and up a well `width` by
         `height` pixels), within `radius` pixels, or -1 for none. Where two
         handles sit on each other (a HOLD of 0 puts its corner on ATTACK's), a
         press on them takes the earlier one, and a press a few pixels to
-        their right the later one, so it can be pulled out. The corners come
-        before the ramps' dots. */
+        their right the later one, so it can be pulled out. A ramp's dot,
+        however far its bend has carried it towards a corner, takes a press
+        nearer to it than to the corner (by a pixel, so a tie goes to the
+        corner). */
     static int handleAt (const Envelope& e, Dot at, float width, float height, float radius) noexcept
     {
         int   best     = -1;
         float bestDist = radius;
         for (int h = 0; h < numHandles; ++h)
         {
-            if (isCurve ((Handle) h) && (best >= 0 || ! isShown (e, (Handle) h, width, height, radius)))
+            if (isCurve ((Handle) h) && ! isShown (e, (Handle) h, width, height, radius))
                 continue;
             const auto  p    = handlePosition (e, (Handle) h);
             const float dist = std::hypot ((at.x - p.x) * width, (at.y - p.y) * height);

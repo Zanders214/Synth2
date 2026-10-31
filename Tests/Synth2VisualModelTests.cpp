@@ -399,6 +399,20 @@ void testEnvelope()
     const auto dot = at (e, Handle::decayCurve);
     check (M::handleAt (e, dot, width, height, radius) == (int) Handle::decayCurve, "a press on a ramp's dot takes it");
     check (M::handleAt (e, at (e, Handle::attack), width, height, radius) == (int) Handle::attack, "and a press on a corner still takes the corner");
+
+    // A short attack bent all the way up carries its dot close to the
+    // corner at the top: a press on the dot still takes the dot.
+    M::EnvelopeDials steep;
+    steep.decay       = 1.0f;
+    steep.release     = 1.0f;
+    steep.sustain     = 0.5f;
+    steep.attackCurve = 1.0f;
+    const auto s  = M::envelope (steep);
+    const auto sd = at (s, Handle::attackCurve);
+    check (M::isShown (s, Handle::attackCurve, 200.0f, 100.0f, radius)
+               && M::handleAt (s, sd, 200.0f, 100.0f, radius) == (int) Handle::attackCurve
+               && M::handleAt (s, at (s, Handle::attack), 200.0f, 100.0f, radius) == (int) Handle::attack,
+           "a dot bent close to a corner is still pressed as the dot, and the corner as the corner");
 }
 } // namespace
 
