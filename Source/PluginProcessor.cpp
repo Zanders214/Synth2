@@ -566,8 +566,21 @@ double Synth2AudioProcessor::getTailLengthSeconds() const
     const auto settings = currentSettings();
     double tail = Synth2Engine::gateReleaseSeconds;
     for (const auto& oscillator : settings.oscillators)
-        if (oscillator.on && oscillator.active && oscillator.envelope >= 0)
-            tail = juce::jmax (tail, (double) settings.envelopes[(size_t) oscillator.envelope].releaseSeconds);
+    {
+        if (! oscillator.on || ! oscillator.active)
+            continue;
+        double release = oscillator.envelope >= 0 ? (double) settings.envelopes[(size_t) oscillator.envelope].releaseSeconds
+                                                  : Synth2Engine::gateReleaseSeconds;
+        // A resonant filter rings on after the release, longest where its
+        // sweep takes the cutoff lowest.
+        if (oscillator.filter >= 0)
+        {
+            const auto& filter = settings.filters[(size_t) oscillator.filter];
+            const float lowest = filter.cutoffHz * std::exp2 (juce::jmin (0.0f, filter.envAmount) / 12.0f);
+            release += Filter::ringSeconds (filter.type, lowest, filter.resonance);
+        }
+        tail = juce::jmax (tail, release);
+    }
     return tail + Effects::tailSeconds (settings.effects);
 }
 

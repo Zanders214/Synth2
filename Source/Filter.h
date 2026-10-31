@@ -46,6 +46,26 @@ public:
         primed = false;
     }
 
+    /** Whether the filter is still ringing from what it heard: a resonant
+        filter goes on sounding for a while after its input stops. */
+    bool isRinging() const noexcept
+    {
+        for (const auto& stage : state)
+            if (std::abs (stage.ic1) > ringFloor || std::abs (stage.ic2) > ringFloor)
+                return true;
+        return false;
+    }
+
+    /** About how long `type` at `cutoffHz` and `resonance` rings on after
+        its input stops, until it is quiet (see isRinging). */
+    static double ringSeconds (Type type, float cutoffHz, float resonance) noexcept
+    {
+        // A resonance's ring falls by e every 2Q / (2 pi f) seconds; 80 dB is
+        // about 9.2 of those.
+        const double q = std::max (resonantQ (type, resonance), firstStageQ);
+        return 9.2 * 2.0 * q / (2.0 * pi * std::max ((double) cutoffHz, (double) minHz));
+    }
+
     /** Filters `numSamples` of `left` and `right` in place as `type`, the
         cutoff gliding to `cutoffHz` across them. */
     void process (float* left, float* right, int numSamples, Type type, float cutoffHz, float resonance) noexcept
@@ -113,6 +133,7 @@ public:
 
 private:
     static constexpr double firstStageQ = 0.5412;   // with 1.3066, a 4-pole Butterworth
+    static constexpr double ringFloor   = 1.0e-4;   // -80 dB: quiet enough to stop
     static constexpr double pi = 3.14159265358979323846;
 
     // One stage's memory: its two integrators.

@@ -234,11 +234,13 @@ public:
                 part.envelopeLevel = part.envelope.getLevel();
             }
             part.level = osc.level;
-            sounding = sounding || (running && part.envelope.isActive());
+            sounding = sounding || (running && (part.envelope.isActive() || part.filter.isRinging()));
         }
 
         // Once the key is up, the note lasts as long as the envelopes of the
-        // oscillators actually playing it.
+        // oscillators actually playing it, and then as long as a resonant
+        // filter after one still rings, so the ringing dies away rather than
+        // stopping dead.
         if (! sounding && ! held && ! sustained)
             kill();
     }

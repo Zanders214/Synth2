@@ -1225,6 +1225,43 @@ void testFilterInNotes()
     check (loudest > 0.05f && biggestStep < 3.0f * sineStep,
            "switching the filter off and on mid-note glides rather than jumps (largest step " + std::to_string (biggestStep)
                + ", the sine's own " + std::to_string (sineStep) + ")");
+
+    // A resonant filter rings on after a short release: the note lasts until
+    // the ringing dies away, rather than stopping dead in the middle of it.
+    auto ringing = defaults (Waveform::sine);
+    ringing.oscillators[0].envelope    = 0;
+    ringing.envelopes[0].releaseSeconds = 0.005f;
+    ringing.oscillators[0].filter = 0;
+    ringing.filters[0].type       = Filter::Type::low12;
+    ringing.filters[0].cutoffHz   = 110.0f;
+    ringing.filters[0].resonance  = 1.0f;
+    ringing.filters[0].envAmount  = 0.0f;
+    auto rung = makeEngine (ringing);
+    const int releaseAt = 24000;
+    const auto tail = run (*rung, releaseAt + 2400, { { 0, on (45) }, { releaseAt, off (45) } });
+    const bool stillOn = rung->getNumActiveNotes() == 1;
+    const auto after = run (*rung, (int) sampleRate * 2);
+    float ringStep = 0.0f, ringPeak = 0.0f, previous = 0.0f;
+    for (int n = releaseAt - 2400; n < tail.getNumSamples(); ++n)
+    {
+        ringPeak = std::max (ringPeak, std::abs (tail.getSample (0, n)));
+        ringStep = std::max (ringStep, std::abs (tail.getSample (0, n) - (n > releaseAt - 2400 ? previous : tail.getSample (0, n))));
+        previous = tail.getSample (0, n);
+    }
+    for (int n = 0; n < after.getNumSamples(); ++n)
+    {
+        ringStep = std::max (ringStep, std::abs (after.getSample (0, n) - previous));
+        previous = after.getSample (0, n);
+    }
+    const float ringSine = ringPeak * (float) (juce::MathConstants<double>::twoPi * 110.0 / sampleRate);
+    check (stillOn && std::abs (tail.getSample (0, tail.getNumSamples() - 1)) > 1.0e-3f,
+           "a sine through LOW 12 at its own pitch, full resonance, still rings 45 ms after a 5 ms release");
+    check (ringStep < 2.0f * ringSine && rung->getNumActiveNotes() == 0 && std::abs (previous) < 1.0e-3f,
+           "and dies away smoothly, then the note ends (largest step " + std::to_string (ringStep) + ", the ring's own "
+               + std::to_string (ringSine) + ")");
+    check (Filter::ringSeconds (Filter::Type::low12, 110.0f, 1.0f) > 0.5 && Filter::ringSeconds (Filter::Type::low12, 110.0f, 1.0f) < 2.0
+               && Filter::ringSeconds (Filter::Type::low12, 110.0f, 0.0f) < 0.05,
+           "how long a filter rings: about a second resonating hard at 110 Hz, hardly at all with no resonance");
 }
 
 // ---- Test 12b: the drive ----------------------------------------------------------------

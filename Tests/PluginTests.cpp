@@ -401,6 +401,10 @@ void testFilters()
     check (approx (settings.filters[1].cutoffHz, 300.0f, 0.5f) && approx (settings.filters[1].resonance, 0.7f, 1e-4f)
                && settings.filters[1].type == Filter::Type::band && approx (settings.filters[1].sweep.decaySeconds, 0.2f, 1e-3f),
            "its settings and its sweep's stages reach the engine");
+    const double tailBefore = p.getTailLengthSeconds();
+    setParam (p, ids.cutoff, 100.0f);
+    setParam (p, ids.resonance, 1.0f);
+    check (p.getTailLengthSeconds() > tailBefore + 0.5, "resonating hard at 100 Hz, it adds its ring to the tail the host waits for");
     setParam (p, ids.active, 0.0f);
     check (p.currentSettings().oscillators[1].filter == -1, "switched off, it lets OSC 2 through unfiltered");
     setParam (p, ids.active, 1.0f);
