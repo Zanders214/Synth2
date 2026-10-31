@@ -674,7 +674,11 @@ void testEditor()
 
     // A click on the bench offers what can go on it, there.
     auto& tray = editor->getTrays().getAdd();
-    const auto clickBench = [&] (juce::Point<float> at) { bench.mouseDown (mouseAt (bench, at)); };
+    const auto clickBench = [&] (juce::Point<float> at)
+    {
+        bench.mouseDown (mouseAt (bench, at));
+        bench.mouseUp (mouseAt (bench, at, at));
+    };
     const auto addAt = [&] (int choice, juce::Point<float> at)
     {
         clickBench (at);
@@ -714,7 +718,7 @@ void testEditor()
     check (model.positionOf (osc1.getId()) == juce::Point<float> (252.0f, 0.0f) && osc1.getPosition() == juce::Point<int> (252, 0),
            "dragging OSC 1's header moves it, and the bench keeps the spot");
     dragHeader (osc1, { 2000.0f, 0.0f });
-    check (osc1.getRight() <= bench.getWidth() && model.positionOf (osc1.getId()).x <= Bench::areaWidth - Bench::moduleWidth,
+    check (osc1.getRight() <= bench.getWidth() && model.positionOf (osc1.getId()).x <= Bench::viewWidth - Bench::moduleWidth,
            "a module can't be dragged off the bench");
     dragHeader (osc1, { -(float) osc1.getX() + 252.0f, 0.0f });
 
@@ -722,7 +726,7 @@ void testEditor()
     addAt (0, { 900.0f, 40.0f });
     auto& osc2 = bench.getOscillator (1);
     check (param (p, ParamID::osc2On) >= 0.5f && pumpUntil ([&osc2] { return osc2.isVisible(); }), "a second oscillator is OSC 2");
-    check (juce::exactlyEqual (model.positionOf (osc2.getId()).x, Bench::areaWidth - Bench::moduleWidth), "kept inside the bench");
+    check (juce::exactlyEqual (model.positionOf (osc2.getId()).x, Bench::viewWidth - Bench::moduleWidth), "kept inside the bench's box");
     dragHeader (osc2, juce::Point<float> (300.0f, 30.0f) - osc2.getPosition().toFloat());
     const auto landed = model.positionOf (osc2.getId());
     check (! model.boundsOf (osc2.getId()).intersects (model.boundsOf (osc1.getId()))
@@ -1310,6 +1314,250 @@ void testViews()
            "Both and Full bring the cards back as they were");
 }
 
+// Turns the wheel over `target` at `at` by `delta` (holding Cmd / Ctrl when `command`).
+void wheelAt (juce::Component& target, juce::Point<float> at, juce::Point<float> delta, bool command = false)
+{
+    const auto now = juce::Time::getCurrentTime();
+    const juce::MouseEvent e (juce::Desktop::getInstance().getMainMouseSource(), at,
+                              command ? juce::ModifierKeys (juce::ModifierKeys::commandModifier) : juce::ModifierKeys(),
+                              1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &target, &target, now, at, now, 0, false);
+    juce::MouseWheelDetails wheel {};
+    wheel.deltaX   = delta.x;
+    wheel.deltaY   = delta.y;
+    wheel.isSmooth = true;
+    target.mouseWheelMove (e, wheel);
+}
+
+void testBenchZoom()
+{
+    std::printf ("Bench zoom and pan:\n");
+
+    Synth2AudioProcessor p;
+    p.prepareToPlay (48000.0, 512);
+    std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
+    auto* editor = dynamic_cast<Synth2AudioProcessorEditor*> (base.get());
+    if (editor == nullptr)
+        return;
+
+    auto& bench = editor->getBench();
+    auto& pill  = bench.getZoomPill();
+    Bench::Model model (p.getState());
+    using Kind = Bench::Kind;
+    check (bench.getViewport() == Bench::Viewport {} && pill.zoomText() == "100%", "a new bench opens at 100%, on the canvas's top left");
+    check (pill.isVisible() && pill.getRight() < bench.getRight() && pill.getRight() > bench.getRight() - 30
+               && pill.getY() < bench.getBottom() && pill.getBottom() > bench.getBottom() && pill.getBottom() < editor->getKeyboard().getY(),
+           "with the zoom pill on its bottom edge, at its right, clear of the keyboard");
+    check (approx (Bench::areaWidth / Bench::areaHeight, Bench::viewWidth / Bench::viewHeight, 0.01f)
+               && Bench::areaWidth >= 6.0f * Bench::moduleWidth + 5.0f * Bench::gap && Bench::areaHeight >= 3.0f * Bench::oscillatorHeight + 2.0f * Bench::gap,
+           "the canvas holds three rows of six cards, in the box's proportions");
+
+    // Three oscillators and two envelopes, one oscillator and one envelope
+    // past what the box shows at 100%.
+    const Bench::ModuleId o1 { Kind::oscillator, 0 }, o2 { Kind::oscillator, 1 }, o3 { Kind::oscillator, 2 };
+    const Bench::ModuleId e1 { Kind::envelope, 0 },   e2 { Kind::envelope, 1 };
+    bench.add (Kind::oscillator, { 0.0f, 0.0f });
+    bench.add (Kind::oscillator, { 252.0f, 0.0f });
+    bench.add (Kind::envelope, { 0.0f, 352.0f });
+    model.add (Kind::oscillator, { 1100.0f, 0.0f });
+    model.add (Kind::envelope, { 1260.0f, 704.0f });
+    auto& osc1 = bench.getModule (o1);
+    auto& osc3 = bench.getModule (o3);
+    auto& env1 = bench.getModule (e1);
+    auto& env2 = bench.getModule (e2);
+    check (pumpUntil ([&] { return osc3.isVisible() && env2.isVisible() && osc3.getAlpha() >= 1.0f; }) && model.positionOf (o3) == juce::Point<float> (1100.0f, 0.0f),
+           "cards can sit anywhere on the canvas");
+    check (osc3.getX() >= bench.getWidth() && env2.getY() >= bench.getHeight(), "and those past the box are out of sight");
+
+    // Cmd + wheel zooms round the pointer, as does a pinch.
+    bench.setViewport ({ 1.0f, { 300.0f, 200.0f } });
+    const juce::Point<float> pointer (400.0f, 300.0f);
+    const auto under = bench.toDesign (pointer);
+    wheelAt (bench, pointer, { 0.0f, 0.1f }, true);
+    const float zoomedIn = bench.getViewport().zoom;
+    check (zoomedIn > 1.1f && bench.toDesign (pointer).getDistanceFrom (under) < 0.01f, "Cmd + wheel up zooms in, the canvas under the pointer staying put");
+    check (osc1.getWidth() == juce::roundToInt (Bench::moduleWidth * zoomedIn) && osc1.getBounds() == bench.boundsFor (o1)
+               && approx ((float) osc1.getDial (0).getWidth(), 52.0f * zoomedIn, 1.0f),
+           "and the cards are drawn bigger, dials and all");
+    wheelAt (bench, pointer, { 0.0f, -0.2f }, true);
+    check (bench.getViewport().zoom < 1.0f && bench.toDesign (pointer).getDistanceFrom (under) < 0.01f, "Cmd + wheel down zooms out round it");
+    const float beforePinch = bench.getViewport().zoom;
+    bench.mouseMagnify (mouseAt (bench, pointer), 1.2f);
+    check (approx (bench.getViewport().zoom, beforePinch * 1.2f, 1e-4f) && bench.toDesign (pointer).getDistanceFrom (under) < 0.01f,
+           "a pinch zooms round the pointer too");
+    wheelAt (bench, pointer, { 0.0f, -5.0f }, true);
+    check (juce::exactlyEqual (bench.getViewport().zoom, Bench::fitZoom) && bench.getViewport().visibleArea().contains (juce::Rectangle<float> (Bench::areaWidth, Bench::areaHeight)),
+           "zooming out stops with the whole canvas in the box");
+    wheelAt (bench, pointer, { 0.0f, 5.0f }, true);
+    check (juce::exactlyEqual (bench.getViewport().zoom, Bench::maxZoom) && pill.zoomText() == "150%", "and zooming in at 150%");
+
+    // The pill's minus and plus step through the levels, round the middle.
+    bench.setViewport ({ 1.0f, { 200.0f, 150.0f } });
+    const auto pressPill = [&pill] (ZoomPill::Part part) { pill.mouseDown (mouseAt (pill, pill.partBounds (part).getCentre())); };
+    const auto middle = bench.toDesign (bench.getLocalBounds().toFloat().getCentre());
+    pressPill (ZoomPill::Part::zoomIn);
+    check (approx (bench.getViewport().zoom, 1.25f, 1e-6f) && pill.zoomText() == "125%"
+               && bench.toDesign (bench.getLocalBounds().toFloat().getCentre()).getDistanceFrom (middle) < 0.01f,
+           "plus zooms in a step, round the middle of the box");
+    pressPill (ZoomPill::Part::zoomIn);
+    pressPill (ZoomPill::Part::zoomIn);
+    check (juce::exactlyEqual (bench.getViewport().zoom, Bench::maxZoom), "up to 150%");
+    std::vector<float> steps;
+    for (int i = 0; i < 6; ++i)
+    {
+        pressPill (ZoomPill::Part::zoomOut);
+        steps.push_back (bench.getViewport().zoom);
+    }
+    check (steps == std::vector<float> { 1.25f, 1.0f, 0.8f, Bench::fitZoom, Bench::fitZoom, Bench::fitZoom }, "minus steps back down to the whole canvas");
+
+    // Fit frames the cards.
+    bench.setViewport ({ 1.5f, {} });
+    pressPill (ZoomPill::Part::fit);
+    bool allInside = true;
+    for (const auto& id : model.present())
+        allInside = allInside && bench.getLocalBounds().contains (bench.getModule (id).getBounds());
+    check (allInside && bench.getViewport().zoom <= 1.0f, "Fit shows every card");
+    const float allFramed = bench.getViewport().zoom;
+    model.remove (o3);
+    model.remove (e2);
+    pressPill (ZoomPill::Part::fit);
+    check (pumpUntil ([&] { return ! osc3.isVisible() && ! env2.isVisible(); }) && bench.getViewport().zoom > allFramed
+               && bench.getViewport().zoom <= 1.0f && bench.getViewport().visibleArea().contains (model.extent()),
+           "with fewer cards it comes in closer, but no closer than 100%");
+    model.remove (o1);
+    model.remove (e1);
+    pressPill (ZoomPill::Part::fit);
+    check (juce::exactlyEqual (bench.getViewport().zoom, 1.0f) && bench.getViewport().visibleArea().contains (model.extent()), "as for one or two");
+    bench.add (Kind::oscillator, { 0.0f, 0.0f });
+    bench.add (Kind::envelope, { 0.0f, 352.0f });
+    model.add (Kind::envelope, { 1260.0f, 704.0f });
+    pumpUntil ([&] { return osc1.isVisible() && env1.isVisible() && env2.isVisible(); });
+
+    // The wheel pans, over the bench or a card; a dial takes it for itself.
+    bench.setViewport ({ 1.0f, { 100.0f, 100.0f } });
+    wheelAt (bench, { 600.0f, 500.0f }, { -30.0f / 512.0f, -50.0f / 512.0f });
+    check (bench.getViewport().pan.getDistanceFrom ({ 130.0f, 150.0f }) < 0.01f, "the wheel (or two fingers) pans");
+    check (bench.getViewport().pan == model.viewport().pan, "and the bench keeps where");
+    wheelAt (osc1, osc1.headerBounds().getCentre(), { 0.0f, 20.0f / 512.0f });
+    check (bench.getViewport().pan.getDistanceFrom ({ 130.0f, 130.0f }) < 0.01f, "over a card too");
+    const auto& pitch = osc1.getDial (0);
+    const double pitchBefore = pitch.getValue();
+    wheelAt (osc1.getDial (0), osc1.getDial (0).getLocalBounds().getCentre().toFloat(), { 0.0f, 0.2f });
+    check (! juce::exactlyEqual (pitch.getValue(), pitchBefore) && bench.getViewport().pan.getDistanceFrom ({ 130.0f, 130.0f }) < 0.01f,
+           "while over a dial it turns the dial");
+    osc1.getDial (0).setValue (pitchBefore, juce::sendNotificationSync);
+
+    // Dragging an empty spot pans; a click there adds a module, where it is on the canvas.
+    auto& tray = editor->getTrays().getAdd();
+    bench.setViewport ({ 1.0f, {} });
+    const juce::Point<float> spot (700.0f, 500.0f);
+    bench.mouseDown (mouseAt (bench, spot));
+    bench.mouseDrag (mouseAt (bench, spot + juce::Point<float> (-3.0f, 0.0f), spot));
+    check (bench.getViewport().pan == juce::Point<float>(), "a press that barely moves doesn't pan");
+    bench.mouseDrag (mouseAt (bench, spot + juce::Point<float> (-100.0f, -60.0f), spot));
+    bench.mouseUp (mouseAt (bench, spot + juce::Point<float> (-100.0f, -60.0f), spot));
+    check (bench.getViewport().pan.getDistanceFrom ({ 100.0f, 60.0f }) < 0.01f && ! tray.isOpen(), "dragging an empty spot pans, opening nothing");
+
+    bench.setViewport ({ 0.75f, { 100.0f, 100.0f } });
+    const juce::Point<float> clicked (600.0f, 400.0f);
+    const auto canvasAt = bench.toDesign (clicked);
+    bench.mouseDown (mouseAt (bench, clicked));
+    bench.mouseUp (mouseAt (bench, clicked, clicked));
+    check (tray.isOpen() && tray.trayBounds().getPosition().getDistanceFrom (clicked + bench.getPosition().toFloat()) < 1.0f,
+           "zoomed out, a click opens the add tray where it was");
+    tray.mouseDown (mouseAt (tray, tray.choiceBounds (0).getCentre()));
+    check (pumpUntil ([&] { return osc3.isVisible(); })
+               && model.positionOf (o3).getDistanceFrom (canvasAt - juce::Point<float> (0.5f * Bench::moduleWidth, 15.0f)) < 0.01f
+               && osc3.getBounds() == bench.boundsFor (o3) && osc3.getWidth() == juce::roundToInt (Bench::moduleWidth * 0.75f),
+           "and the module lands under the click, on the canvas");
+
+    // At 75%, a card dragged by its header lands under the pointer.
+    const auto o3Before = model.positionOf (o3);
+    const auto o3View   = osc3.getPosition();
+    dragHeader (osc3, { 90.0f, -60.0f });
+    check (osc3.getPosition() == o3View + juce::Point<int> (90, -60)
+               && model.positionOf (o3).getDistanceFrom (o3Before + juce::Point<float> (120.0f, -80.0f)) < 1.5f,
+           "a card dragged at 75% lands under the pointer");
+    check (bench.toView (model.positionOf (o3)).getDistanceFrom (osc3.getPosition().toFloat()) < 0.5f, "and stays there");
+
+    // A cable patches at 150%; a card out of the box can't take one.
+    setParam (p, ParamID::signalFlow, 2.0f);
+    check (pumpUntil ([&] { return env1.getHeader().isJackShown (BenchModule::Jack::in); }), "with patch cables, the jacks show");
+    bench.setViewport ({ 1.5f, {} });
+    const auto patchTo = [&editor] (BenchModule& module, juce::Point<float> to)
+    {
+        const auto from = module.jackBounds().getCentre();
+        module.mouseDown (mouseAt (module, from));
+        module.mouseDrag (mouseAt (module, module.getLocalPoint (editor, to), from));
+        module.mouseUp (mouseAt (module, module.getLocalPoint (editor, to), from));
+    };
+    patchTo (osc1, editor->getCables().jackCentre (e1, BenchModule::Jack::in));
+    check (model.inputOf (e1) == std::optional (o1), "at 150% a cable from OSC 1 patches into ENV 1's IN");
+    patchTo (env1, editor->getCables().outputJackBounds().getCentre());
+    check (model.isPatchedToOutput (e1), "and ENV 1 into the output's IN");
+    check (! bench.getLocalBounds().contains (osc3.getBounds().getCentre()), "OSC 3 is out of the box");
+    model.connect (o3);
+    patchTo (bench.getModule (o2), editor->getCables().jackCentre (e2, BenchModule::Jack::in));
+    check (! model.inputOf (e2).has_value(), "a cable dropped where a card out of the box would be plugs into nothing");
+    pumpUntil ([&] { return false; }, 100);
+    snapshot (render (*editor), "bench-zoomed-in");
+
+    // Zoomed out, the whole canvas.
+    bench.setViewport ({ Bench::fitZoom, {} });
+    check (osc3.getBounds() == bench.boundsFor (o3) && bench.getLocalBounds().contains (osc3.getBounds()), "zoomed right out, every card shows");
+    pumpUntil ([&] { return false; }, 100);
+    snapshot (render (*editor), "bench-zoomed-out");
+
+    // The zoom and pan are kept with the set.
+    bench.setViewport ({ 1.25f, { 120.0f, 80.0f } });
+    juce::MemoryBlock saved;
+    p.getStateInformation (saved);
+    Synth2AudioProcessor restored;
+    restored.setStateInformation (saved.getData(), (int) saved.getSize());
+    const Bench::Viewport kept { 1.25f, { 120.0f, 80.0f } };
+    check (Bench::Model (restored.getState()).viewport() == kept, "a saved set keeps the zoom and pan");
+    {
+        std::unique_ptr<juce::AudioProcessorEditor> other (restored.createEditor());
+        auto* reopened = dynamic_cast<Synth2AudioProcessorEditor*> (other.get());
+        check (reopened != nullptr && reopened->getBench().getViewport() == kept
+                   && reopened->getBench().getModule (o3).getBounds() == bench.boundsFor (o3),
+               "and opens looking as it was left");
+    }
+    bench.setViewport ({ 0.8f, { 10.0f, 20.0f } });
+    p.setStateInformation (saved.getData(), (int) saved.getSize());
+    check (pumpUntil ([&] { return bench.getViewport() == kept; }) && pill.zoomText() == "125%", "restoring it with the editor open zooms back");
+
+    // A session from before the zoom opens at 100%, the cards where they were.
+    auto xml = juce::AudioProcessor::getXmlFromBinary (saved.getData(), (int) saved.getSize());
+    if (auto* benchXml = xml != nullptr ? xml->getChildByName (Bench::benchType) : nullptr)
+        for (const auto& property : { Bench::zoomProperty, Bench::panXProperty, Bench::panYProperty })
+            benchXml->removeAttribute (property);
+    juce::MemoryBlock old;
+    juce::AudioProcessor::copyXmlToBinary (*xml, old);
+    Synth2AudioProcessor older;
+    older.setStateInformation (old.getData(), (int) old.getSize());
+    {
+        std::unique_ptr<juce::AudioProcessorEditor> other (older.createEditor());
+        auto* reopened = dynamic_cast<Synth2AudioProcessorEditor*> (other.get());
+        const Bench::Model olderModel (older.getState());
+        check (reopened != nullptr && reopened->getBench().getViewport() == Bench::Viewport {}
+                   && reopened->getBench().getModule (o1).getBounds() == juce::Rectangle<int> (0, 0, 236, 336)
+                   && reopened->getBench().getModule (e1).getBounds() == juce::Rectangle<int> (0, 352, 236, 336)
+                   && olderModel.positionOf (o3) == model.positionOf (o3),
+               "a set saved before the zoom opens at 100%, its cards where they were");
+    }
+
+    // Presets leave the zoom alone, unless their cards wouldn't all show.
+    bench.setViewport ({ 0.8f, {} });
+    p.loadPreset (2);
+    check (pumpUntil ([&] { return model.present().size() > 1; }) && bench.getViewport() == Bench::Viewport { 0.8f, {} },
+           "loading a preset keeps the zoom when its cards all show");
+    bench.setViewport ({ 1.5f, { 700.0f, 600.0f } });
+    p.loadPreset (3);
+    check (pumpUntil ([&] { return bench.getViewport() == model.viewport() && bench.getViewport().zoom < 1.5f; })
+               && bench.getViewport().visibleArea().contains (model.extent()),
+           "and frames them when they wouldn't");
+}
+
 // Drags `card` by its header so its top left moves by `by`.
 void dragCard (EffectCard& card, juce::Point<float> by)
 {
@@ -1343,6 +1591,7 @@ void testEffectsTab()
     editor->mouseDown (mouseAt (*editor, editor->tabBounds (Tab::effects).getCentre()));
     check (editor->getTab() == Tab::effects && effects.isVisible() && ! bench.isVisible() && effects.getBounds() == bench.getBounds(),
            "EFFECTS swaps the bench for the effects, in its place");
+    check (! bench.getZoomPill().isVisible(), "the bench's zoom pill goes with it (the effects don't zoom)");
     check (editor->getKeyboard().isVisible() && editor->getOutputDial().isVisible(), "with the keyboard and OUTPUT still below");
 
     auto& drive  = effects.getDrive();
@@ -1891,6 +2140,7 @@ int main()
     testEditor();
     testBypass();
     testViews();
+    testBenchZoom();
     testEffectsTab();
     testEffectsRack();
     testTypedKeys();
