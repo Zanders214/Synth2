@@ -104,6 +104,28 @@ float playAndMeasure (Synth2AudioProcessor& p, juce::MidiBuffer midi, int blocks
     return buffer.getRMSLevel (0, 0, block);
 }
 
+// How bright what `p` plays over the next `blocks` blocks is: how big its
+// sample-to-sample steps are against its level (more high harmonics, bigger
+// steps).
+float brightness (Synth2AudioProcessor& p, int blocks)
+{
+    juce::AudioBuffer<float> buffer (2, 512);
+    double steps = 0.0, level = 0.0;
+    for (int b = 0; b < blocks; ++b)
+    {
+        juce::MidiBuffer none;
+        buffer.clear();
+        p.processBlock (buffer, none);
+        const float* x = buffer.getReadPointer (0);
+        for (int n = 1; n < buffer.getNumSamples(); ++n)
+        {
+            steps += (double) ((x[n] - x[n - 1]) * (x[n] - x[n - 1]));
+            level += (double) (x[n] * x[n]);
+        }
+    }
+    return level > 0.0 ? (float) std::sqrt (steps / level) : 0.0f;
+}
+
 // Puts OSC 1 and ENV 1 on the bench, as a session from before the bench
 // opens, so a processor has something to play.
 void fillBench (Synth2AudioProcessor& p)
@@ -333,6 +355,102 @@ void testProcessorBasics()
     check (! bench.destinationOf (osc2).has_value() && bench.cables().empty(), "taking ENV 1 off unplugs its cables, in and out");
     setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::fixed);
     check (p.currentSettings().oscillators[3].routed, "in a fixed order, every oscillator is heard");
+}
+
+// The filters: their parameters, which oscillator each takes in each flow,
+// and the cable chains through them.
+void testFilters()
+{
+    std::printf ("Filters:\n");
+
+    Synth2AudioProcessor p;
+    p.prepareToPlay (48000.0, 512);
+    auto& state = p.getState();
+    const auto text = [&state] (const char* id, float value)
+    {
+        auto* parameter = state.getParameter (id);
+        return parameter->getText (parameter->convertTo0to1 (value), 32);
+    };
+    const auto& ids = ParamID::filter (1);
+    check (param (p, ids.on) < 0.5f && param (p, ids.active) >= 0.5f && juce::roundToInt (param (p, ids.type)) == (int) Filter::Type::low24
+               && approx (param (p, ids.cutoff), 1200.0f, 0.5f) && approx (param (p, ids.envAmount), 24.0f, 1e-4f),
+           "a filter starts off the bench, switched on, a LOW 24 at 1.2 kHz swept up two octaves");
+    check (text (ids.cutoff, 1200.0f) == "1.20 kHz" && text (ids.cutoff, 440.0f) == "440 Hz" && text (ids.envAmount, -12.0f) == "-12 st"
+               && text (ids.type, 3.0f) == "High 12",
+           "CUTOFF reads in Hz or kHz, ENV AMOUNT in signed semitones, TYPE by name");
+    check (! state.getParameter (ids.on)->isAutomatable() && state.getParameter (ids.cutoff)->isAutomatable(),
+           "being on the bench isn't automatable, the cutoff is");
+
+    // By number: FILTER n filters OSC n, while both are on the bench and it's switched on.
+    Bench::Model bench (state);
+    const Bench::ModuleId osc1 { Bench::Kind::oscillator, 0 }, osc2 { Bench::Kind::oscillator, 1 };
+    const Bench::ModuleId flt1 { Bench::Kind::filter, 0 }, flt2 { Bench::Kind::filter, 1 }, flt3 { Bench::Kind::filter, 2 };
+    const Bench::ModuleId env1 { Bench::Kind::envelope, 0 }, env2 { Bench::Kind::envelope, 1 };
+    setParam (p, ParamID::osc2On, 1.0f);
+    check (p.currentSettings().oscillators[1].filter == -1, "with no filter on the bench, OSC 2 has none");
+    bench.add (Bench::Kind::filter, { 0.0f, 352.0f });
+    check (bench.isPresent (flt1) && p.currentSettings().oscillators[0].filter == -1 && p.currentSettings().oscillators[1].filter == -1,
+           "the first filter added is FILTER 1, which has no OSC 1 to filter");
+    bench.add (Bench::Kind::filter, { 252.0f, 352.0f });
+    check (bench.isPresent (flt2) && p.currentSettings().oscillators[1].filter == 1, "in a fixed order, FILTER 2 filters OSC 2");
+    setParam (p, ids.cutoff, 300.0f);
+    setParam (p, ids.resonance, 0.7f);
+    setParam (p, ids.type, (float) Filter::Type::band);
+    setParam (p, ids.sweep.decay, 0.2f);
+    const auto settings = p.currentSettings();
+    check (approx (settings.filters[1].cutoffHz, 300.0f, 0.5f) && approx (settings.filters[1].resonance, 0.7f, 1e-4f)
+               && settings.filters[1].type == Filter::Type::band && approx (settings.filters[1].sweep.decaySeconds, 0.2f, 1e-3f),
+           "its settings and its sweep's stages reach the engine");
+    setParam (p, ids.active, 0.0f);
+    check (p.currentSettings().oscillators[1].filter == -1, "switched off, it lets OSC 2 through unfiltered");
+    setParam (p, ids.active, 1.0f);
+
+    // By the layout: each filter the first oscillator before it with none yet.
+    setParam (p, ParamID::osc1On, 1.0f);
+    setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::layout);
+    const auto filteredBy = bench.filterAssignment (Bench::Flow::layout);
+    check (filteredBy[0] == 0 && filteredBy[1] == 1 && p.currentSettings().oscillators[0].filter == 0,
+           "following the layout, the filters under OSC 1 and OSC 2 take them in reading order");
+    bench.add (Bench::Kind::envelope, { 504.0f, 352.0f });
+    check (bench.envelopeAssignment (Bench::Flow::layout)[0] == 0 && bench.filterAssignment (Bench::Flow::layout)[0] == 0,
+           "and an envelope after them takes an oscillator of its own as well");
+
+    // Along the cables: through at most one filter and one envelope, either way round.
+    setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::cables);
+    check (bench.connect (osc1, flt1) && bench.connect (flt1, env1) && ! bench.chainFrom (0).heard,
+           "OSC 1 into FILTER 1 into ENV 1 isn't heard yet");
+    check (bench.connect (env1) && bench.chainFrom (0).heard && p.currentSettings().oscillators[0].routed
+               && p.currentSettings().oscillators[0].filter == 0 && p.currentSettings().oscillators[0].envelope == 0,
+           "until ENV 1 goes to the output: then OSC 1 is heard, filtered by FILTER 1 and shaped by ENV 1");
+    check (bench.connect (osc2, env2) == false, "a module not on the bench can't be patched into");
+    bench.add (Bench::Kind::envelope, { 756.0f, 352.0f });
+    check (bench.connect (osc2, env2) && bench.connect (env2, flt2) && bench.connect (flt2)
+               && p.currentSettings().oscillators[1].filter == 1 && p.currentSettings().oscillators[1].envelope == 1
+               && p.currentSettings().oscillators[1].routed,
+           "the envelope can come first: OSC 2 into ENV 2 into FILTER 2 to the output");
+    check (! bench.connect (flt1, flt2) && ! bench.connect (env1, env2), "a filter can't go into a filter, nor an envelope into an envelope");
+    check (! bench.connect (flt2, env1) && ! bench.connect (env1, flt1), "a chain can't hold two envelopes, nor loop back on itself");
+    check (! bench.connect (osc1, osc2) && bench.inputOf (flt1) == osc1, "nothing goes into an oscillator, and refusals leave the cables be");
+    check (bench.connect (osc2, flt1) && bench.inputOf (flt1) == osc2 && ! bench.destinationOf (osc1).has_value()
+               && bench.chainFrom (1).filter == 0 && bench.chainFrom (1).envelope == 0,
+           "patching OSC 2 into FILTER 1 takes it from OSC 1, and OSC 2's chain now runs on through ENV 1");
+    bench.add (Bench::Kind::filter, { 504.0f, 0.0f });
+    bench.connect (osc1, flt3);
+    bench.connect (flt3);
+    bench.remove (flt3);
+    check (! bench.destinationOf (osc1).has_value() && ! bench.destinationOf (flt3).has_value() && ! bench.chainFrom (0).heard,
+           "taking a filter off unplugs its cables, in and out");
+    check (Bench::ModuleId::fromString ("flt:2") == flt3 && flt3.toString() == "flt:2" && ! Bench::ModuleId::fromString ("flt:7").has_value(),
+           "a filter's place on the bench is saved as flt:N");
+
+    // Laying the bench out afresh stacks each column the way sound runs (the
+    // third row as far down as the bench reaches).
+    bench.layOut();
+    const float third = std::min (704.0f, Bench::areaHeight - Bench::envelopeHeight);
+    check (bench.positionOf (osc1) == juce::Point<float> (0.0f, 0.0f) && bench.positionOf (flt1) == juce::Point<float> (0.0f, 352.0f)
+               && bench.positionOf (env1) == juce::Point<float> (0.0f, third) && bench.positionOf (osc2) == juce::Point<float> (252.0f, 0.0f)
+               && bench.positionOf (env2) == juce::Point<float> (252.0f, third) && bench.cables().empty(),
+           "laid out afresh: each oscillator over its filter over its envelope, unplugged");
 }
 
 void testBusLayouts()
@@ -682,11 +800,12 @@ void testEditor()
     };
 
     clickBench ({ 150.0f, 40.0f });
-    check (tray.isOpen() && tray.getCaption() == "ADD TO THE BENCH" && tray.getNumChoices() == 2, "a click on the bench opens the add tray");
+    check (tray.isOpen() && tray.getCaption() == "ADD TO THE BENCH" && tray.getNumChoices() == 3, "a click on the bench opens the add tray");
     check (tray.getChoice (0).name == "Oscillator" && tray.getChoice (0).detail.startsWith ("4 of 4 left")
-               && tray.getChoice (1).name == "Envelope" && tray.getChoice (1).detail.startsWith ("4 of 4 left"),
-           "offering an oscillator and an envelope, four of each");
-    check (tray.getChoice (0).enabled && tray.getChoice (1).enabled, "both free");
+               && tray.getChoice (1).name == "Filter" && tray.getChoice (1).detail.startsWith ("4 of 4 left")
+               && tray.getChoice (2).name == "Envelope" && tray.getChoice (2).detail.startsWith ("4 of 4 left"),
+           "offering an oscillator, a filter and an envelope, in the order sound runs through them, four of each");
+    check (tray.getChoice (0).enabled && tray.getChoice (1).enabled && tray.getChoice (2).enabled, "all free");
     check (editor->getLocalBounds().toFloat().contains (tray.trayBounds())
                && tray.trayBounds().getPosition().getDistanceFrom ((juce::Point<float> (150.0f, 40.0f) + bench.getPosition().toFloat())) < 1.0f,
            "opening where the click was");
@@ -743,25 +862,28 @@ void testEditor()
     check (! tray.getChoice (0).enabled && tray.getChoice (0).detail == "All four are on the bench", "a fifth oscillator is greyed out");
     tray.mouseDown (mouseAt (tray, tray.choiceBounds (0).getCentre()));
     check (tray.isOpen(), "and picking it does nothing");
-    tray.mouseDown (mouseAt (tray, tray.choiceBounds (1).getCentre()));   // ENV 1 at (0, 352)
+    tray.mouseDown (mouseAt (tray, tray.choiceBounds (2).getCentre()));   // ENV 1 at (0, 352)
     auto& env1 = bench.getEnvelope (0);
     check (pumpUntil ([&env1] { return env1.isVisible() && env1.getAlpha() >= 1.0f; }) && env1.getCaption() == "ENV 1"
                && env1.getBounds() == juce::Rectangle<int> (0, 352, 236, 336),
            "picking Envelope puts ENV 1 on the bench");
-    addAt (1, { 370.0f, 367.0f });    // ENV 2 at (252, 352)
-    addAt (1, { 622.0f, 367.0f });    // ENV 3 at (504, 352)
-    addAt (1, { 874.0f, 367.0f });    // ENV 4 at (756, 352)
+    addAt (2, { 370.0f, 367.0f });    // ENV 2 at (252, 352)
+    addAt (2, { 622.0f, 367.0f });    // ENV 3 at (504, 352)
+    addAt (2, { 874.0f, 367.0f });    // ENV 4 at (756, 352)
     const auto allShown = [&bench]
     {
-        return std::all_of (Bench::allModules.begin(), Bench::allModules.end(),
-                            [&bench] (const auto& id) { return bench.getModule (id).isVisible() && bench.getModule (id).getAlpha() >= 1.0f; });
+        return std::all_of (Bench::allModules.begin(), Bench::allModules.end(), [&bench] (const auto& id)
+        {
+            return id.kind == Bench::Kind::filter || (bench.getModule (id).isVisible() && bench.getModule (id).getAlpha() >= 1.0f);
+        });
     };
     check (pumpUntil (allShown) && ! anyOverlap (bench), "eight modules, none covering another");
     check (model.positionOf (bench.getOscillator (1).getId()) == juce::Point<float> (0.0f, 0.0f)
                && model.positionOf (bench.getEnvelope (3).getId()) == juce::Point<float> (756.0f, 352.0f),
            "each where it was put");
     clickBench ({ 500.0f, 650.0f });
-    check (! tray.getChoice (0).enabled && ! tray.getChoice (1).enabled, "now the tray has nothing left to add");
+    check (! tray.getChoice (0).enabled && tray.getChoice (1).enabled && ! tray.getChoice (2).enabled,
+           "now the tray has only filters left to add");
     tray.close();
 
     // In a fixed order, ENV n shapes OSC n, wherever they sit, and says so.
@@ -930,7 +1052,7 @@ void testEditor()
     env1.mouseDown (mouseAt (env1, env1.closeBounds().getCentre()));
     check (pumpUntil ([&] { return orderIs ({ { o4, 4 }, { e2, 5 }, { e3, 6 }, { e4, 7 } }) && tagsAre ({ "", "> OSC 2", "> OSC 1", "> OSC 3" }); }),
            "taking ENV 1 away renumbers them, and the envelopes after it move up an oscillator");
-    addAt (1, { 118.0f, 367.0f });
+    addAt (2, { 118.0f, 367.0f });
     check (pumpUntil ([&] { return allShown() && tagsAre ({ "> OSC 2", "> OSC 1", "> OSC 3", "> OSC 4" }); }), "putting it back restores them");
 
     // Patch cables: oscillators get an OUT jack, envelopes an IN and an OUT,
@@ -944,7 +1066,7 @@ void testEditor()
            "the oscillators show OUT jacks, the envelopes IN and OUT, and no numbers");
     bool allDimmed = true;
     for (const auto& id : Bench::allModules)
-        allDimmed = allDimmed && bench.getModule (id).isDimmed();
+        allDimmed = allDimmed && (id.kind == Bench::Kind::filter || bench.getModule (id).isDimmed());
     check (allDimmed, "with nothing patched, everything is greyed out");
     check (holdAndMeasure (p) < 1e-4f, "and silent");
     const auto unpatched = render (*editor);
@@ -1320,6 +1442,90 @@ void dragCard (EffectCard& card, juce::Point<float> by)
     card.mouseUp (mouseAt (card, grab + by, grab));
 }
 
+// A FILTER card: its dials, its response well (TYPE's arrows, the cutoff and
+// resonance handle, the notes' swept cutoffs) and its SWEEP well.
+void testFilterCard()
+{
+    std::printf ("Filter card:\n");
+
+    Synth2AudioProcessor p;
+    p.prepareToPlay (48000.0, 512);
+    fillBench (p);
+    Bench::Model model (p.getState());
+    model.add (Bench::Kind::filter, { 252.0f, 352.0f });
+    std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
+    auto* editor = dynamic_cast<Synth2AudioProcessorEditor*> (base.get());
+    if (editor == nullptr)
+        return;
+    auto& card = editor->getBench().getFilter (0);
+    check (pumpUntil ([&card] { return card.isVisible() && card.getAlpha() >= 1.0f; }) && card.getCaption() == "FILTER 1"
+               && card.getBounds() == juce::Rectangle<int> (252, 352, 236, 336) && card.getNumDials() == 3,
+           "FILTER 1 is on the bench, as big as the other cards, with CUTOFF, RESONANCE and ENV AMT");
+    check (pumpUntil ([&card] { return card.getHeader().getTag() == "> OSC 1" && ! card.isDimmed(); }), "filtering OSC 1, by number");
+    check (p.currentSettings().oscillators[0].filter == 0, "which the engine plays through it");
+
+    card.getDial (0).setValue (500.0, juce::sendNotificationSync);
+    card.getDial (2).setValue (-12.0, juce::sendNotificationSync);
+    check (approx (param (p, ParamID::flt1Cutoff), 500.0f, 0.5f) && approx (param (p, ParamID::flt1EnvAmount), -12.0f, 1e-3f),
+           "its dials set its own CUTOFF and ENV AMOUNT");
+
+    // The response well.
+    auto& response = card.getResponse();
+    check (pumpUntil ([&response] { return approx (response.getFilterState().cutoffHz, 500.0f, 0.5f); }), "its well follows");
+    response.mouseDown (mouseAt (response, response.arrowBounds (true).getCentre()));
+    check (juce::roundToInt (param (p, ParamID::flt1Type)) == (int) Filter::Type::low12, "the right arrow steps LOW 24 to LOW 12");
+    response.mouseDown (mouseAt (response, response.arrowBounds (false).getCentre()));
+    response.mouseDown (mouseAt (response, response.arrowBounds (false).getCentre()));
+    check (juce::roundToInt (param (p, ParamID::flt1Type)) == (int) Filter::Type::notch, "and the left one back, and round to NOTCH");
+
+    GestureCount gestures;
+    p.addListener (&gestures);
+    const auto handleAt  = response.handleCentre();
+    const auto handleTo  = handleAt.translated (30.0f, -15.0f);
+    const float resonanceBefore = param (p, ParamID::flt1Resonance);
+    response.mouseMove (mouseAt (response, handleAt.translated (2.0f, 2.0f)));
+    check (response.isHandleHot(), "hovering the handle picks it out");
+    response.mouseDown (mouseAt (response, handleAt));
+    response.mouseDrag (mouseAt (response, handleAt.translated (15.0f, -8.0f), handleAt));
+    response.mouseDrag (mouseAt (response, handleTo, handleAt));
+    check (param (p, ParamID::flt1Cutoff) > 600.0f && param (p, ParamID::flt1Resonance) > resonanceBefore + 0.1f,
+           "dragging it right and up raises CUTOFF and RESONANCE");
+    check (response.handleCentre().getDistanceFrom (handleTo) < 1.5f, "and it follows the pointer");
+    response.mouseUp (mouseAt (response, handleTo, handleAt));
+    check (gestures.begun == 2 && gestures.ended == 2, "the drag is one gesture for each, for the host");
+    response.mouseDoubleClick (mouseAt (response, response.handleCentre()));
+    check (approx (param (p, ParamID::flt1Cutoff), 1200.0f, 0.5f) && approx (param (p, ParamID::flt1Resonance), 0.2f, 1e-4f),
+           "a double-click puts both back");
+    p.removeListener (&gestures);
+
+    // The SWEEP well, edited like an AMP well.
+    auto& sweep = card.getSweep();
+    check (pumpUntil ([&sweep] { return sweep.isVisible() && sweep.getHeight() > 60; }) && sweep.getBottom() <= card.getHeight(),
+           "the SWEEP well fills the card under the dials");
+    using Handle = AmpDisplay::Handle;
+    const float decayBefore = param (p, ParamID::flt1Decay);
+    const auto  decayAt = sweep.handleCentre (Handle::decay);
+    sweep.mouseDown (mouseAt (sweep, decayAt));
+    sweep.mouseDrag (mouseAt (sweep, decayAt.translated (-30.0f, 0.0f), decayAt));
+    sweep.mouseUp (mouseAt (sweep, decayAt.translated (-30.0f, 0.0f), decayAt));
+    check (param (p, ParamID::flt1Decay) < decayBefore, "dragging its DECAY corner left shortens the sweep's DECAY");
+
+    // Each note shows where its sweep has its cutoff.
+    setParam (p, ParamID::flt1EnvAmount, 24.0f);
+    juce::MidiBuffer chordOn;
+    for (const int note : { 60, 64 })
+        chordOn.addEvent (juce::MidiMessage::noteOn (1, note, 0.8f), 0);
+    playAndMeasure (p, chordOn, 2);
+    const auto sounding = [] (const auto& notes)
+    {
+        return std::count_if (notes.begin(), notes.end(), [] (const auto& n) { return n.stage != NoteActivity::Stage::idle; });
+    };
+    check (pumpUntil ([&] { return sounding (response.getFilterState().notes) == 2 && sweep.getAmpState().numSounding() == 2; }),
+           "two notes: two swept cutoffs in the response well, two dots on the sweep");
+    snapshot (render (*editor), "filter-card");
+    releaseAll (p);
+}
+
 void testEffectsTab()
 {
     std::printf ("Effects tab:\n");
@@ -1647,14 +1853,18 @@ void testPresets()
 
         bool modulesMatch = true;
         bool shapedByOwn  = true;
+        bool filteredByOwn = true;
         float attack = 0.0f;
         for (int slot = 0; slot < Bench::numOscillators; ++slot)
         {
             const auto& osc = preset.oscillators[(size_t) slot];
             const bool shaped = osc.has_value() && osc->envelope.has_value();
+            const bool filtered = osc.has_value() && osc->filter.has_value();
             modulesMatch = modulesMatch && bench.isPresent ({ Bench::Kind::oscillator, slot }) == osc.has_value()
-                                        && bench.isPresent ({ Bench::Kind::envelope, slot }) == shaped;
-            shapedByOwn  = shapedByOwn && settings.oscillators[(size_t) slot].envelope == (shaped ? slot : -1);
+                                        && bench.isPresent ({ Bench::Kind::envelope, slot }) == shaped
+                                        && bench.isPresent ({ Bench::Kind::filter, slot }) == filtered;
+            shapedByOwn   = shapedByOwn && settings.oscillators[(size_t) slot].envelope == (shaped ? slot : -1);
+            filteredByOwn = filteredByOwn && settings.oscillators[(size_t) slot].filter == (filtered ? slot : -1);
             if (shaped)
                 attack = juce::jmax (attack, osc->envelope->delaySeconds + osc->envelope->attackSeconds);
         }
@@ -1668,7 +1878,7 @@ void testPresets()
         const float peak = holdChordPeak (q, juce::roundToInt ((attack + 0.5f) * 48000.0f / 512.0f));
         const std::string name = preset.name;
         check (q.getCurrentProgram() == i && modulesMatch && apart, name + ": its modules are on the bench, apart");
-        check (shapedByOwn, name + ": each envelope shapes its own oscillator");
+        check (shapedByOwn && filteredByOwn, name + ": each envelope and filter takes its own oscillator");
         check (peak > 0.2f && peak < 1.0f, name + ": a chord sounds without clipping (peak " + std::to_string (peak) + ")");
     }
 
@@ -1686,6 +1896,24 @@ void testPresets()
         check (param (q, ParamID::reverbOn) < 0.5f && param (q, ParamID::delayOn) < 0.5f
                    && approx (param (q, ParamID::reverbSize), 0.5f, 1e-4f),
                "and the next one sets them back to their defaults");
+    }
+
+    // The filtered ones darken as their sweeps fall: brighter as a note
+    // starts than a second on.
+    for (const auto* swept : { "Filter Pluck", "Acid Bass" })
+    {
+        Synth2AudioProcessor q;
+        q.prepareToPlay (48000.0, 512);
+        q.setCurrentProgram (names.indexOf (swept));
+        check (q.currentSettings().oscillators[0].filter == 0, std::string (swept) + ": OSC 1 goes through FILTER 1");
+        juce::MidiBuffer on;
+        on.addEvent (juce::MidiMessage::noteOn (1, 48, 1.0f), 0);
+        playAndMeasure (q, on, 1);
+        const float early = brightness (q, 4);
+        playAndMeasure (q, {}, 90);
+        const float late = brightness (q, 4);
+        check (early > late * 1.5f, std::string (swept) + ": its sweep closes the filter as the note sounds ("
+                                        + std::to_string (early) + " then " + std::to_string (late) + ")");
     }
 
     // The plucks fall away while the key is still held.
@@ -1884,6 +2112,7 @@ int main()
     std::printf ("Synth2 plugin tests\n===================\n");
 
     testProcessorBasics();
+    testFilters();
     testBusLayouts();
     testPlaying();
     testStateRoundTrip();
@@ -1891,6 +2120,7 @@ int main()
     testEditor();
     testBypass();
     testViews();
+    testFilterCard();
     testEffectsTab();
     testEffectsRack();
     testTypedKeys();

@@ -74,6 +74,10 @@ public:
         last block, for the envelopes' AMP displays. Any thread. */
     std::array<NoteActivity, Synth2Engine::maxNotes> getNoteActivity (int osc) const noexcept;
 
+    /** Where each voice was in the sweep envelope of the filter on
+        oscillator `osc`, for the filters' SWEEP displays. Any thread. */
+    std::array<NoteActivity, Synth2Engine::maxNotes> getSweepActivity (int osc) const noexcept;
+
     /** The engine's settings, from the parameters. */
     Synth2Engine::Settings currentSettings() const noexcept;
 
@@ -162,16 +166,32 @@ private:
     void handleAsyncUpdate() override;
 
     juce::AudioProcessorValueTreeState apvts;
+
+    // The filters' parameters, found once: currentSettings reads them every
+    // block, and looking sixty parameters up by name each time costs as much
+    // as a small chord's voices.
+    struct FilterValues
+    {
+        const std::atomic<float>* active    = nullptr;
+        const std::atomic<float>* type      = nullptr;
+        const std::atomic<float>* cutoff    = nullptr;
+        const std::atomic<float>* resonance = nullptr;
+        const std::atomic<float>* envAmount = nullptr;
+        std::array<const std::atomic<float>*, 9> sweep {};   // DELAY..RELEASE, then the three bends
+    };
+    std::array<FilterValues, Synth2Engine::numFilters> filterValues;
     Synth2Engine engine;
     std::atomic<int> activeNotes { 0 };
     std::array<std::atomic<bool>, Synth2Engine::numOscillators> routedToOutput { true, true, true, true };
     std::atomic<double> hostBpm { 120.0 };   // the host's tempo, as of the last block
     std::atomic<int> effectsChain { Effects::encode (Effects::defaultOrder) };   // the effects' order, encoded
 
-    // Which envelope shapes each oscillator (-1 for none), for each way sound
-    // can flow, so the audio thread just picks the row for the flow in use.
+    // Which envelope shapes and which filter filters each oscillator (-1 for
+    // none), for each way sound can flow, so the audio thread just picks the
+    // row for the flow in use.
     using Assignment = std::array<std::atomic<int>, Synth2Engine::numOscillators>;
     std::array<Assignment, 3> envelopeFor {};
+    std::array<Assignment, 3> filterFor {};
 
     // The factory preset last loaded (kept in the state too, so a host that
     // sets the saved program again after restoring a session changes nothing),
@@ -179,14 +199,26 @@ private:
     std::atomic<int> currentPreset { 0 };
     std::atomic<int> pendingPreset { -1 };
 
-    // Each voice's envelope for each oscillator, published by the audio thread every block.
+    // Each voice's envelope and filter sweep for each oscillator, published
+    // by the audio thread every block.
     struct PublishedActivity
     {
         std::atomic<int>   stage       { 0 };
         std::atomic<float> level       { 0.0f };
         std::atomic<float> progress    { 0.0f };
+
+        void publish (const NoteActivity& activity) noexcept
+        {
+            stage   .store ((int) activity.stage);
+            level   .store (activity.level);
+            progress.store (activity.progress);
+        }
     };
-    std::array<std::array<PublishedActivity, Synth2Engine::maxNotes>, Synth2Engine::numOscillators> noteActivity;
+    using PublishedNotes = std::array<PublishedActivity, Synth2Engine::maxNotes>;
+    std::array<PublishedNotes, Synth2Engine::numOscillators> noteActivity;
+    std::array<PublishedNotes, Synth2Engine::numOscillators> sweepActivity;
+
+    static std::array<NoteActivity, Synth2Engine::maxNotes> read (const PublishedNotes&) noexcept;
 
     OnScreenKeys keys;
     Follower     follower { *this };   // last: it reads and fills in the state above

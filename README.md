@@ -4,13 +4,14 @@ A simple polyphonic synth plugin for DAWs (VST3 / AU / Standalone), built with
 [JUCE](https://juce.com), laid out as a workbench: it opens empty, and you put
 on it the modules you want, where you want them. Add up to four oscillators,
 each with one of the four basic wave shapes and its own stack of up to 16
-detuned, spread copies on every note, give each its own envelope, and play
-chords: the classic wide, detuned "supersaw" pad in a few turns. Then send the
+detuned, spread copies on every note, give each its own envelope and its own
+swept filter, and play chords: the classic wide, detuned "supersaw" pad in a
+few turns. Then send the
 lot through a drive, a delay and a reverb, in any order, on the EFFECTS tab,
 laid out the same way.
 
 ```
-note -> OSC n (VOICES x shape, DETUNE + WIDTH) -> ENV n (DELAY ATTACK HOLD DECAY SUSTAIN RELEASE) -> + -> DRIVE / DELAY / REVERB (any order) -> OUTPUT
+note -> OSC n (VOICES x shape, DETUNE + WIDTH) -> FILTER n (TYPE CUTOFF RESONANCE, swept) -> ENV n (DELAY ATTACK HOLD DECAY SUSTAIN RELEASE) -> + -> DRIVE / DELAY / REVERB (any order) -> OUTPUT
 ```
 
 ## The workbench
@@ -21,6 +22,7 @@ and a tray offers what can go there:
 | Module         | What it holds                                                             |
 |----------------|---------------------------------------------------------------------------|
 | **Oscillator** | One shape at its own pitch and level, WAVE, PITCH, FINE, LEVEL, over its own unison stack, VOICES, DETUNE, WIDTH. Up to four (OSC 1 to OSC 4). |
+| **Filter**     | One oscillator's tone, each note filtered on its own: TYPE (LOW 24, LOW 12, BAND, HIGH 12, HIGH 24, NOTCH), CUTOFF, RESONANCE, and its own SWEEP envelope that moves the cutoff as each note plays, ENV AMT semitones at its top. Up to four (FILTER 1 to FILTER 4). |
 | **Envelope**   | How one oscillator's notes rise and fall: DELAY, ATTACK, HOLD, DECAY, SUSTAIN, RELEASE. Up to four (ENV 1 to ENV 4). An oscillator without one starts and stops with the key, with a short click-free fade. |
 
 The module lands where you clicked. Drag a module by its header to move it anywhere
@@ -32,7 +34,8 @@ The **power switch** at the left of every module's header bypasses it without ta
 it off the bench: the module greys out and keeps its place, its cables and its
 settings. An oscillator switched off falls silent (fading out over 20 ms, so held
 notes don't click); an envelope switched off lets its oscillator through unshaped,
-starting and stopping with the key as if it had no envelope. The switches are
+starting and stopping with the key as if it had no envelope; a filter switched off
+lets its oscillator through unfiltered, fading over 5 ms rather than clicking. The switches are
 automatable, so a DAW can bring a layer in and out during a song. What is on the bench, where, and any cables are saved
 with your set. A set saved before the bench existed opens with OSC 1 (and OSC 2, if it
 was on) along the top and an envelope under each, sounding as it did: the unison stack
@@ -109,8 +112,9 @@ out. Its tail is levelled, so a long room is longer rather than louder.
 The pill in the middle of the header holds the factory presets: its arrows step to the
 previous and next one, and a click on its name opens a tray of them all. Your DAW lists
 the same presets as the plugin's programs. Loading one puts its modules on the bench
-(oscillators along the top, each with its own unison stack, and each DAHDSR envelope
-under the oscillator it shapes, in a fixed order with no cables), puts just its effects
+(oscillators along the top, each with its own unison stack, its filter, if it has
+one, under it, and its DAHDSR envelope under that, in a fixed order with no cables),
+puts just its effects
 on the EFFECTS tab, side by side and switched on (most pads and keys have a reverb,
 some a delay on the beat), and sets everything
 it doesn't use back to its default; picking it again undoes your edits. Which preset
@@ -126,6 +130,7 @@ you loaded is saved with your set.
 | **8-Bit Lead**    | Bare squares, the octave a short blip                   |
 | **Hollow Flute**  | A breathy triangle, its octave breathing in late        |
 | **Saw Pluck**     | A short, bright pluck for arpeggios                     |
+| **Filter Pluck**  | A saw whose low-pass snaps shut as it rings             |
 | **Wood Mallet**   | A soft mallet that dies away                            |
 | **Chord Stab**    | Held for a beat, then gone: house chords                |
 | **Drawbar Organ** | Sines at 16', 8' and 4', with a percussive click        |
@@ -133,6 +138,7 @@ you loaded is saved with your set.
 | **Brass Section** | Biting saws that settle, a square swelling in below     |
 | **Fifth Stack**   | Root, fifth and sub, for big chords                     |
 | **Reese Bass**    | Two beating saws an octave down                         |
+| **Acid Bass**     | A squelchy square, its resonant filter swept short      |
 | **Sub Bass**      | A clean sine sub with a plucked edge                    |
 
 ### Signal flow
@@ -141,22 +147,28 @@ The gear at the top right picks how sound flows between the modules (and, below,
 how the cards show themselves: see [Views](#views)):
 
 - **Fixed order** (the default): by number, wherever the modules sit: ENV 1 shapes
-  OSC 1, ENV 2 OSC 2, and so on. Each envelope shows the oscillator it shapes in its
-  header ("> OSC 1"); one whose oscillator isn't on the bench is greyed out.
+  OSC 1 and FILTER 1 filters it, ENV 2 and FILTER 2 take OSC 2, and so on. Each envelope
+  and filter shows the oscillator it takes in its header ("> OSC 1"); one whose
+  oscillator isn't on the bench is greyed out.
 - **Follow layout**: in reading order, row by row and left to right. Each module shows
   its place in the order in its header, and each envelope shapes the first oscillator
-  before it that has no envelope yet, so an envelope placed after (or under) an
-  oscillator shapes it. Moving a module renumbers them and can hand an envelope to
-  another oscillator.
-- **Patch cables**: each oscillator gets an **OUT** jack in its header, each envelope
-  an **IN** and an **OUT**, and OUTPUT an **IN**. Drag from an OUT jack to an IN jack
-  to patch a cable: an oscillator to the output (heard on/off with the key) or into an
-  envelope, and an envelope to the output. An envelope takes one oscillator. Only what
+  before it that has no envelope yet (each filter, likewise, the first with no filter
+  yet), so an envelope or filter placed after (or under) an oscillator takes it. Moving
+  a module renumbers them and can hand an envelope or a filter to another oscillator.
+- **Patch cables**: each oscillator gets an **OUT** jack in its header, each filter and
+  envelope an **IN** and an **OUT**, and OUTPUT an **IN**. Drag from an OUT jack to an
+  IN jack to patch a cable. An oscillator's sound runs along its cables through at most
+  one filter and one envelope, in either order, to the output: OSC -> FILTER -> ENV ->
+  OUT, OSC -> ENV -> FILTER -> OUT, or straight OSC -> OUT (heard on/off with the key).
+  Each filter and envelope takes one cable in and sends one out; a patch that would put
+  two filters or two envelopes in one chain, or loop round, doesn't take. Only what
   reaches the output is heard, and the rest is greyed out. Grab a cable by either end,
   or drop it anywhere else, to unplug it.
 
-The oscillators, each under its own envelope, are summed, so Fixed order and Follow
-layout differ only in which envelope shapes which oscillator. The effects follow the
+The oscillators, each through its own filter and under its own envelope, are summed,
+so the three ways differ only in which filter and envelope take which oscillator
+(the filter is the same either side of the envelope: both work on each note on its
+own). The effects follow the
 sum, on their own tab (see [Effects](#effects)).
 
 ## Controls
@@ -176,6 +188,10 @@ sum, on their own tab (see [Effects](#effects)).
 | **Decay**   | How long it takes to fall from the top to the sustain level, 1 ms to 10 s. |
 | **Sustain** | The level it stays at while the key is held, 0 to 100% of the top. At 100% (the default) there is no decay; turned down, notes hit and then settle, for plucks and keys. Turning it while a note is held glides there. |
 | **Release** | How long it rings on after its key goes up, 5 ms to 10 s, falling from wherever it was. A note lasts until the slowest of its oscillators has faded. |
+| **Type**    | A filter's kind: **LOW 24** and **LOW 12** let the lows through (24 or 12 dB an octave), **HIGH 24** and **HIGH 12** the highs, **BAND** a band around the cutoff, and **NOTCH** takes one out. Stepped with the arrows in its display. |
+| **Cutoff**  | Where the filter bites, 20 Hz to 20 kHz, evenly by octave across the dial. |
+| **Resonance** | How much the filter rings at its cutoff, 0 to 100%: a peak there that grows to a whistle near the top, but never runs away. |
+| **Env Amt** | How far the filter's SWEEP envelope moves its cutoff, -48 to +48 semitones at the top of the sweep (+24, the default, two octaves up). Below 0 the sweep closes the filter instead. Its sweep has the same six stages and three bends as an envelope, edited on its SWEEP graph. |
 | **Output**  | Output level, -24 to +6 dB.                                          |
 
 Every control is a parameter, so it's saved with your set and can be automated.
@@ -187,7 +203,7 @@ Each oscillator comes set up for layering: OSC 1 a saw at the note, OSC 2 a squa
 octave below at 70%, OSC 3 a saw a fifth up at 50%, and OSC 4 a triangle an octave up
 at 40%. Each has its own shape, PITCH, FINE and LEVEL, its own unison stack (VOICES,
 DETUNE and WIDTH spread only its copies, so a thick detuned saw can sit over a single
-clean sub-octave square) and its own envelope. Adding, removing or unpatching an
+clean sub-octave square), its own filter and its own envelope. Adding, removing or unpatching an
 oscillator, and moving its LEVEL, fades rather than clicks, and an oscillator that
 isn't heard costs nothing.
 
@@ -237,6 +253,15 @@ Each module has a display right above its dials, drawn in the dials' colours:
   straighten its ramp. The bends are also parameters (Attack Curve, Decay Curve and
   Release Curve), so your DAW can automate them. A dot shows only while its ramp has
   room to bend: a decay to a SUSTAIN at the top has nothing to fall.
+- **The response**, in each filter (above its three dials): how loud the filter leaves
+  each frequency, 20 Hz at the left to 20 kHz at the right, with 0 dB marked. The arrows
+  either side of the type's name step TYPE. The handle at the cutoff drags sideways for
+  CUTOFF and up and down for RESONANCE, following the pointer (Shift for fine moves,
+  double-click to reset both). Every note you play is a faint line where its sweep has
+  its cutoff right now, so you can watch a pluck's filter close.
+- **SWEEP**, in each filter (under its dials): the envelope that moves its cutoff, drawn
+  and edited just like an AMP graph, with a dot per note riding it; its corner reads
+  ENV AMT.
 
 ### Views
 
@@ -321,7 +346,7 @@ ctest --test-dir build --output-on-failure
 
 Set `SYNTH2_SNAPSHOTS` to a folder to have the editor tests save PNGs of the faces they
 render (the empty bench, the trays, a full bench of four oscillators and four envelopes,
-the flow modes, the cables, the effects) for a look by eye.
+the flow modes, the cables, the effects, a FILTER card) for a look by eye.
 
 ## Layout
 
@@ -334,26 +359,27 @@ Source/
   Effects.h                  the drive, the delay and the reverb (in any order), after the mix
   Room.h                     the reverb's room: pre-delay, diffusion and an eight-line feedback delay network
   EffectSettings.h           the effects' settings and sums (note lengths, tails, MIX), shared with the displays
-  SynthVoice.h               one note: each oscillator's unison copies, under that oscillator's envelope
+  SynthVoice.h               one note: each oscillator's unison copies, through its filter (swept by its own envelope), under its envelope
   Envelope.h                 the delay / attack / hold / decay / sustain / release envelope
+  Filter.h                   the filter: a state-variable filter (two stages for 24 dB) and its response, for drawing
   Oscillator.h               the four wave shapes, and the PolyBLEP oscillator that plays them
   Unison.h                   where each unison voice sits: its detune, its pan, the stack's level
-  Bench.h                    the workbench model: modules, where they sit, cables, which envelope shapes which oscillator, older sessions
+  Bench.h                    the workbench model: modules, where they sit, cables and chains, which envelope and filter take which oscillator, older sessions
   BenchView.h                the bench itself: the dotted area the modules sit and are dragged on
-  BenchModules.h             the oscillator and envelope modules, and the add / settings trays
+  BenchModules.h             the oscillator, filter and envelope modules, and the add / settings trays
   Rack.h                     the EFFECTS tab's model: which effects are in the chain, where their cards sit, the order
   EffectsView.h              the EFFECTS tab: the area, the drive, delay and reverb cards, their wells and switches
   PluginEditor.{h,cpp}       the Neon Plugins editor: header, tabs and gear, bench or effects, cables, keyboard, OUTPUT
   Synth2LookAndFeel.{h,cpp}  the dials (design-system Dial: arc + glowing core)
   WavePicker.h               an oscillator well's picker (pill, arrows, wheel) and its tray of shapes
-  VoiceDisplays.h            the OSC and AMP wells
+  VoiceDisplays.h            the OSC, AMP (and SWEEP) and filter response wells
   NeonKeyboard.h             the on-screen keyboard, and playing it from the computer's keys
   StandaloneApp.cpp          the standalone app: JUCE's, but opening every MIDI keyboard plugged in
   Synth2Theme.h              shared palette, fonts, colour + value formatting
   Synth2VisualModel.h        pure wave / unison / envelope / effects -> display math (uses the engine's own), the morph and its ease
   RtSafety.h                 the RealtimeSanitizer annotation
 Tests/
-  Synth2EngineTests.cpp         framework-free DSP tests: pitch, envelopes, unison, the oscillators, polyphony, pedal, effects
+  Synth2EngineTests.cpp         framework-free DSP tests: pitch, envelopes, filters, unison, the oscillators, polyphony, pedal, effects
   Synth2VisualModelTests.cpp    framework-free tests for the shapes, the spread and the displays' model
   PluginTests.cpp               processor + editor: params, buses, MIDI, state, the bench, offscreen renders
   rt_check.cpp                  RealtimeSanitizer driver

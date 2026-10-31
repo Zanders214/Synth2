@@ -13,26 +13,30 @@
     Bench
 
     The workbench the editor shows: an empty space the user fills with modules
-    (up to four oscillators, each with its own unison stack, and up to four
-    envelopes) and arranges freely, and, when sound follows the cables, the
-    cables patched between them.
+    (up to four oscillators, each with its own unison stack, up to four
+    filters and up to four envelopes) and arranges freely, and, when sound
+    follows the cables, the cables patched between them.
 
     Whether a module is on the bench is its parameter (osc1On..osc4On,
-    env1On..env4On), so the engine, host undo and a restored session all agree
-    on it. Where each module sits, and the cables, live in a BENCH child of the
+    flt1On..flt4On, env1On..env4On), so the engine, host undo and a restored
+    session all agree on it. Where each module sits, and the cables, live in a BENCH child of the
     plugin's state tree, saved and restored with the session:
 
         BENCH { version: 2, envelopeView: "both", oscillatorView: "full" }
-          MODULE { id: "osc:0" .. "osc:3" | "env:0" .. "env:3", x, y }
-          CABLE  { from: "osc:2", to: "env:1" | "out" }
+          MODULE { id: "osc:0" .. "osc:3" | "flt:0" .. "flt:3" | "env:0" .. "env:3", x, y }
+          CABLE  { from: "osc:2", to: "flt:1" | "env:1" | "out" }
+          CABLE  { from: "flt:1", to: "env:1" | "out" }
           CABLE  { from: "env:1", to: "out" }
 
     Positions are in design pixels from the bench area's top left, so they
     scale with the window. A module keeps its last position while it is off
     the bench, and comes back there.
 
-    Each envelope shapes one oscillator, picked by how sound flows (see
-    envelopeAssignment): by number, by the layout, or along the cables.
+    Each envelope shapes one oscillator, and each filter filters one, picked
+    by how sound flows (see envelopeAssignment and filterAssignment): by
+    number, by the layout, or along the cables, where an oscillator's sound
+    runs through at most one filter and one envelope, in either order, to
+    the output (see chainFrom).
 
     How the modules show themselves (see View), from the gear menu, is kept
     on the BENCH too, so a set opens looking as it was left. Presets leave it
@@ -43,19 +47,21 @@ namespace Bench
     enum class Kind
     {
         oscillator,
-        envelope
+        envelope,
+        filter
     };
 
     /** How sound passes between the modules (the signalFlow parameter's choices). */
     enum class Flow
     {
-        fixed,    // ENV n shapes OSC n
-        layout,   // each envelope shapes an oscillator before it in reading order
-        cables    // OSC -> ENV -> OUT, as patched
+        fixed,    // ENV n shapes OSC n, FILTER n filters it
+        layout,   // each envelope and filter takes an oscillator before it in reading order
+        cables    // OSC -> FILTER -> ENV -> OUT (either way round), as patched
     };
 
     inline constexpr int numOscillators = 4;
     inline constexpr int numEnvelopes   = 4;
+    inline constexpr int numFilters     = 4;
 
     /** One module: which kind, and which of that kind (0..3). */
     struct ModuleId
@@ -63,7 +69,11 @@ namespace Bench
         Kind kind = Kind::oscillator;
         int  slot = 0;
 
-        juce::String toString() const { return (kind == Kind::envelope ? "env:" : "osc:") + juce::String (slot); }
+        juce::String toString() const
+        {
+            const char* prefix = kind == Kind::envelope ? "env:" : kind == Kind::filter ? "flt:" : "osc:";
+            return prefix + juce::String (slot);
+        }
 
         static std::optional<ModuleId> fromString (const juce::String& text)
         {
@@ -75,6 +85,7 @@ namespace Bench
                 return std::nullopt;
             if (kind == "osc") return ModuleId { Kind::oscillator, slot };
             if (kind == "env") return ModuleId { Kind::envelope, slot };
+            if (kind == "flt") return ModuleId { Kind::filter, slot };
             return std::nullopt;
         }
 
@@ -83,18 +94,29 @@ namespace Bench
     };
 
     /** Every module there can be, in the order the editor stacks them. */
-    inline constexpr std::array<ModuleId, 8> allModules {
+    inline constexpr std::array<ModuleId, 12> allModules {
         ModuleId { Kind::oscillator, 0 }, ModuleId { Kind::oscillator, 1 },
         ModuleId { Kind::oscillator, 2 }, ModuleId { Kind::oscillator, 3 },
         ModuleId { Kind::envelope, 0 },   ModuleId { Kind::envelope, 1 },
-        ModuleId { Kind::envelope, 2 },   ModuleId { Kind::envelope, 3 } };
+        ModuleId { Kind::envelope, 2 },   ModuleId { Kind::envelope, 3 },
+        ModuleId { Kind::filter, 0 },     ModuleId { Kind::filter, 1 },
+        ModuleId { Kind::filter, 2 },     ModuleId { Kind::filter, 3 } };
 
     /** The parameter that says whether `id` is on the bench. */
     inline const char* parameterFor (const ModuleId& id) noexcept
     {
         const auto slot = (size_t) juce::jlimit (0, 3, id.slot);
-        return id.kind == Kind::envelope ? ParamID::envelopes[slot].on : ParamID::oscillators[slot].on;
+        switch (id.kind)
+        {
+            case Kind::envelope: return ParamID::envelopes[slot].on;
+            case Kind::filter:   return ParamID::filters[slot].on;
+            case Kind::oscillator: break;
+        }
+        return ParamID::oscillators[slot].on;
     }
+
+    /** Whether a cable can go into a module of `kind` (filters and envelopes have an IN). */
+    inline bool takesInput (Kind kind) noexcept { return kind != Kind::oscillator; }
 
     // ---- Geometry (design pixels) ------------------------------------------------
 
@@ -106,7 +128,18 @@ namespace Bench
     inline constexpr float gap              = 16.0f;
     inline constexpr float rowStep          = 120.0f;   // how much lower a module starts a new row
 
-    inline float heightOf (Kind kind) noexcept { return kind == Kind::envelope ? envelopeHeight : oscillatorHeight; }
+    inline constexpr float filterHeight     = 336.0f;   // its response well, a row of dials and its sweep well
+
+    inline float heightOf (Kind kind) noexcept
+    {
+        switch (kind)
+        {
+            case Kind::envelope:   return envelopeHeight;
+            case Kind::filter:     return filterHeight;
+            case Kind::oscillator: break;
+        }
+        return oscillatorHeight;
+    }
 
     inline juce::Rectangle<float> boundsAt (juce::Point<float> topLeft, Kind kind) noexcept
     {
@@ -211,11 +244,18 @@ namespace Bench
     }
 
     /** Where module `id` sits when it has no place of its own yet: the
-        oscillators along the top row, each envelope under its oscillator. */
+        oscillators along the top row, each envelope under its oscillator and
+        each filter under that. */
     inline juce::Point<float> defaultPosition (const ModuleId& id) noexcept
     {
         const float x = (float) id.slot * (moduleWidth + gap);
-        return { x, id.kind == Kind::envelope ? oscillatorHeight + gap : 0.0f };
+        switch (id.kind)
+        {
+            case Kind::envelope:   return { x, oscillatorHeight + gap };
+            case Kind::filter:     return { x, oscillatorHeight + envelopeHeight + 2.0f * gap };
+            case Kind::oscillator: break;
+        }
+        return { x, 0.0f };
     }
 
     // ---- How the modules show themselves -----------------------------------------------
@@ -251,10 +291,15 @@ namespace Bench
     inline constexpr float fullWellHeight   = 96.0f;
     inline constexpr float compactWell      = 28.0f;   // the wave pill
     inline constexpr float graphOnlyWell    = fullWellHeight + dialRowsHeight;
+    inline constexpr float filterWellHeight = 80.0f;   // the response well; its SWEEP well takes the second row of dials' room
 
-    /** How tall the well of a card of `kind` is under `view` (0 for none). */
+    /** How tall the well of a card of `kind` is under `view` (0 for none).
+        A filter's card always shows its response well, a row of dials and
+        its sweep well, whatever the view. */
     inline float wellHeightOf (Kind kind, const View& view) noexcept
     {
+        if (kind == Kind::filter)
+            return filterWellHeight;
         if (kind == Kind::oscillator)
             return view.oscillators == OscillatorView::compact ? compactWell : fullWellHeight;
         switch (view.envelopes)
@@ -269,12 +314,14 @@ namespace Bench
     /** Whether a card of `kind` shows its dials under `view`. */
     inline bool showsDials (Kind kind, const View& view) noexcept
     {
-        return kind == Kind::oscillator || view.envelopes != EnvelopeView::graph;
+        return kind != Kind::envelope || view.envelopes != EnvelopeView::graph;
     }
 
     /** How tall a card of `kind` is drawn under `view`. */
     inline float cardHeightOf (Kind kind, const View& view) noexcept
     {
+        if (kind == Kind::filter)
+            return filterHeight;
         return 30.0f + 8.0f + wellHeightOf (kind, view) + (showsDials (kind, view) ? dialRowsHeight : 0.0f) + 12.0f;
     }
 
@@ -378,7 +425,7 @@ namespace Bench
         void remove (const ModuleId& id)
         {
             disconnect (id);
-            if (id.kind == Kind::envelope)
+            if (takesInput (id.kind))
                 disconnectInto (id);
             setPresent (id, false);
         }
@@ -391,14 +438,23 @@ namespace Bench
             return landed;
         }
 
-        /** Sets the modules on the bench out afresh, as a preset loads: the
-            oscillators along the top row, each envelope under its
-            oscillator, and every cable unplugged. */
+        /** Sets the modules on the bench out afresh, as a preset loads: each
+            oscillator at the top of its column, with its filter (if there
+            is one) under it and its envelope under that, the way sound runs
+            through them; and every cable unplugged. */
         void layOut()
         {
             ensureBench();
-            for (const auto& id : present())
-                setPosition (id, defaultPosition (id));
+            for (int slot = 0; slot < numOscillators; ++slot)
+            {
+                float y = 0.0f;
+                for (const auto kind : { Kind::oscillator, Kind::filter, Kind::envelope })
+                    if (const ModuleId id { kind, slot }; isPresent (id))
+                    {
+                        setPosition (id, { (float) slot * (moduleWidth + gap), y });
+                        y += heightOf (kind) + gap;
+                    }
+            }
             for (const auto& [from, to] : cables())
                 disconnect (from);
         }
@@ -434,23 +490,26 @@ namespace Bench
             return to.has_value() && ! to->has_value();
         }
 
-        /** The oscillator patched into envelope `env`'s IN, if any. */
-        std::optional<ModuleId> inputOf (const ModuleId& env) const
+        /** The module patched into `module`'s IN (a filter's or an envelope's), if any. */
+        std::optional<ModuleId> inputOf (const ModuleId& module) const
         {
             for (const auto& child : bench())
-                if (child.hasType (cableType) && child[toProperty].toString() == env.toString())
+                if (child.hasType (cableType) && child[toProperty].toString() == module.toString())
                     return ModuleId::fromString (child[fromProperty].toString());
             return std::nullopt;
         }
 
-        /** Patches `from` to `to` (the output, or an envelope's IN), replacing
-            the cable `from` had and any other cable into that envelope. An
-            oscillator patches to the output or an envelope, an envelope to the
-            output, and only modules on the bench. Returns false for anything
-            that can't be patched there. */
+        /** Patches `from` to `to` (the output, or a filter's or an
+            envelope's IN), replacing the cable `from` had and any other
+            cable into `to`. Any module patches to the output; into a filter
+            go an oscillator or an envelope, into an envelope an oscillator
+            or a filter; only modules on the bench, and never round in a
+            loop. Returns false for anything that can't be patched there. */
         bool connect (const ModuleId& from, Destination to = std::nullopt)
         {
-            if (! isPresent (from) || (to.has_value() && (from.kind != Kind::oscillator || to->kind != Kind::envelope || ! isPresent (*to))))
+            if (! isPresent (from))
+                return false;
+            if (to.has_value() && (! takesInput (to->kind) || ! isPresent (*to) || ! chainsWithoutRepeats (from, *to)))
                 return false;
 
             disconnect (from);
@@ -471,11 +530,11 @@ namespace Bench
                 bench().removeChild (cable, nullptr);
         }
 
-        /** Unplugs the cable into envelope `env`'s IN. */
-        void disconnectInto (const ModuleId& env)   // NOSONAR(cpp:S5817): it changes the bench, through a ValueTree handle
+        /** Unplugs the cable into `module`'s IN. */
+        void disconnectInto (const ModuleId& module)   // NOSONAR(cpp:S5817): it changes the bench, through a ValueTree handle
         {
             for (auto child : bench())
-                if (child.hasType (cableType) && child[toProperty].toString() == env.toString())
+                if (child.hasType (cableType) && child[toProperty].toString() == module.toString())
                 {
                     bench().removeChild (child, nullptr);
                     return;
@@ -510,57 +569,71 @@ namespace Bench
 
         // ---- What sound does ------------------------------------------------------
 
+        /** Where an oscillator's sound runs along the cables: the filter and
+            the envelope it goes through (-1 for none), and whether it gets
+            to the output. */
+        struct Chain
+        {
+            int  filter   = -1;
+            int  envelope = -1;
+            bool heard    = false;
+        };
+
+        /** Follows OSC `oscillator`'s cable, through at most one filter and
+            one envelope, either way round, to the output. */
+        Chain chainFrom (int oscillator) const
+        {
+            Chain chain;
+            ModuleId at { Kind::oscillator, oscillator };
+            if (! isPresent (at))
+                return chain;
+            for (int hop = 0; hop < 3; ++hop)
+            {
+                const auto to = destinationOf (at);
+                if (! to.has_value())
+                    return chain;
+                if (! to->has_value())
+                {
+                    chain.heard = true;
+                    return chain;
+                }
+                at = **to;
+                auto& slot = at.kind == Kind::filter ? chain.filter : chain.envelope;
+                if (at.kind == Kind::oscillator || slot >= 0 || ! isPresent (at))
+                    return chain;
+                slot = at.slot;
+            }
+            return chain;
+        }
+
         /** Which envelope (0..3, or -1 for none) shapes each oscillator when
             sound flows by `flow`:
               fixed:  ENV n shapes OSC n, when both are on the bench;
               layout: going through the bench in reading order, each envelope
                       takes the first oscillator before it that has none yet;
-              cables: an envelope shapes the oscillator patched into it. */
+              cables: an envelope shapes the oscillator whose chain runs
+                      through it. */
         std::array<int, numOscillators> envelopeAssignment (Flow flow) const
         {
-            std::array<int, numOscillators> shapedBy { -1, -1, -1, -1 };
-            if (flow == Flow::fixed)
-            {
-                for (int k = 0; k < numOscillators; ++k)
-                    if (isPresent ({ Kind::envelope, k }) && isPresent ({ Kind::oscillator, k }))
-                        shapedBy[(size_t) k] = k;
-            }
-            else if (flow == Flow::layout)
-            {
-                std::vector<int> waiting;
-                for (const auto& id : readingOrder())
-                {
-                    if (id.kind == Kind::oscillator)
-                        waiting.push_back (id.slot);
-                    else if (! waiting.empty())
-                    {
-                        shapedBy[(size_t) waiting.front()] = id.slot;
-                        waiting.erase (waiting.begin());
-                    }
-                }
-            }
-            else
-            {
-                for (int e = 0; e < numEnvelopes; ++e)
-                    if (const auto input = inputOf ({ Kind::envelope, e }); input.has_value() && isPresent ({ Kind::envelope, e }))
-                        shapedBy[(size_t) input->slot] = e;
-            }
-            return shapedBy;
+            return assignment (Kind::envelope, flow);
+        }
+
+        /** Which filter (0..3, or -1 for none) filters each oscillator when
+            sound flows by `flow`, picked the way envelopes are (see
+            envelopeAssignment). */
+        std::array<int, numOscillators> filterAssignment (Flow flow) const
+        {
+            return assignment (Kind::filter, flow);
         }
 
         /** Whether each oscillator reaches the output along the cables:
-            patched to it, or to an envelope that is. */
+            patched to it, or through a filter or an envelope (or both) that
+            are. */
         std::array<bool, numOscillators> heardThroughCables() const
         {
             std::array<bool, numOscillators> heard {};
             for (int k = 0; k < numOscillators; ++k)
-            {
-                const ModuleId osc { Kind::oscillator, k };
-                const auto to = destinationOf (osc);
-                if (! to.has_value() || ! isPresent (osc))
-                    continue;
-                heard[(size_t) k] = ! to->has_value() || isPatchedToOutput (**to);
-            }
+                heard[(size_t) k] = chainFrom (k).heard;
             return heard;
         }
 
@@ -597,9 +670,70 @@ namespace Bench
         {
             if (text == outputJack)
                 return Destination {};
-            if (const auto env = ModuleId::fromString (text); env.has_value() && env->kind == Kind::envelope)
-                return Destination { *env };
+            if (const auto module = ModuleId::fromString (text); module.has_value() && takesInput (module->kind))
+                return Destination { *module };
             return std::nullopt;
+        }
+
+        /** Whether patching `from` into `into` keeps every chain to one
+            module of each kind: walking back from `from` and on from `into`
+            meets no kind twice, which also rules out patching round in a
+            loop. */
+        bool chainsWithoutRepeats (const ModuleId& from, const ModuleId& into) const
+        {
+            std::array<bool, 3> seen {};
+            const auto meet = [&seen] (const ModuleId& id)
+            {
+                auto& met = seen[(size_t) id.kind];
+                return ! std::exchange (met, true);
+            };
+            std::optional<ModuleId> back = from;
+            for (int hop = 0; back.has_value() && hop < 3; ++hop, back = inputOf (*back))
+                if (! meet (*back))
+                    return false;
+            Destination on = into;
+            for (int hop = 0; on.has_value() && hop < 3; ++hop)
+            {
+                if (! meet (*on))
+                    return false;
+                const auto next = destinationOf (*on);
+                on = next.has_value() ? *next : Destination {};
+            }
+            return true;
+        }
+
+        std::array<int, numOscillators> assignment (Kind kind, Flow flow) const
+        {
+            std::array<int, numOscillators> takenBy { -1, -1, -1, -1 };
+            if (flow == Flow::fixed)
+            {
+                for (int k = 0; k < numOscillators; ++k)
+                    if (isPresent ({ kind, k }) && isPresent ({ Kind::oscillator, k }))
+                        takenBy[(size_t) k] = k;
+            }
+            else if (flow == Flow::layout)
+            {
+                std::vector<int> waiting;
+                for (const auto& id : readingOrder())
+                {
+                    if (id.kind == Kind::oscillator)
+                        waiting.push_back (id.slot);
+                    else if (id.kind == kind && ! waiting.empty())
+                    {
+                        takenBy[(size_t) waiting.front()] = id.slot;
+                        waiting.erase (waiting.begin());
+                    }
+                }
+            }
+            else
+            {
+                for (int k = 0; k < numOscillators; ++k)
+                {
+                    const auto chain = chainFrom (k);
+                    takenBy[(size_t) k] = kind == Kind::filter ? chain.filter : chain.envelope;
+                }
+            }
+            return takenBy;
         }
 
         juce::ValueTree findModule (const ModuleId& id) const

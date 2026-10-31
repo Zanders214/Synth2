@@ -500,6 +500,29 @@ void testEffects()
     check (std::abs (Effects::delaySeconds (Effects::DelaySettings {}, 77.0) - 0.375) < 1e-9, "unsynced, TIME ignores the tempo");
 }
 
+void testFilterWell()
+{
+    std::printf ("Filter well:\n");
+
+    using VM = Synth2VisualModel;
+    check (approx (VM::filterX (20.0f), 0.0f, 1e-6f) && approx (VM::filterX (20000.0f), 1.0f, 1e-6f),
+           "20 Hz at the left edge, 20 kHz at the right");
+    check (approx (VM::filterX (1260.0f) - VM::filterX (630.0f), VM::filterX (126.0f) - VM::filterX (63.0f), 1e-5f),
+           "each octave the same width");
+    bool roundTrips = true;
+    for (const float hz : { 20.0f, 55.0f, 440.0f, 1200.0f, 9000.0f, 20000.0f })
+        roundTrips = roundTrips && approx (VM::filterHz (VM::filterX (hz)), hz, hz * 1e-4f);
+    check (roundTrips, "and a place across it gives its frequency back");
+    check (VM::filterY (0.0f) > 0.5f && VM::filterY (-60.0f) <= 0.0f && VM::filterY (40.0f) >= 1.0f,
+           "0 dB above the middle, the deep cuts on the floor and the peaks at the top");
+    check (approx (VM::resonanceAt (VM::resonanceY (0.35f)), 0.35f, 1e-6f) && VM::resonanceY (1.0f) > VM::resonanceY (0.0f),
+           "the handle stands higher the more RESONANCE, and its height gives it back");
+    check (approx (VM::sweptHz (1000.0f, 12.0f, 1.0f), 2000.0f, 0.1f) && approx (VM::sweptHz (1000.0f, 12.0f, 0.0f), 1000.0f, 0.1f),
+           "a note at the top of its sweep has ENV AMOUNT more cutoff");
+    check (approx (VM::sweptHz (8000.0f, 48.0f, 1.0f), 20000.0f, 0.1f) && approx (VM::sweptHz (100.0f, -48.0f, 1.0f), 20.0f, 0.1f),
+           "within what the filter plays");
+}
+
 int main()
 {
     std::printf ("Synth2VisualModel tests\n=======================\n");
@@ -512,6 +535,7 @@ int main()
     testEnvelope();
     testWavePicking();
     testEffects();
+    testFilterWell();
 
     std::printf ("\n%s\n", failures == 0 ? "ALL TESTS PASSED" : "SOME TESTS FAILED");
     return failures == 0 ? 0 : 1;

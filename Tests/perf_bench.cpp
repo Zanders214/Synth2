@@ -4,7 +4,8 @@
 // github-action-benchmark "customSmallerIsBetter" JSON file so the perf workflow
 // can chart the trend and alert on regressions. A typical load (an 8-note chord
 // of 7 detuned saws) and 16 notes of 16 voices on one, two and all four
-// oscillators (the worst case), and that again through the delay and reverb.
+// oscillators (the worst case), that again through the delay and reverb, and
+// with each oscillator through its own filter.
 // The headline metric is the "DSP load %" = ns_per_block / (blockSize / sampleRate);
 // < 100% = real-time capable.
 
@@ -20,7 +21,7 @@
 namespace
 {
 double benchChord (const char* name, int notes, int voices, ankerl::nanobench::Bench& bench, int numOscillators = 1,
-                   bool effects = false)
+                   bool effects = false, bool filters = false)
 {
     const double sr = 48000.0;
     const int    bs = 512;
@@ -40,6 +41,8 @@ double benchChord (const char* name, int notes, int voices, ankerl::nanobench::B
         set (ParamID::oscillator (k).voices, (float) voices);
         set (ParamID::envelope (k).on, k < numOscillators ? 1.0f : 0.0f);
         set (ParamID::envelope (k).release, 10.0f);
+        set (ParamID::filter (k).on, filters && k < numOscillators ? 1.0f : 0.0f);
+        set (ParamID::filter (k).sweep.release, 10.0f);
     }
     set (ParamID::driveInChain,  effects ? 1.0f : 0.0f);
     set (ParamID::delayInChain,  effects ? 1.0f : 0.0f);
@@ -80,6 +83,7 @@ int main (int argc, char** argv)
     const double bothNs    = benchChord ("processBlock 16 notes x 16 voices, OSC 1 + OSC 2", 16, 16, bench, 2);
     const double fourNs    = benchChord ("processBlock 16 notes x 16 voices, OSC 1..4", 16, 16, bench, 4);
     const double effectsNs = benchChord ("processBlock 16 notes x 16 voices, OSC 1..4, delay + reverb", 16, 16, bench, 4, true);
+    const double filtersNs = benchChord ("processBlock 16 notes x 16 voices, OSC 1..4 + filters", 16, 16, bench, 4, false, true);
 
     const double budgetNs = (double) bs / sr * 1.0e9;          // 10.67 ms @48k/512
     const double typicalPct = typicalNs / budgetNs * 100.0;
@@ -87,6 +91,7 @@ int main (int argc, char** argv)
     const double bothPct    = bothNs    / budgetNs * 100.0;
     const double fourPct    = fourNs    / budgetNs * 100.0;
     const double effectsPct = effectsNs / budgetNs * 100.0;
+    const double filtersPct = filtersNs / budgetNs * 100.0;
 
     // github-action-benchmark "customSmallerIsBetter" schema:
     juce::String json;
@@ -100,12 +105,15 @@ int main (int argc, char** argv)
          << "  { \"name\": \"processBlock 16x16 4-osc\", \"unit\": \"ns/block\", \"value\": " << juce::String (fourNs, 3)     << " },\n"
          << "  { \"name\": \"DSP load 16x16 4-osc @48k/512\", \"unit\": \"%\",  \"value\": " << juce::String (fourPct, 3)    << " },\n"
          << "  { \"name\": \"processBlock 16x16 4-osc + effects\", \"unit\": \"ns/block\", \"value\": " << juce::String (effectsNs, 3) << " },\n"
-         << "  { \"name\": \"DSP load 16x16 4-osc + effects @48k/512\", \"unit\": \"%\", \"value\": " << juce::String (effectsPct, 3) << " }\n"
+         << "  { \"name\": \"DSP load 16x16 4-osc + effects @48k/512\", \"unit\": \"%\", \"value\": " << juce::String (effectsPct, 3) << " },\n"
+         << "  { \"name\": \"processBlock 16x16 4-osc + filters\", \"unit\": \"ns/block\", \"value\": " << juce::String (filtersNs, 3) << " },\n"
+         << "  { \"name\": \"DSP load 16x16 4-osc + filters @48k/512\", \"unit\": \"%\", \"value\": " << juce::String (filtersPct, 3) << " }\n"
          << "]\n";
     const juce::String out = (argc > 1) ? juce::String (argv[1]) : juce::String ("bench_result.json");
     juce::File::getCurrentWorkingDirectory().getChildFile (out).replaceWithText (json);
     std::printf ("8x7:   %.0f ns (%.1f%% RT load)\n16x16: %.0f ns (%.1f%% RT load)\n16x16, two oscillators: %.0f ns (%.1f%% RT load)\n"
-                 "16x16, four oscillators: %.0f ns (%.1f%% RT load)\n16x16, four oscillators, delay + reverb: %.0f ns (%.1f%% RT load)\n",
-                 typicalNs, typicalPct, worstNs, worstPct, bothNs, bothPct, fourNs, fourPct, effectsNs, effectsPct);
+                 "16x16, four oscillators: %.0f ns (%.1f%% RT load)\n16x16, four oscillators, delay + reverb: %.0f ns (%.1f%% RT load)\n"
+                 "16x16, four oscillators, each filtered: %.0f ns (%.1f%% RT load)\n",
+                 typicalNs, typicalPct, worstNs, worstPct, bothNs, bothPct, fourNs, fourPct, effectsNs, effectsPct, filtersNs, filtersPct);
     return 0;
 }

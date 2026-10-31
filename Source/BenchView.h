@@ -30,6 +30,8 @@ public:
             oscillators[(size_t) slot] = std::make_unique<OscillatorModule> (slot, looks, state);
         for (int slot = 0; slot < Bench::numEnvelopes; ++slot)
             envelopes[(size_t) slot] = std::make_unique<EnvelopeModule> (slot, looks, state);
+        for (int slot = 0; slot < Bench::numFilters; ++slot)
+            filters[(size_t) slot] = std::make_unique<FilterModule> (slot, looks, state);
 
         for (const auto& id : Bench::allModules)
         {
@@ -47,13 +49,18 @@ public:
     BenchModule& getModule (const Bench::ModuleId& id)
     {
         const auto slot = (size_t) juce::jlimit (0, 3, id.slot);
-        if (id.kind == Bench::Kind::envelope)
-            return *envelopes[slot];
+        switch (id.kind)
+        {
+            case Bench::Kind::envelope:   return *envelopes[slot];
+            case Bench::Kind::filter:     return *filters[slot];
+            case Bench::Kind::oscillator: break;
+        }
         return *oscillators[slot];
     }
 
     OscillatorModule& getOscillator (int slot) { return *oscillators[(size_t) slot]; }
     EnvelopeModule&   getEnvelope (int slot)   { return *envelopes[(size_t) slot]; }
+    FilterModule&     getFilter (int slot)     { return *filters[(size_t) slot]; }
 
     void setUiScale (float newScale)
     {
@@ -198,6 +205,7 @@ private:
 
     std::array<std::unique_ptr<OscillatorModule>, Bench::numOscillators> oscillators;
     std::array<std::unique_ptr<EnvelopeModule>, Bench::numEnvelopes> envelopes;
+    std::array<std::unique_ptr<FilterModule>, Bench::numFilters> filters;
 
     std::function<void (juce::Point<float>, juce::Point<int>)> emptyClickHandler;
     float uiScale  = 1.0f;

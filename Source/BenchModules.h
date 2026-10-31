@@ -56,6 +56,11 @@ namespace BenchStyle
         for (const auto& env : ParamID::envelopes)
             if (id == env.delay || id == env.attack || id == env.hold || id == env.decay || id == env.release)
                 return Format::seconds (value);
+        for (const auto& filter : ParamID::filters)
+        {
+            if (id == filter.cutoff)    return Format::hertz (value);
+            if (id == filter.envAmount) return Format::semitones (juce::roundToInt (value));
+        }
         if (id == ParamID::output)
             return Format::decibels (value);
         if (id == ParamID::delayTime || id == ParamID::reverbPreDelay)
@@ -903,4 +908,78 @@ private:
     }
 
     AmpDisplay display;
+};
+
+/** A filter: its response well, where TYPE is picked and the cutoff and
+    resonance dragged, over CUTOFF / RESONANCE / ENV AMT, and its SWEEP well,
+    the envelope that moves the cutoff, edited like an AMP well. It filters
+    one oscillator. */
+class FilterModule final : public BenchModule
+{
+public:
+    FilterModule (int slot, Synth2LookAndFeel& looksToUse, juce::AudioProcessorValueTreeState& stateToUse)
+        : BenchModule ({ Bench::Kind::filter, slot }, "FILTER " + juce::String (slot + 1), looksToUse, stateToUse,
+                       ParamID::filter (slot).active, "Switched off: its oscillator plays unfiltered")
+    {
+        addAndMakeVisible (response);
+        addAndMakeVisible (sweep);
+        const auto& ids = ParamID::filter (slot);
+        const auto cutoffColour    = BenchStyle::dialColour (0.1f);
+        const auto resonanceColour = BenchStyle::dialColour (0.45f);
+        addDial (ids.cutoff,    "CUTOFF",    cutoffColour);
+        addDial (ids.resonance, "RESONANCE", resonanceColour);
+        addDial (ids.envAmount, "ENV AMT",   BenchStyle::dialColour (0.8f));
+        response.setColours (cutoffColour, resonanceColour);
+        response.setParameters ({ stateToUse.getParameter (ids.type), stateToUse.getParameter (ids.cutoff),
+                                  stateToUse.getParameter (ids.resonance) });
+
+        const auto& stages = ids.sweep;
+        const std::array<const char*, 6> stageIds { stages.delay, stages.attack, stages.hold, stages.decay, stages.sustain, stages.release };
+        std::array<juce::Colour, 6> colours;
+        AmpDisplay::Parameters parameters {};
+        for (size_t i = 0; i < stageIds.size(); ++i)
+        {
+            colours[i]    = BenchStyle::dialColour (0.5f + 0.1f * (float) i);
+            parameters[i] = stateToUse.getParameter (stageIds[i]);
+        }
+        parameters[6] = stateToUse.getParameter (stages.attackCurve);
+        parameters[7] = stateToUse.getParameter (stages.decayCurve);
+        parameters[8] = stateToUse.getParameter (stages.releaseCurve);
+        sweep.setColours (colours);
+        sweep.setParameters (parameters);
+        sweep.setCaption ("SWEEP");
+        getHeader().setJackColour (BenchStyle::dialColour (0.3f + 0.1f * (float) slot));
+    }
+
+    FilterDisplay& getResponse() noexcept { return response; }
+    AmpDisplay&    getSweep() noexcept    { return sweep; }
+
+    /** Shows the filter as it plays, and its sweep with a dot per note. */
+    void refresh (const FilterDisplayState& filter, const AmpDisplayState& envelope)
+    {
+        response.setFilterState (filter);
+        sweep.setAmpState (envelope);
+        sweep.setCaption ("SWEEP", "ENV " + Synth2::Format::semitones (juce::roundToInt (filter.envAmount)));
+    }
+
+    void resized() override
+    {
+        BenchModule::resized();
+        // The SWEEP well fills the room under the row of dials.
+        const float s  = getUiScale();
+        const auto  px = [s] (float v) { return juce::roundToInt (v * s); };
+        const int   top = px (30.0f + 8.0f + Bench::filterWellHeight + 12.0f + 52.0f + 31.0f + 8.0f);
+        sweep.setUiScale (s);
+        sweep.setBounds (juce::Rectangle<int> (px (12.0f), top, getWidth() - px (24.0f), getHeight() - px (12.0f) - top));
+    }
+
+private:
+    void layoutWell (juce::Rectangle<int> well) override
+    {
+        response.setUiScale (getUiScale());
+        response.setBounds (well);
+    }
+
+    FilterDisplay response;
+    AmpDisplay    sweep;
 };
