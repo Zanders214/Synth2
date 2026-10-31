@@ -16,11 +16,12 @@
 
     Synth2's factory sounds. Each one says which oscillators are on the bench
     and how they are set: each with its own unison stack, and most with their
-    own DAHDSR envelope, and the effects it goes through (the pads and keys
-    mostly). Everything a preset doesn't mention goes back to its default, so
-    it sounds the same whatever was playing before it. Loading one sets the
-    bench out afresh: its oscillators along the top row, each envelope under
-    its oscillator (ENV n shapes OSC n), in a fixed order with no cables; and
+    own DAHDSR envelope, some through their own swept filter, and the effects
+    it goes through (the pads and keys mostly). Everything a preset doesn't
+    mention goes back to its default, so it sounds the same whatever was
+    playing before it. Loading one sets the bench out afresh: its oscillators
+    along the top row, each one's filter under it and its envelope under
+    that (FILTER n and ENV n take OSC n), in a fixed order with no cables; and
     the EFFECTS tab too: just its effects, side by side, the drive, then the
     delay, then the reverb.
 
@@ -58,10 +59,22 @@ namespace Presets
     /** One that falls to `sustain` after its attack. */
     inline Envelope adsr (float attack, float decay, float sustain, float release) { return { 0.0f, attack, 0.0f, decay, sustain, release }; }
 
+    /** A filter (see Filter.h): its type (Filter::Type's order), its cutoff
+        in Hz, its RESONANCE, how far its sweep moves the cutoff, in
+        semitones, and the sweep itself. */
+    struct Filter
+    {
+        int      type      = 0;
+        float    cutoffHz  = 1200.0f;
+        float    resonance = 0.2f;
+        float    envAmount = 24.0f;
+        Envelope sweep {};
+    };
+
     /** One oscillator on the bench: its shape (Waveform's order), its
         transposition in semitones, its fine tune in cents, its level, its
-        unison stack and the envelope under it (none: it just starts and
-        stops with its key). */
+        unison stack, the envelope under it (none: it just starts and stops
+        with its key) and the filter it goes through (none: unfiltered). */
     struct Oscillator
     {
         int   wave      = 2;
@@ -70,6 +83,7 @@ namespace Presets
         float level     = 1.0f;
         Unison unison {};
         std::optional<Envelope> envelope {};
+        std::optional<Filter>   filter {};
     };
 
     /** The delay, following the tempo: its note length (an index into
@@ -127,7 +141,10 @@ namespace Presets
     inline constexpr int saw      = (int) Waveform::saw;
     inline constexpr int square   = (int) Waveform::square;
 
-    inline const std::array<Preset, 16> factory {{
+    // The filter types, by name (their place in Filter::Type).
+    inline constexpr int low24 = (int) ::Filter::Type::low24;
+
+    inline const std::array<Preset, 18> factory {{
         { "Empty Bench", "Nothing on it yet: build your own", {}, 0.0f },
 
         // Pads
@@ -207,12 +224,23 @@ namespace Presets
           { Oscillator { sine, -12, 0.0f, 1.0f,    {}, ar (0.002f, 0.12f) },
             Oscillator { triangle, 0, 0.0f, 0.35f, {}, adsr (0.002f, 0.2f, 0.3f, 0.08f) } },
           -4.0f },
+
+        // Added later, at the end, so the presets before them keep the
+        // program numbers hosts have saved.
+        { "Filter Pluck", "A saw whose low-pass snaps shut as it rings",
+          { Oscillator { saw, 0, 0.0f, 1.0f, { 3, 10.0f, 0.6f }, adsr (0.002f, 1.2f, 0.3f, 0.35f),
+                         Filter { low24, 260.0f, 0.35f, 36.0f, Envelope { 0.0f, 0.001f, 0.0f, 0.45f, 0.0f, 0.3f, 0.0f, -0.6f, 0.0f } } } },
+          -4.0f, Delay { dottedEighth, 0.35f, 0.55f, 0.2f, true }, Reverb { 0.5f, 0.5f, 1.0f, 0.15f, 10.0f } },
+        { "Acid Bass", "A squelchy square, its resonant filter swept short",
+          { Oscillator { square, -12, 0.0f, 1.0f, {}, adsr (0.002f, 0.3f, 0.7f, 0.08f),
+                         Filter { low24, 180.0f, 0.72f, 30.0f, Envelope { 0.0f, 0.001f, 0.0f, 0.22f, 0.1f, 0.1f, 0.0f, -0.5f, 0.0f } } } },
+          -8.0f, std::nullopt, std::nullopt, Drive { 0.3f, 1, 0.6f, 1.0f } },
     }};
 
     inline constexpr int numPresets = (int) std::tuple_size_v<decltype (factory)>;
 
-    /** The parameter values `preset` sets, by ID: whether each oscillator and
-        envelope is on the bench and each effect in the chain, and the
+    /** The parameter values `preset` sets, by ID: whether each oscillator,
+        envelope and filter is on the bench and each effect in the chain, and the
         settings of the ones that are. */
     inline std::vector<std::pair<const char*, float>> valuesOf (const Preset& preset)
     {
@@ -221,10 +249,25 @@ namespace Presets
         {
             const auto& ids = ParamID::oscillators[k];
             const auto& env = ParamID::envelopes[k];
+            const auto& flt = ParamID::filters[k];
             const auto& osc = preset.oscillators[k];
-            const bool  shaped = osc.has_value() && osc->envelope.has_value();
+            const bool  shaped   = osc.has_value() && osc->envelope.has_value();
+            const bool  filtered = osc.has_value() && osc->filter.has_value();
             values.emplace_back (ids.on, osc.has_value() ? 1.0f : 0.0f);
             values.emplace_back (env.on, shaped ? 1.0f : 0.0f);
+            values.emplace_back (flt.on, filtered ? 1.0f : 0.0f);
+            const auto addStages = [&values] (const ParamID::Envelope& stages, const Envelope& envelope)
+            {
+                values.emplace_back (stages.delay,        envelope.delaySeconds);
+                values.emplace_back (stages.attack,       envelope.attackSeconds);
+                values.emplace_back (stages.hold,         envelope.holdSeconds);
+                values.emplace_back (stages.decay,        envelope.decaySeconds);
+                values.emplace_back (stages.sustain,      envelope.sustainLevel);
+                values.emplace_back (stages.release,      envelope.releaseSeconds);
+                values.emplace_back (stages.attackCurve,  envelope.attackCurve);
+                values.emplace_back (stages.decayCurve,   envelope.decayCurve);
+                values.emplace_back (stages.releaseCurve, envelope.releaseCurve);
+            };
             if (osc.has_value())
             {
                 values.emplace_back (ids.wave,   (float) osc->wave);
@@ -236,16 +279,14 @@ namespace Presets
                 values.emplace_back (ids.width,  osc->unison.width);
             }
             if (shaped)
+                addStages (env, *osc->envelope);
+            if (filtered)
             {
-                values.emplace_back (env.delay,   osc->envelope->delaySeconds);
-                values.emplace_back (env.attack,  osc->envelope->attackSeconds);
-                values.emplace_back (env.hold,    osc->envelope->holdSeconds);
-                values.emplace_back (env.decay,   osc->envelope->decaySeconds);
-                values.emplace_back (env.sustain, osc->envelope->sustainLevel);
-                values.emplace_back (env.release, osc->envelope->releaseSeconds);
-                values.emplace_back (env.attackCurve,  osc->envelope->attackCurve);
-                values.emplace_back (env.decayCurve,   osc->envelope->decayCurve);
-                values.emplace_back (env.releaseCurve, osc->envelope->releaseCurve);
+                values.emplace_back (flt.type,      (float) osc->filter->type);
+                values.emplace_back (flt.cutoff,    osc->filter->cutoffHz);
+                values.emplace_back (flt.resonance, osc->filter->resonance);
+                values.emplace_back (flt.envAmount, osc->filter->envAmount);
+                addStages (flt.sweep, osc->filter->sweep);
             }
         }
         values.emplace_back (ParamID::driveInChain, preset.drive.has_value() ? 1.0f : 0.0f);

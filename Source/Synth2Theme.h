@@ -151,6 +151,14 @@ namespace Synth2
             return (c > 0.05f ? "+" : "") + juce::String (c, 1) + " ct";
         }
 
+        /** A frequency: "NNN Hz" below a kilohertz, "X.XX kHz" above. */
+        inline juce::String hertz (float hz)
+        {
+            if (hz < 1000.0f)
+                return juce::String (juce::roundToInt (hz)) + " Hz";
+            return juce::String (hz / 1000.0f, hz < 10000.0f ? 2 : 1) + " kHz";
+        }
+
         /** A level in dB with its sign, e.g. "-6.0 dB" / "0.0 dB" / "+3.0 dB". */
         inline juce::String decibels (float db)
         {

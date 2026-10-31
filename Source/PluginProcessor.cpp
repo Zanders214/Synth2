@@ -24,6 +24,15 @@ Synth2AudioProcessor::Synth2AudioProcessor()
     // The on-screen keyboard and the follower (the bench's layout and the
     // effects' rack in the state, and listening for changes to them) set
     // themselves up as members.
+    for (size_t f = 0; f < filterValues.size(); ++f)
+    {
+        const auto& ids   = ParamID::filters[f];
+        const auto  value = [this] (const char* id) { return apvts.getRawParameterValue (id); };
+        filterValues[f] = { value (ids.active), value (ids.type), value (ids.cutoff), value (ids.resonance), value (ids.envAmount),
+                            { value (ids.sweep.delay), value (ids.sweep.attack), value (ids.sweep.hold), value (ids.sweep.decay),
+                              value (ids.sweep.sustain), value (ids.sweep.release), value (ids.sweep.attackCurve),
+                              value (ids.sweep.decayCurve), value (ids.sweep.releaseCurve) } };
+    }
 }
 
 Synth2AudioProcessor::~Synth2AudioProcessor()
@@ -164,6 +173,62 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
     for (int index = 0; index < Synth2Engine::numEnvelopes; ++index)
         addEnvelope (index);
 
+    // The four filters (version 11): each on the bench or not, its power
+    // switch, its type, cutoff, resonance, and how far its own sweep envelope
+    // moves the cutoff, in semitones. A new filter is a plucky low-pass.
+    const auto hzFromValue = [] (float value, int)
+    {
+        return value < 1000.0f ? String (roundToInt (value)) + " Hz"
+                               : String (value / 1000.0f, value < 10000.0f ? 2 : 1) + " kHz";
+    };
+    const auto addFilter = [&] (int index)
+    {
+        const auto& ids      = ParamID::filter (index);
+        const auto  defaults = Synth2Engine::Settings {}.filters[(size_t) index];
+        const String name    = "Filter " + String (index + 1) + " ";
+
+        layout.add (std::make_unique<AudioParameterBool> (ParameterID { ids.on, 11 }, name + "On", false, onOff (false)));
+        layout.add (std::make_unique<AudioParameterBool> (ParameterID { ids.active, 11 }, name + "Active", true));
+        layout.add (std::make_unique<AudioParameterChoice> (
+            ParameterID { ids.type, 11 }, name + "Type", StringArray { "Low 24", "Low 12", "Band", "High 12", "High 24", "Notch" },
+            (int) defaults.type));
+        NormalisableRange cutoff (Filter::minHz, Filter::maxHz);
+        cutoff.setSkewForCentre (632.0f);   // the geometric middle: even octaves across the knob
+        layout.add (std::make_unique<AudioParameterFloat> (
+            ParameterID { ids.cutoff, 11 }, name + "Cutoff", cutoff, defaults.cutoffHz,
+            AudioParameterFloatAttributes().withStringFromValueFunction (hzFromValue)));
+        layout.add (std::make_unique<AudioParameterFloat> (
+            ParameterID { ids.resonance, 11 }, name + "Resonance", NormalisableRange<float> (0.0f, 1.0f), defaults.resonance,
+            AudioParameterFloatAttributes().withStringFromValueFunction (percentFromValue)));
+        layout.add (std::make_unique<AudioParameterFloat> (
+            ParameterID { ids.envAmount, 11 }, name + "Env Amount",
+            NormalisableRange<float> (-Synth2Engine::maxEnvAmount, Synth2Engine::maxEnvAmount), defaults.envAmount,
+            AudioParameterFloatAttributes().withStringFromValueFunction ([] (float value, int)
+            {
+                const int st = roundToInt (value);
+                return (st > 0 ? "+" : "") + String (st) + " st";
+            })));
+
+        const auto& sweep  = ids.sweep;
+        const auto& stages = defaults.sweep;
+        time (sweep.delay,   11, name + "Delay",   0.0f,   5.0f,  0.2f, stages.delaySeconds);
+        time (sweep.attack,  11, name + "Attack",  0.001f, 5.0f,  0.2f, stages.attackSeconds);
+        time (sweep.hold,    11, name + "Hold",    0.0f,   5.0f,  0.2f, stages.holdSeconds);
+        time (sweep.decay,   11, name + "Decay",   0.001f, 10.0f, 0.5f, stages.decaySeconds);
+        layout.add (std::make_unique<AudioParameterFloat> (
+            ParameterID { sweep.sustain, 11 }, name + "Sustain", NormalisableRange<float> (0.0f, 1.0f), stages.sustainLevel,
+            AudioParameterFloatAttributes().withStringFromValueFunction (percentFromValue)));
+        time (sweep.release, 11, name + "Release", 0.005f, 10.0f, 0.5f, stages.releaseSeconds);
+        for (const auto& [id, rampName, value] : { std::tuple (sweep.attackCurve, "Attack Curve", stages.attackCurve),
+                                                   std::tuple (sweep.decayCurve, "Decay Curve", stages.decayCurve),
+                                                   std::tuple (sweep.releaseCurve, "Release Curve", stages.releaseCurve) })
+            layout.add (std::make_unique<AudioParameterFloat> (
+                ParameterID { id, 11 }, name + rampName, NormalisableRange<float> (-1.0f, 1.0f), value,
+                AudioParameterFloatAttributes().withStringFromValueFunction (curveFromValue)));
+    };
+    for (int index = 0; index < Synth2Engine::numFilters; ++index)
+        addFilter (index);
+
     // How sound flows between the modules.
     layout.add (std::make_unique<AudioParameterChoice> (
         ParameterID { ParamID::signalFlow, 3 }, "Signal Flow", StringArray { "Fixed order", "Follow layout", "Patch cables" },
@@ -244,12 +309,21 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
 
 std::array<NoteActivity, Synth2Engine::maxNotes> Synth2AudioProcessor::getNoteActivity (int osc) const noexcept
 {
-    const auto& published = noteActivity[(size_t) juce::jlimit (0, Synth2Engine::numOscillators - 1, osc)];
+    return read (noteActivity[(size_t) juce::jlimit (0, Synth2Engine::numOscillators - 1, osc)]);
+}
+
+std::array<NoteActivity, Synth2Engine::maxNotes> Synth2AudioProcessor::getSweepActivity (int osc) const noexcept
+{
+    return read (sweepActivity[(size_t) juce::jlimit (0, Synth2Engine::numOscillators - 1, osc)]);
+}
+
+std::array<NoteActivity, Synth2Engine::maxNotes> Synth2AudioProcessor::read (const PublishedNotes& published) noexcept
+{
     std::array<NoteActivity, Synth2Engine::maxNotes> activity {};
     for (size_t i = 0; i < activity.size(); ++i)
     {
-        activity[i].stage       = (NoteActivity::Stage) published[i].stage.load();
-        activity[i].level       = published[i].level.load();
+        activity[i].stage    = (NoteActivity::Stage) published[i].stage.load();
+        activity[i].level    = published[i].level.load();
         activity[i].progress = published[i].progress.load();
     }
     return activity;
@@ -277,14 +351,15 @@ Synth2Engine::Settings Synth2AudioProcessor::currentSettings() const noexcept
         oscillator.width       = param (ids.width);
         oscillator.active      = param (ids.active) >= 0.5f;
 
-        // A switched-off envelope lets its oscillator through unshaped.
+        // A switched-off envelope lets its oscillator through unshaped, and
+        // a switched-off filter lets it through unfiltered.
         const int shapedBy  = envelopeFor[(size_t) flow][k].load (std::memory_order_relaxed);
         oscillator.envelope = shapedBy >= 0 && param (ParamID::envelope (shapedBy).active) >= 0.5f ? shapedBy : -1;
+        const int filteredBy = filterFor[(size_t) flow][k].load (std::memory_order_relaxed);
+        oscillator.filter    = filteredBy >= 0 && filterValues[(size_t) filteredBy].active->load() >= 0.5f ? filteredBy : -1;
     }
-    for (size_t e = 0; e < settings.envelopes.size(); ++e)
+    const auto readStages = [&param] (const ParamID::Envelope& ids, Synth2Engine::EnvelopeSettings& envelope)
     {
-        const auto& ids = ParamID::envelopes[e];
-        auto& envelope  = settings.envelopes[e];
         envelope.delaySeconds   = param (ids.delay);
         envelope.attackSeconds  = param (ids.attack);
         envelope.holdSeconds    = param (ids.hold);
@@ -294,6 +369,24 @@ Synth2Engine::Settings Synth2AudioProcessor::currentSettings() const noexcept
         envelope.attackCurve    = param (ids.attackCurve);
         envelope.decayCurve     = param (ids.decayCurve);
         envelope.releaseCurve   = param (ids.releaseCurve);
+    };
+    for (size_t e = 0; e < settings.envelopes.size(); ++e)
+        readStages (ParamID::envelopes[e], settings.envelopes[e]);
+    for (size_t f = 0; f < settings.filters.size(); ++f)
+    {
+        const auto& values = filterValues[f];
+        auto& filter       = settings.filters[f];
+        filter.type      = (Filter::Type) juce::jlimit (0, Filter::numTypes - 1, juce::roundToInt (values.type->load()));
+        filter.cutoffHz  = values.cutoff->load();
+        filter.resonance = values.resonance->load();
+        filter.envAmount = values.envAmount->load();
+        auto& sweep = filter.sweep;
+        for (auto [stage, value] : { std::pair (&sweep.delaySeconds, values.sweep[0]), std::pair (&sweep.attackSeconds, values.sweep[1]),
+                                     std::pair (&sweep.holdSeconds, values.sweep[2]), std::pair (&sweep.decaySeconds, values.sweep[3]),
+                                     std::pair (&sweep.sustainLevel, values.sweep[4]), std::pair (&sweep.releaseSeconds, values.sweep[5]),
+                                     std::pair (&sweep.attackCurve, values.sweep[6]), std::pair (&sweep.decayCurve, values.sweep[7]),
+                                     std::pair (&sweep.releaseCurve, values.sweep[8]) })
+            *stage = value->load();
     }
     // An effect plays while it is both in the chain and switched on.
     const auto playing = [&param] (const char* power, const char* inChain) { return param (power) >= 0.5f && param (inChain) >= 0.5f; };
@@ -365,11 +458,11 @@ void Synth2AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     for (size_t k = 0; k < noteActivity.size(); ++k)
     {
         const auto activity = engine.getActivity ((int) k);
+        const auto sweeps   = engine.getSweepActivity ((int) k);
         for (size_t i = 0; i < activity.size(); ++i)
         {
-            noteActivity[k][i].stage   .store ((int) activity[i].stage);
-            noteActivity[k][i].level   .store (activity[i].level);
-            noteActivity[k][i].progress.store (activity[i].progress);
+            noteActivity[k][i].publish (activity[i]);
+            sweepActivity[k][i].publish (sweeps[i]);
         }
     }
 
@@ -473,8 +566,21 @@ double Synth2AudioProcessor::getTailLengthSeconds() const
     const auto settings = currentSettings();
     double tail = Synth2Engine::gateReleaseSeconds;
     for (const auto& oscillator : settings.oscillators)
-        if (oscillator.on && oscillator.active && oscillator.envelope >= 0)
-            tail = juce::jmax (tail, (double) settings.envelopes[(size_t) oscillator.envelope].releaseSeconds);
+    {
+        if (! oscillator.on || ! oscillator.active)
+            continue;
+        double release = oscillator.envelope >= 0 ? (double) settings.envelopes[(size_t) oscillator.envelope].releaseSeconds
+                                                  : Synth2Engine::gateReleaseSeconds;
+        // A resonant filter rings on after the release, longest where its
+        // sweep takes the cutoff lowest.
+        if (oscillator.filter >= 0)
+        {
+            const auto& filter = settings.filters[(size_t) oscillator.filter];
+            const float lowest = filter.cutoffHz * std::exp2 (juce::jmin (0.0f, filter.envAmount) / 12.0f);
+            release += Filter::ringSeconds (filter.type, lowest, filter.resonance);
+        }
+        tail = juce::jmax (tail, release);
+    }
     return tail + Effects::tailSeconds (settings.effects);
 }
 
@@ -598,9 +704,13 @@ void Synth2AudioProcessor::Follower::followBench()
     const Bench::Model bench (owner.apvts);
     for (const auto flow : { SignalFlow::fixed, SignalFlow::layout, SignalFlow::cables })
     {
-        const auto assignment = bench.envelopeAssignment (flow);
-        for (size_t k = 0; k < assignment.size(); ++k)
-            owner.envelopeFor[(size_t) flow][k].store (assignment[k], std::memory_order_relaxed);
+        const auto envelopes = bench.envelopeAssignment (flow);
+        const auto filters   = bench.filterAssignment (flow);
+        for (size_t k = 0; k < envelopes.size(); ++k)
+        {
+            owner.envelopeFor[(size_t) flow][k].store (envelopes[k], std::memory_order_relaxed);
+            owner.filterFor[(size_t) flow][k].store (filters[k], std::memory_order_relaxed);
+        }
     }
     const auto heard = bench.heardThroughCables();
     for (size_t k = 0; k < heard.size(); ++k)

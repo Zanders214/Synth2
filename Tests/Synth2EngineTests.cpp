@@ -9,6 +9,7 @@
 */
 
 #include "Synth2Engine.h"
+#include "Filter.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1081,6 +1082,188 @@ std::vector<std::vector<float>> sine (double hz, float amplitude, int numSamples
     return { wave, wave };
 }
 
+// ---- Test 12a: the filter --------------------------------------------------------------
+// How much (in dB) `type` passes a sine at `hz`, run in the engine's 32-sample chunks.
+float filterGainDb (Filter::Type type, float cutoff, float resonance, double hz)
+{
+    constexpr int length = 9600;
+    auto wave = sine (hz, 0.25f, length);
+    Filter filter;
+    filter.setSampleRate (sampleRate);
+    for (int start = 0; start < length; start += 32)
+        filter.process (wave[0].data() + start, wave[1].data() + start, 32, type, cutoff, resonance);
+    const float level = toneLevel (wave[0], hz, 4800, length);
+    return 20.0f * std::log10 (std::max (level, 1.0e-9f) / 0.25f);
+}
+
+void testFilter()
+{
+    std::printf ("Filter:\n");
+    using Type = Filter::Type;
+
+    check (filterGainDb (Type::low12, 1000.0f, 0.0f, 200.0) > -0.5f && filterGainDb (Type::low24, 1000.0f, 0.0f, 200.0) > -0.5f,
+           "LOW passes a tone well below its cutoff");
+    const float low12Up = filterGainDb (Type::low12, 1000.0f, 0.0f, 4000.0);
+    const float low24Up = filterGainDb (Type::low24, 1000.0f, 0.0f, 4000.0);
+    check (low12Up < -20.0f && low24Up < low12Up - 18.0f,
+           "and cuts two octaves up, 24 dB much harder than 12 (" + std::to_string (low12Up) + ", " + std::to_string (low24Up) + " dB)");
+    check (filterGainDb (Type::high12, 1000.0f, 0.0f, 4000.0) > -0.5f && filterGainDb (Type::high24, 1000.0f, 0.0f, 250.0) < -40.0f,
+           "HIGH is the mirror: it passes above and cuts below");
+    check (filterGainDb (Type::band, 1000.0f, 0.5f, 1000.0) > -0.5f && filterGainDb (Type::band, 1000.0f, 0.5f, 4000.0) < -12.0f
+               && filterGainDb (Type::band, 1000.0f, 0.5f, 250.0) < -12.0f,
+           "BAND passes its cutoff and cuts either side");
+    check (filterGainDb (Type::notch, 1000.0f, 0.3f, 1000.0) < -20.0f && filterGainDb (Type::notch, 1000.0f, 0.3f, 4000.0) > -1.0f,
+           "NOTCH takes out its cutoff and leaves the rest");
+    check (filterGainDb (Type::low12, 1000.0f, 0.8f, 1000.0) > filterGainDb (Type::low12, 1000.0f, 0.0f, 1000.0) + 12.0f,
+           "RESONANCE raises a peak at the cutoff");
+
+    bool matches = true;
+    for (const auto type : { Type::low24, Type::low12, Type::band, Type::high12, Type::high24, Type::notch })
+        for (const double hz : { 150.0, 600.0, 2500.0 })
+        {
+            const float model = Filter::magnitudeDb (type, 800.0f, 0.4f, (float) hz);
+            if (model > -40.0f)
+                matches = matches && approx (filterGainDb (type, 800.0f, 0.4f, hz), model, 1.0f);
+        }
+    check (matches, "it sounds as magnitudeDb draws it, within 1 dB");
+
+    // Stable at the edges, and while the cutoff races about.
+    auto loud = sine (440.0, 0.5f, 48000);
+    Filter filter;
+    filter.setSampleRate (sampleRate);
+    float biggest = 0.0f;
+    for (int start = 0, chunk = 0; start < 48000; start += 32, ++chunk)
+    {
+        const float cutoff = chunk % 2 == 0 ? 20.0f : 22000.0f;
+        filter.process (loud[0].data() + start, loud[1].data() + start, 32, Type::low24, cutoff, 1.0f);
+        for (int n = start; n < start + 32; ++n)
+            biggest = std::max (biggest, std::abs (loud[0][(size_t) n]));
+    }
+    check (std::isfinite (biggest) && biggest < 50.0f, "at full RESONANCE it stays stable, its cutoff jumping 20 Hz to the top every chunk");
+    check (filterGainDb (Type::low12, 30000.0f, 1.0f, 1000.0) < 3.0f, "a cutoff past the top is held below Nyquist");
+}
+
+void testFilterInNotes()
+{
+    std::printf ("Filter in a note:\n");
+
+    // A saw at A2 (110 Hz), held: its 16th harmonic (1760 Hz) against its fundamental.
+    const auto brightness = [] (const juce::AudioBuffer<float>& out, int from, int to)
+    {
+        std::vector<float> left ((size_t) out.getNumSamples());
+        for (int n = 0; n < out.getNumSamples(); ++n)
+            left[(size_t) n] = out.getSample (0, n);
+        return toneLevel (left, 1760.0, from, to) / std::max (1.0e-9f, toneLevel (left, 110.0, from, to));
+    };
+    const int length = (int) sampleRate;
+    const auto play = [&] (const Synth2Engine::Settings& settings)
+    {
+        auto engine = makeEngine (settings);
+        return run (*engine, length, { { 0, on (45) } });
+    };
+
+    auto plain = defaults();
+    auto filtered = plain;
+    filtered.oscillators[0].filter = 0;
+    filtered.filters[0].envAmount  = 0.0f;
+    filtered.filters[0].cutoffHz   = 400.0f;
+    const auto open   = play (plain);
+    const auto closed = play (filtered);
+    check (brightness (closed, 24000, 48000) < 0.01f * brightness (open, 24000, 48000),
+           "a LOW 24 at 400 Hz takes the saw's high harmonics away");
+    check (toneLevel (std::vector<float> (closed.getReadPointer (0), closed.getReadPointer (0) + length), 110.0, 24000, 48000)
+               > 0.8f * toneLevel (std::vector<float> (open.getReadPointer (0), open.getReadPointer (0) + length), 110.0, 24000, 48000),
+           "and keeps its fundamental");
+
+    auto swept = filtered;
+    swept.filters[0].envAmount = 36.0f;
+    swept.filters[0].sweep     = { 0.0f, 0.001f, 0.0f, 0.3f, 0.0f, 0.3f };
+    const auto sweep = play (swept);
+    check (brightness (sweep, 480, 2400) > 10.0f * brightness (sweep, 24000, 48000),
+           "with ENV AMOUNT up, the start of the note is far brighter than once the sweep has fallen");
+
+    auto two = defaults();
+    two.oscillators[1].on     = true;
+    two.oscillators[1].wave   = Waveform::saw;
+    two.oscillators[1].level  = 1.0f;
+    two.oscillators[1].semitones = 12;
+    two.oscillators[1].envelope  = 1;
+    two.oscillators[0].filter = 0;
+    two.filters[0] = filtered.filters[0];
+    const auto both = play (two);
+    std::vector<float> left ((size_t) length);
+    for (int n = 0; n < length; ++n)
+        left[(size_t) n] = both.getSample (0, n);
+    check (toneLevel (left, 220.0 * 8.0, 24000, 48000) > 0.05f * toneLevel (left, 220.0, 24000, 48000),
+           "a filter on OSC 1 leaves OSC 2 bright");
+
+    // Switching the filter off and on mid-note glides rather than clicks: a
+    // sine under a HIGH 24 far above it is all but silent, so a switch that
+    // jumped would step by the whole sine at once.
+    auto gated = defaults (Waveform::sine);
+    gated.oscillators[0].filter = 0;
+    gated.filters[0].type       = Filter::Type::high24;
+    gated.filters[0].cutoffHz   = 4000.0f;
+    gated.filters[0].envAmount  = 0.0f;
+    auto engine = makeEngine (gated);
+    auto out = run (*engine, 24000, { { 0, on (45) } });
+    float last = out.getSample (0, out.getNumSamples() - 1), biggestStep = 0.0f, loudest = 0.0f;
+    for (int round = 0; round < 4; ++round)
+    {
+        auto next = gated;
+        next.oscillators[0].filter = round % 2 == 0 ? -1 : 0;
+        engine->setSettings (next);
+        const auto chunk = run (*engine, 2400);
+        for (int n = 0; n < chunk.getNumSamples(); ++n)
+        {
+            biggestStep = std::max (biggestStep, std::abs (chunk.getSample (0, n) - last));
+            loudest     = std::max (loudest, std::abs (chunk.getSample (0, n)));
+            last        = chunk.getSample (0, n);
+        }
+    }
+    const float sineStep = loudest * (float) (juce::MathConstants<double>::twoPi * 110.0 / sampleRate);
+    check (loudest > 0.05f && biggestStep < 3.0f * sineStep,
+           "switching the filter off and on mid-note glides rather than jumps (largest step " + std::to_string (biggestStep)
+               + ", the sine's own " + std::to_string (sineStep) + ")");
+
+    // A resonant filter rings on after a short release: the note lasts until
+    // the ringing dies away, rather than stopping dead in the middle of it.
+    auto ringing = defaults (Waveform::sine);
+    ringing.oscillators[0].envelope    = 0;
+    ringing.envelopes[0].releaseSeconds = 0.005f;
+    ringing.oscillators[0].filter = 0;
+    ringing.filters[0].type       = Filter::Type::low12;
+    ringing.filters[0].cutoffHz   = 110.0f;
+    ringing.filters[0].resonance  = 1.0f;
+    ringing.filters[0].envAmount  = 0.0f;
+    auto rung = makeEngine (ringing);
+    const int releaseAt = 24000;
+    const auto tail = run (*rung, releaseAt + 2400, { { 0, on (45) }, { releaseAt, off (45) } });
+    const bool stillOn = rung->getNumActiveNotes() == 1;
+    const auto after = run (*rung, (int) sampleRate * 2);
+    float ringStep = 0.0f, ringPeak = 0.0f, previous = 0.0f;
+    for (int n = releaseAt - 2400; n < tail.getNumSamples(); ++n)
+    {
+        ringPeak = std::max (ringPeak, std::abs (tail.getSample (0, n)));
+        ringStep = std::max (ringStep, std::abs (tail.getSample (0, n) - (n > releaseAt - 2400 ? previous : tail.getSample (0, n))));
+        previous = tail.getSample (0, n);
+    }
+    for (int n = 0; n < after.getNumSamples(); ++n)
+    {
+        ringStep = std::max (ringStep, std::abs (after.getSample (0, n) - previous));
+        previous = after.getSample (0, n);
+    }
+    const float ringSine = ringPeak * (float) (juce::MathConstants<double>::twoPi * 110.0 / sampleRate);
+    check (stillOn && std::abs (tail.getSample (0, tail.getNumSamples() - 1)) > 1.0e-3f,
+           "a sine through LOW 12 at its own pitch, full resonance, still rings 45 ms after a 5 ms release");
+    check (ringStep < 2.0f * ringSine && rung->getNumActiveNotes() == 0 && std::abs (previous) < 1.0e-3f,
+           "and dies away smoothly, then the note ends (largest step " + std::to_string (ringStep) + ", the ring's own "
+               + std::to_string (ringSine) + ")");
+    check (Filter::ringSeconds (Filter::Type::low12, 110.0f, 1.0f) > 0.5 && Filter::ringSeconds (Filter::Type::low12, 110.0f, 1.0f) < 2.0
+               && Filter::ringSeconds (Filter::Type::low12, 110.0f, 0.0f) < 0.05,
+           "how long a filter rings: about a second resonating hard at 110 Hz, hardly at all with no resonance");
+}
+
 // ---- Test 12b: the drive ----------------------------------------------------------------
 void testDrive()
 {
@@ -1280,6 +1463,8 @@ int main()
     testOutputAndMono();
     testDelay();
     testReverb();
+    testFilter();
+    testFilterInNotes();
     testDrive();
     testEffectsChain();
     testEngineEffects();

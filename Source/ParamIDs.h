@@ -147,6 +147,95 @@ namespace ParamID
           env4AttackCurve, env4DecayCurve, env4ReleaseCurve } }};
     constexpr const Envelope& envelope (int index) { return envelopes[(size_t) index]; }
 
+    // The four filters, each with its own sweep envelope.
+    inline constexpr const char* flt1On            = "flt1On";
+    inline constexpr const char* flt1Active        = "flt1Active";
+    inline constexpr const char* flt1Type          = "flt1Type";
+    inline constexpr const char* flt1Cutoff        = "flt1Cutoff";
+    inline constexpr const char* flt1Resonance     = "flt1Resonance";
+    inline constexpr const char* flt1EnvAmount     = "flt1EnvAmount";
+    inline constexpr const char* flt1Delay         = "flt1Delay";
+    inline constexpr const char* flt1Attack        = "flt1Attack";
+    inline constexpr const char* flt1Hold          = "flt1Hold";
+    inline constexpr const char* flt1Decay         = "flt1Decay";
+    inline constexpr const char* flt1Sustain       = "flt1Sustain";
+    inline constexpr const char* flt1Release       = "flt1Release";
+    inline constexpr const char* flt1AttackCurve   = "flt1AttackCurve";
+    inline constexpr const char* flt1DecayCurve    = "flt1DecayCurve";
+    inline constexpr const char* flt1ReleaseCurve  = "flt1ReleaseCurve";
+    inline constexpr const char* flt2On            = "flt2On";
+    inline constexpr const char* flt2Active        = "flt2Active";
+    inline constexpr const char* flt2Type          = "flt2Type";
+    inline constexpr const char* flt2Cutoff        = "flt2Cutoff";
+    inline constexpr const char* flt2Resonance     = "flt2Resonance";
+    inline constexpr const char* flt2EnvAmount     = "flt2EnvAmount";
+    inline constexpr const char* flt2Delay         = "flt2Delay";
+    inline constexpr const char* flt2Attack        = "flt2Attack";
+    inline constexpr const char* flt2Hold          = "flt2Hold";
+    inline constexpr const char* flt2Decay         = "flt2Decay";
+    inline constexpr const char* flt2Sustain       = "flt2Sustain";
+    inline constexpr const char* flt2Release       = "flt2Release";
+    inline constexpr const char* flt2AttackCurve   = "flt2AttackCurve";
+    inline constexpr const char* flt2DecayCurve    = "flt2DecayCurve";
+    inline constexpr const char* flt2ReleaseCurve  = "flt2ReleaseCurve";
+    inline constexpr const char* flt3On            = "flt3On";
+    inline constexpr const char* flt3Active        = "flt3Active";
+    inline constexpr const char* flt3Type          = "flt3Type";
+    inline constexpr const char* flt3Cutoff        = "flt3Cutoff";
+    inline constexpr const char* flt3Resonance     = "flt3Resonance";
+    inline constexpr const char* flt3EnvAmount     = "flt3EnvAmount";
+    inline constexpr const char* flt3Delay         = "flt3Delay";
+    inline constexpr const char* flt3Attack        = "flt3Attack";
+    inline constexpr const char* flt3Hold          = "flt3Hold";
+    inline constexpr const char* flt3Decay         = "flt3Decay";
+    inline constexpr const char* flt3Sustain       = "flt3Sustain";
+    inline constexpr const char* flt3Release       = "flt3Release";
+    inline constexpr const char* flt3AttackCurve   = "flt3AttackCurve";
+    inline constexpr const char* flt3DecayCurve    = "flt3DecayCurve";
+    inline constexpr const char* flt3ReleaseCurve  = "flt3ReleaseCurve";
+    inline constexpr const char* flt4On            = "flt4On";
+    inline constexpr const char* flt4Active        = "flt4Active";
+    inline constexpr const char* flt4Type          = "flt4Type";
+    inline constexpr const char* flt4Cutoff        = "flt4Cutoff";
+    inline constexpr const char* flt4Resonance     = "flt4Resonance";
+    inline constexpr const char* flt4EnvAmount     = "flt4EnvAmount";
+    inline constexpr const char* flt4Delay         = "flt4Delay";
+    inline constexpr const char* flt4Attack        = "flt4Attack";
+    inline constexpr const char* flt4Hold          = "flt4Hold";
+    inline constexpr const char* flt4Decay         = "flt4Decay";
+    inline constexpr const char* flt4Sustain       = "flt4Sustain";
+    inline constexpr const char* flt4Release       = "flt4Release";
+    inline constexpr const char* flt4AttackCurve   = "flt4AttackCurve";
+    inline constexpr const char* flt4DecayCurve    = "flt4DecayCurve";
+    inline constexpr const char* flt4ReleaseCurve  = "flt4ReleaseCurve";
+
+    /** Filter `index`'s (0..3) parameters, by role. Its sweep is an envelope
+        whose on and power switch are the filter's own. */
+    struct Filter
+    {
+        const char* on;
+        const char* active;
+        const char* type;
+        const char* cutoff;
+        const char* resonance;
+        const char* envAmount;
+        Envelope    sweep;
+    };
+    inline constexpr std::array<Filter, 4> filters {{
+        { flt1On, flt1Active, flt1Type, flt1Cutoff, flt1Resonance, flt1EnvAmount,
+          { flt1On, flt1Delay, flt1Attack, flt1Hold, flt1Decay, flt1Sustain, flt1Release, flt1Active,
+            flt1AttackCurve, flt1DecayCurve, flt1ReleaseCurve } },
+        { flt2On, flt2Active, flt2Type, flt2Cutoff, flt2Resonance, flt2EnvAmount,
+          { flt2On, flt2Delay, flt2Attack, flt2Hold, flt2Decay, flt2Sustain, flt2Release, flt2Active,
+            flt2AttackCurve, flt2DecayCurve, flt2ReleaseCurve } },
+        { flt3On, flt3Active, flt3Type, flt3Cutoff, flt3Resonance, flt3EnvAmount,
+          { flt3On, flt3Delay, flt3Attack, flt3Hold, flt3Decay, flt3Sustain, flt3Release, flt3Active,
+            flt3AttackCurve, flt3DecayCurve, flt3ReleaseCurve } },
+        { flt4On, flt4Active, flt4Type, flt4Cutoff, flt4Resonance, flt4EnvAmount,
+          { flt4On, flt4Delay, flt4Attack, flt4Hold, flt4Decay, flt4Sustain, flt4Release, flt4Active,
+            flt4AttackCurve, flt4DecayCurve, flt4ReleaseCurve } } }};
+    constexpr const Filter& filter (int index) { return filters[(size_t) index]; }
+
     // How sound flows between the modules on the bench.
     inline constexpr const char* signalFlow = "signalFlow";
 
