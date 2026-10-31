@@ -136,7 +136,8 @@ AmpDisplayState Synth2AudioProcessorEditor::ampState (const Synth2Engine::Settin
     const auto position = [&parameters] (const char* id) { return parameters.getParameter (id)->getValue(); };
     AmpDisplayState state;
     state.dials          = { position (ids.delay), position (ids.attack), position (ids.hold),
-                             position (ids.decay), times.sustainLevel, position (ids.release) };
+                             position (ids.decay), times.sustainLevel, position (ids.release),
+                             times.attackCurve, times.decayCurve, times.releaseCurve };
     state.attackSeconds  = times.attackSeconds;
     state.releaseSeconds = times.releaseSeconds;
     state.outputDb       = settings.outputDb;

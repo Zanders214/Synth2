@@ -107,6 +107,20 @@ namespace ParamID
     inline constexpr const char* env4Sustain = "env4Sustain";
     inline constexpr const char* env4Release = "env4Release";
 
+    // Each envelope's ramps' bends.
+    inline constexpr const char* env1AttackCurve  = "env1AttackCurve";
+    inline constexpr const char* env1DecayCurve   = "env1DecayCurve";
+    inline constexpr const char* env1ReleaseCurve = "env1ReleaseCurve";
+    inline constexpr const char* env2AttackCurve  = "env2AttackCurve";
+    inline constexpr const char* env2DecayCurve   = "env2DecayCurve";
+    inline constexpr const char* env2ReleaseCurve = "env2ReleaseCurve";
+    inline constexpr const char* env3AttackCurve  = "env3AttackCurve";
+    inline constexpr const char* env3DecayCurve   = "env3DecayCurve";
+    inline constexpr const char* env3ReleaseCurve = "env3ReleaseCurve";
+    inline constexpr const char* env4AttackCurve  = "env4AttackCurve";
+    inline constexpr const char* env4DecayCurve   = "env4DecayCurve";
+    inline constexpr const char* env4ReleaseCurve = "env4ReleaseCurve";
+
     /** Envelope `index`'s (0..3) parameters, by role. */
     struct Envelope
     {
@@ -118,12 +132,19 @@ namespace ParamID
         const char* sustain;
         const char* release;
         const char* active;
+        const char* attackCurve;
+        const char* decayCurve;
+        const char* releaseCurve;
     };
     inline constexpr std::array<Envelope, 4> envelopes {{
-        { env1On, env1Delay, env1Attack, env1Hold, env1Decay, env1Sustain, env1Release, env1Active },
-        { env2On, env2Delay, env2Attack, env2Hold, env2Decay, env2Sustain, env2Release, env2Active },
-        { env3On, env3Delay, env3Attack, env3Hold, env3Decay, env3Sustain, env3Release, env3Active },
-        { env4On, env4Delay, env4Attack, env4Hold, env4Decay, env4Sustain, env4Release, env4Active } }};
+        { env1On, env1Delay, env1Attack, env1Hold, env1Decay, env1Sustain, env1Release, env1Active,
+          env1AttackCurve, env1DecayCurve, env1ReleaseCurve },
+        { env2On, env2Delay, env2Attack, env2Hold, env2Decay, env2Sustain, env2Release, env2Active,
+          env2AttackCurve, env2DecayCurve, env2ReleaseCurve },
+        { env3On, env3Delay, env3Attack, env3Hold, env3Decay, env3Sustain, env3Release, env3Active,
+          env3AttackCurve, env3DecayCurve, env3ReleaseCurve },
+        { env4On, env4Delay, env4Attack, env4Hold, env4Decay, env4Sustain, env4Release, env4Active,
+          env4AttackCurve, env4DecayCurve, env4ReleaseCurve } }};
     constexpr const Envelope& envelope (int index) { return envelopes[(size_t) index]; }
 
     // How sound flows between the modules on the bench.

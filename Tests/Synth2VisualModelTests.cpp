@@ -350,6 +350,55 @@ void testEnvelope()
     check (approx (M::sustainAt (e, 0.5f * e.peak), 0.5f, 1e-6f) && approx (M::sustainAt (e, 2.0f), 1.0f, 1e-6f)
                && approx (M::sustainAt (e, -1.0f), 0.0f, 1e-6f),
            "DECAY's corner dragged up and down sets SUSTAIN as a share of the top");
+
+    // The ramps' bends, and the dots that set them.
+    M::EnvelopeDials bent = all;
+    bent.attackCurve  = 1.0f;
+    bent.decayCurve   = -1.0f;
+    bent.releaseCurve = -1.0f;
+    const auto b = M::envelope (bent);
+    using Stage = Envelope::Stage;
+    check (approx (M::rampLevel (e, Stage::attack, 0.5f), 0.5f * e.peak, 1e-6f)
+               && approx (M::rampLevel (e, Stage::decay, 0.5f), 0.5f * (e.peak + e.sustain), 1e-6f)
+               && approx (M::rampLevel (e, Stage::release, 0.5f), 0.5f * e.sustain, 1e-6f),
+           "straight ramps are halfway up halfway along");
+    check (M::rampLevel (b, Stage::attack, 0.5f) > 0.9f && M::rampLevel (b, Stage::decay, 0.5f) < b.sustain + 0.1f * (b.peak - b.sustain)
+               && M::rampLevel (b, Stage::release, 0.5f) < 0.1f * b.sustain,
+           "bent, the attack bulges up and the decay and release sag down");
+    check (approx (M::rampLevel (b, Stage::attack, 0.0f), 0.0f, 1e-6f) && approx (M::rampLevel (b, Stage::attack, 1.0f), b.peak, 1e-6f)
+               && approx (M::rampLevel (b, Stage::decay, 1.0f), b.sustain, 1e-6f) && approx (M::rampLevel (b, Stage::release, 1.0f), 0.0f, 1e-6f),
+           "and still meet their corners");
+    check (approx (at (b, Handle::attackCurve).x, 0.5f * (b.delayEnd + b.attackEnd), 1e-6f)
+               && approx (at (b, Handle::attackCurve).y, M::rampLevel (b, Stage::attack, 0.5f), 1e-6f)
+               && approx (at (b, Handle::releaseCurve).y, M::rampLevel (b, Stage::release, 0.5f), 1e-6f),
+           "each ramp's dot sits on it, halfway through its time");
+
+    bool dotFollows = true;
+    for (const auto h : { Handle::attackCurve, Handle::decayCurve, Handle::releaseCurve })
+        for (const float share : { 0.2f, 0.5f, 0.8f })
+        {
+            const auto  p  = at (e, h);
+            const float to = h == Handle::attackCurve ? share * e.peak
+                           : h == Handle::decayCurve  ? e.sustain + share * (e.peak - e.sustain)
+                                                      : share * e.sustain;
+            M::EnvelopeDials moved = all;
+            M::curveOf (moved, h) = M::curveAt (e, h, to);
+            dotFollows = dotFollows && approx (at (M::envelope (moved), h).y, to, 1e-4f) && approx (at (M::envelope (moved), h).x, p.x, 1e-6f);
+        }
+    check (dotFollows, "a ramp's dot dragged up and down bends it so the dot follows the pointer");
+    check (approx (M::curveAt (e, Handle::attackCurve, 5.0f), 1.0f, 1e-6f) && approx (M::curveAt (e, Handle::attackCurve, -5.0f), -1.0f, 1e-6f),
+           "and stops at the steepest bend");
+
+    const auto flatTop = M::envelope (none);   // SUSTAIN at 0.5, so the decay falls
+    M::EnvelopeDials atTop = none;
+    atTop.sustain = 1.0f;
+    check (M::isShown (e, Handle::attackCurve, width, height, radius) && M::isShown (e, Handle::decayCurve, width, height, radius)
+               && ! M::isShown (M::envelope (atTop), Handle::decayCurve, width, height, radius)
+               && M::isShown (flatTop, Handle::releaseCurve, width, height, radius),
+           "a ramp's dot shows while the ramp has a fall to bend (none for a decay to a SUSTAIN at the top)");
+    const auto dot = at (e, Handle::decayCurve);
+    check (M::handleAt (e, dot, width, height, radius) == (int) Handle::decayCurve, "a press on a ramp's dot takes it");
+    check (M::handleAt (e, at (e, Handle::attack), width, height, radius) == (int) Handle::attack, "and a press on a corner still takes the corner");
 }
 } // namespace
 

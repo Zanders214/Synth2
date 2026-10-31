@@ -228,6 +228,16 @@ Each module has a display right above its dials, drawn in the dials' colours:
   takes ATTACK, and a press just to its right pulls HOLD out. Each drag is one move for
   your DAW, so it records and undoes like a turn of the dial.
 
+  Halfway along each ramp (the attack, the decay and the release) sits a small dot. Drag
+  it up or down to bend the ramp, and the dot follows the pointer: bent up, the ramp
+  bulges above a straight line, and bent down, it sags below it. An attack bent up leaps
+  up and eases into the top. A decay or release bent down drops quickly and then tails
+  off, the way a plucked string or a struck bell fades. The bend changes only the ramp's
+  shape, never its time, and you hear it as well as see it. Double-click a dot to
+  straighten its ramp. The bends are also parameters (Attack Curve, Decay Curve and
+  Release Curve), so your DAW can automate them. A dot shows only while its ramp has
+  room to bend: a decay to a SUSTAIN at the top has nothing to fall.
+
 ### Views
 
 Below the signal flow, the gear menu picks how the cards show themselves, for every

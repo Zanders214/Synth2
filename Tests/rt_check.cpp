@@ -83,6 +83,9 @@ int main()
             set (ParamID::env1Hold,    0.01f * (float) ((b / 12 + 1) % 3));
             set (ParamID::env1Decay,   0.02f + 0.05f * (float) ((b / 12) % 4));
             set (ParamID::env1Sustain, 0.25f * (float) ((b / 12) % 5));
+            set (ParamID::env1AttackCurve,  0.5f * (float) ((b / 12) % 5) - 1.0f);
+            set (ParamID::env1DecayCurve,   1.0f - 0.5f * (float) ((b / 12 + 2) % 5));
+            set (ParamID::env1ReleaseCurve, 0.4f * (float) ((b / 12 + 1) % 6) - 1.0f);
             set (ParamID::osc2Voices, (float) (16 - (b / 12) % 16));
             set (ParamID::osc2Wave,  (float) ((b / 12 + 1) % 4));
             set (ParamID::osc2Pitch, (float) ((b / 12) % 25 - 12));

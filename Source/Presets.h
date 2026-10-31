@@ -37,8 +37,8 @@ namespace Presets
         float width       = 0.5f;
     };
 
-    /** A DAHDSR envelope (see Envelope.h): its times in seconds, and its
-        sustain level, 0..1. */
+    /** A DAHDSR envelope (see Envelope.h): its times in seconds, its
+        sustain level, 0..1, and how its ramps bend (-1..1, 0 straight). */
     struct Envelope
     {
         float delaySeconds   = 0.0f;
@@ -47,6 +47,9 @@ namespace Presets
         float decaySeconds   = 0.3f;
         float sustainLevel   = 1.0f;
         float releaseSeconds = 0.3f;
+        float attackCurve    = 0.0f;
+        float decayCurve     = 0.0f;
+        float releaseCurve   = 0.0f;
     };
 
     /** An envelope that fades in and stays up while the key is held. */
@@ -240,6 +243,9 @@ namespace Presets
                 values.emplace_back (env.decay,   osc->envelope->decaySeconds);
                 values.emplace_back (env.sustain, osc->envelope->sustainLevel);
                 values.emplace_back (env.release, osc->envelope->releaseSeconds);
+                values.emplace_back (env.attackCurve,  osc->envelope->attackCurve);
+                values.emplace_back (env.decayCurve,   osc->envelope->decayCurve);
+                values.emplace_back (env.releaseCurve, osc->envelope->releaseCurve);
             }
         }
         values.emplace_back (ParamID::driveInChain, preset.drive.has_value() ? 1.0f : 0.0f);

@@ -884,6 +884,9 @@ public:
         AmpDisplay::Parameters parameters {};
         for (size_t i = 0; i < stages.size(); ++i)
             parameters[i] = stateToUse.getParameter (stages[i].first);
+        parameters[6] = stateToUse.getParameter (ids.attackCurve);
+        parameters[7] = stateToUse.getParameter (ids.decayCurve);
+        parameters[8] = stateToUse.getParameter (ids.releaseCurve);
         display.setParameters (parameters);
         getHeader().setJackColour (BenchStyle::dialColour (0.6f + 0.1f * (float) slot));
     }
