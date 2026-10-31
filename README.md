@@ -45,6 +45,26 @@ with its single Unison and Envelope modules, is brought over the same way.
 The keyboard and the OUTPUT dial stay in a strip along the bottom, whichever tab is
 showing.
 
+### Zoom and pan
+
+The bench is a window onto a bigger canvas: room for three rows of six cards, where
+the window shows two rows of four at 100%. To get around it:
+
+- **Zoom** with Cmd + scroll (Ctrl + scroll on Windows) or a trackpad pinch, round the
+  pointer, from the whole canvas (about 66%) up to 150%. Cards are redrawn at each
+  zoom, so they stay sharp.
+- **Pan** with the scroll wheel or two fingers, or drag any empty spot. A click that
+  doesn't drag still opens the add tray, and the module lands where you clicked on
+  the canvas. Scrolling over a dial still turns the dial.
+- The **pill** on the bench's bottom edge has minus and plus (66%, 80%, 100%, 125%,
+  150%), the zoom, and **Fit**, which frames the cards on the bench (no closer than
+  100%), or the whole canvas when it is empty.
+
+The zoom and pan are saved with your set. A set saved before the bench zoomed opens at
+100%, every card where it was. Loading a preset keeps the zoom, unless its cards
+wouldn't all show; then it fits them. With patch cables, a cable to a card scrolled out
+of sight leaves at the bench's edge.
+
 ## Effects
 
 The **BENCH | EFFECTS** tabs in the header swap the bench for the effects. Every note
@@ -346,7 +366,7 @@ ctest --test-dir build --output-on-failure
 
 Set `SYNTH2_SNAPSHOTS` to a folder to have the editor tests save PNGs of the faces they
 render (the empty bench, the trays, a full bench of four oscillators and four envelopes,
-the flow modes, the cables, the effects, a FILTER card) for a look by eye.
+the flow modes, the cables, the bench zoomed in and out, the effects, a FILTER card) for a look by eye.
 
 ## Layout
 
@@ -365,7 +385,7 @@ Source/
   Oscillator.h               the four wave shapes, and the PolyBLEP oscillator that plays them
   Unison.h                   where each unison voice sits: its detune, its pan, the stack's level
   Bench.h                    the workbench model: modules, where they sit, cables and chains, which envelope and filter take which oscillator, older sessions
-  BenchView.h                the bench itself: the dotted area the modules sit and are dragged on
+  BenchView.h                the bench itself: the dotted canvas the modules sit and are dragged on, its zoom and pan, the zoom pill
   BenchModules.h             the oscillator, filter and envelope modules, and the add / settings trays
   Rack.h                     the EFFECTS tab's model: which effects are in the chain, where their cards sit, the order
   EffectsView.h              the EFFECTS tab: the area, the drive, delay and reverb cards, their wells and switches

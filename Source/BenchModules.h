@@ -468,6 +468,8 @@ public:
     void onMoved (std::function<void (juce::Point<int>)> handler) { movedHandler = std::move (handler); }
     /** A jack was pressed, dragged or let go (the event is the module's). */
     void onJack (std::function<void (Jack, const juce::MouseEvent&, JackPhase)> handler) { jackHandler = std::move (handler); }
+    /** Where in its parent a drag can take the module (all of the parent when empty). */
+    void setDragArea (juce::Rectangle<int> area) noexcept { dragArea = area; }
 
     void setUiScale (float newScale)
     {
@@ -623,9 +625,9 @@ public:
 
         const auto* parent = getParentComponent();
         auto topLeft = dragStart + e.getOffsetFromDragStart();
-        if (parent != nullptr)
-            topLeft = juce::Point<int> (juce::jlimit (0, juce::jmax (0, parent->getWidth() - getWidth()), topLeft.x),
-                                        juce::jlimit (0, juce::jmax (0, parent->getHeight() - getHeight()), topLeft.y));
+        if (const auto area = dragArea.isEmpty() && parent != nullptr ? parent->getLocalBounds() : dragArea; ! area.isEmpty())
+            topLeft = juce::Point<int> (juce::jlimit (area.getX(), juce::jmax (area.getX(), area.getRight() - getWidth()), topLeft.x),
+                                        juce::jlimit (area.getY(), juce::jmax (area.getY(), area.getBottom() - getHeight()), topLeft.y));
         setTopLeftPosition (topLeft);
     }
 
@@ -805,7 +807,8 @@ private:
     std::optional<Jack> heldJack;   // the jack a press began on
     Dim                 dim;
     Bench::View         view;
-    juce::Point<int>    dragStart;
+    juce::Point<int>     dragStart;
+    juce::Rectangle<int> dragArea;
     float uiScale  = 1.0f;
     bool  dragging = false;
 };

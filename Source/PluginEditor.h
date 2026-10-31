@@ -32,6 +32,9 @@
     with its own unison stack, a filter, with its own sweep envelope, or an
     envelope (up to four of each). Drag a
     module by its header to move it; its cross takes it off the bench. The
+    bench zooms (Cmd / Ctrl + wheel, a pinch, or its pill's minus, plus and
+    Fit) and pans (the wheel, or dragging an empty spot) over a canvas
+    bigger than its box. The
     EFFECTS tab works the same way, with a drive, a delay and a reverb (one
     of each), played in the order their cards read in.
 
@@ -87,7 +90,9 @@ public:
     /** The patch cables, drawn over the bench and the bottom strip without
         taking any clicks from them, and the patching: a cable picked up from
         a jack (or the output's IN), dragged, and dropped on another or let
-        go. Everything here is in the editor's coordinates. */
+        go. Everything here is in the editor's coordinates, whatever the
+        bench's zoom; a cable to a card scrolled out of the bench's box
+        leaves at its edge. */
     class CableLayer final : public juce::Component
     {
     public:
@@ -118,6 +123,7 @@ public:
     private:
         void dropCable (juce::Point<float> at);
         void paintCable (juce::Graphics&, juce::Point<float> from, juce::Point<float> to, juce::Colour colour) const;
+        juce::RectangleList<int> cableArea (bool endsShow) const;
 
         // A cable being dragged: from which module, to where the mouse is.
         struct Patching
