@@ -424,6 +424,18 @@ public:
         }
     }
 
+    /** The caption at the well's top left ("AMP", or "SWEEP" on a filter),
+        and what the readout says while no handle is under the pointer
+        (empty: OUTPUT's level). */
+    void setCaption (const juce::String& newCaption, const juce::String& newIdleReadout = {})
+    {
+        if (newCaption == caption && newIdleReadout == idleReadout)
+            return;
+        caption     = newCaption;
+        idleReadout = newIdleReadout;
+        repaint();
+    }
+
     /** The dials' colours (DELAY, ATTACK, HOLD, DECAY, SUSTAIN, RELEASE), so
         each stage of the envelope matches its dial. */
     void setColours (const std::array<juce::Colour, 6>& dialColours)
@@ -450,7 +462,7 @@ public:
     void paint (juce::Graphics& g) override
     {
         const float s = getUiScale();
-        auto plot = paintWell (g, "AMP", readout());
+        auto plot = paintWell (g, caption, readout());
 
         // The times along the bottom: attack on the left, release on the right.
         auto times = plot.removeFromBottom (10.0f * s);
@@ -633,7 +645,7 @@ private:
                                                                                          "ATTACK CURVE", "DECAY CURVE", "RELEASE CURVE" };
         const int h = getHotHandle();
         if (h < 0 || parameters[0] == nullptr)
-            return Synth2::Format::decibels (amp.outputDb);
+            return idleReadout.isNotEmpty() ? idleReadout : Synth2::Format::decibels (amp.outputDb);
         juce::String text (names[(size_t) h]);
         for (const auto* p : parametersFor ((Handle) h))
             text << "  " << p->getCurrentValueAsText();
@@ -698,9 +710,349 @@ private:
     }
 
     AmpDisplayState     amp;
+    juce::String        caption { "AMP" };
+    juce::String        idleReadout;
     Parameters          parameters {};
     std::optional<Drag> drag;
     int                 hot = -1;
     std::array<juce::Colour, 6> colours { Synth2::Palette::pink, Synth2::Palette::pink, Synth2::Palette::amber,
                                           Synth2::Palette::pink, Synth2::Palette::amber, Synth2::Palette::pink };
+};
+
+/** What a filter's response well shows: its settings and where the sweep
+    has each sounding note's cutoff. */
+struct FilterDisplayState
+{
+    Filter::Type type      = Filter::Type::low24;
+    float        cutoffHz  = 1200.0f;
+    float        resonance = 0.0f;
+    float        envAmount = 0.0f;   // semitones
+    std::array<NoteActivity, 16> notes {};   // where each note is in the sweep
+
+    friend bool operator== (const FilterDisplayState& a, const FilterDisplayState& b) noexcept
+    {
+        const auto same = [] (float x, float y) { return juce::exactlyEqual (x, y); };
+        if (a.type != b.type || ! same (a.cutoffHz, b.cutoffHz) || ! same (a.resonance, b.resonance) || ! same (a.envAmount, b.envAmount))
+            return false;
+        for (size_t i = 0; i < a.notes.size(); ++i)
+            if (a.notes[i].stage != b.notes[i].stage || ! same (a.notes[i].level, b.notes[i].level))
+                return false;
+        return true;
+    }
+    friend bool operator!= (const FilterDisplayState& a, const FilterDisplayState& b) noexcept { return ! (a == b); }
+};
+
+/**
+    FilterDisplay — a filter's response well: how loud the filter leaves each
+    frequency from 20 Hz to 20 kHz (evenly by octave), filled underneath like
+    the AMP well, with 0 dB marked. Each sounding note is a faint line where
+    its sweep has its cutoff now.
+
+    Given its filter's parameters (setParameters), it can be played: the
+    arrows either side of the type's name step TYPE, and the handle at the
+    cutoff drags sideways for CUTOFF and up and down for RESONANCE, following
+    the pointer (Shift for fine moves); a double-click puts both back. The
+    readout names the cutoff, and both values while the handle is under the
+    pointer. Each drag is one gesture, so a host records and undoes it like
+    a turn of the dial.
+*/
+class FilterDisplay final : public DisplayWell,
+                            public juce::SettableTooltipClient
+{
+public:
+    /** TYPE, CUTOFF and RESONANCE. */
+    using Parameters = std::array<juce::RangedAudioParameter*, 3>;
+
+    FilterDisplay() { setInterceptsMouseClicks (false, false); }
+
+    void setParameters (const Parameters& newParameters)
+    {
+        parameters = newParameters;
+        setInterceptsMouseClicks (true, false);
+        setTooltip ("Drag the handle for the cutoff (sideways) and resonance (up and down), Shift for fine moves; "
+                    "double-click it to reset them. The arrows change the type.");
+    }
+
+    void setFilterState (const FilterDisplayState& newState)
+    {
+        // While the handle is dragged it is already where it is going.
+        auto next = newState;
+        if (drag.has_value())
+        {
+            next.cutoffHz  = shown.cutoffHz;
+            next.resonance = shown.resonance;
+        }
+        if (next == shown)
+            return;
+        shown = next;
+        repaint();
+    }
+
+    const FilterDisplayState& getFilterState() const noexcept { return shown; }
+
+    /** The dials' colours: CUTOFF's for the response, RESONANCE's for the
+        handle's ring. */
+    void setColours (juce::Colour curve, juce::Colour handle)
+    {
+        curveColour  = curve;
+        handleColour = handle;
+        repaint();
+    }
+
+    /** The plot the response is drawn in. */
+    juce::Rectangle<float> plotArea() const noexcept { return plotBounds().reduced (2.0f * getUiScale(), 2.0f * getUiScale()); }
+
+    /** Where the handle is drawn, in this component. */
+    juce::Point<float> handleCentre() const noexcept
+    {
+        return toPlot (Synth2VisualModel::filterX (shown.cutoffHz), Synth2VisualModel::resonanceY (shown.resonance));
+    }
+
+    /** The arrows that step TYPE back and on, in this component. */
+    juce::Rectangle<float> arrowBounds (bool forward) const noexcept
+    {
+        const float s = getUiScale();
+        const auto heading = getLocalBounds().toFloat().reduced (12.0f * s, 9.0f * s).withHeight (12.0f * s);
+        return forward ? heading.withX (heading.getX() + (14.0f + typeNameWidth) * s).withWidth (14.0f * s)
+                       : heading.withWidth (14.0f * s);
+    }
+
+    bool isHandleHot() const noexcept { return drag.has_value() || hot; }
+
+    void mouseMove (const juce::MouseEvent& e) override { setHot (isOverHandle (e.position)); }
+    void mouseExit (const juce::MouseEvent&) override   { setHot (false); }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (parameters[0] == nullptr)
+            return;
+        for (const bool forward : { false, true })
+            if (arrowBounds (forward).expanded (3.0f * getUiScale()).contains (e.position))
+            {
+                stepType (forward ? 1 : -1);
+                return;
+            }
+        if (! isOverHandle (e.position))
+            return;
+        drag = Drag { e.position, shown.cutoffHz, shown.resonance };
+        parameters[1]->beginChangeGesture();
+        parameters[2]->beginChangeGesture();
+        setHot (true);
+    }
+
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (! drag.has_value())
+            return;
+        const auto  plot   = plotArea();
+        const float width  = juce::jmax (1.0f, plot.getWidth());
+        const float height = juce::jmax (1.0f, plot.getHeight());
+        const float fine   = e.mods.isShiftDown() ? 0.25f : 1.0f;
+        const float x = Synth2VisualModel::filterX (drag->cutoffHz) + fine * (e.position.x - drag->from.x) / width;
+        const float y = Synth2VisualModel::resonanceY (drag->resonance) + fine * (drag->from.y - e.position.y) / height;
+        shown.cutoffHz  = Synth2VisualModel::filterHz (x);
+        shown.resonance = Synth2VisualModel::resonanceAt (y);
+        set (*parameters[1], shown.cutoffHz);
+        set (*parameters[2], shown.resonance);
+        repaint();
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (! drag.has_value())
+            return;
+        endDrag();
+        setHot (isOverHandle (e.position));
+        repaint();
+    }
+
+    void mouseDoubleClick (const juce::MouseEvent& e) override
+    {
+        if (parameters[0] == nullptr || ! isOverHandle (e.position))
+            return;
+        if (drag.has_value())
+            endDrag();
+        for (auto* p : { parameters[1], parameters[2] })
+        {
+            p->beginChangeGesture();
+            p->setValueNotifyingHost (p->getDefaultValue());
+            p->endChangeGesture();
+        }
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        using namespace Synth2;
+        const float s = getUiScale();
+        const auto  plot = paintWell (g, {}, readout());
+        paintTypePicker (g);
+
+        const auto at = [this] (float x, float y) { return toPlot (x, y); };
+
+        // 0 dB, and a faint line at each decade (100 Hz, 1 kHz, 10 kHz).
+        const float line = juce::jmax (1.0f, s);
+        g.setColour (Palette::gridLine);
+        g.fillRect (juce::Rectangle (plot.getX(), at (0.0f, Synth2VisualModel::filterY (0.0f)).y, plot.getWidth(), line));
+        for (const float hz : { 100.0f, 1000.0f, 10000.0f })
+            g.fillRect (juce::Rectangle (at (Synth2VisualModel::filterX (hz), 0.0f).x, plot.getY(), line, plot.getHeight()));
+
+        // A faint line where the sweep has each sounding note's cutoff.
+        for (const auto& note : shown.notes)
+        {
+            if (note.stage == NoteActivity::Stage::idle)
+                continue;
+            const float x = Synth2VisualModel::filterX (Synth2VisualModel::sweptHz (shown.cutoffHz, shown.envAmount, note.level));
+            g.setColour (curveColour.withAlpha (0.35f));
+            g.fillRect (juce::Rectangle (at (x, 0.0f).x - 0.5f * line, plot.getY(), line, plot.getHeight()));
+        }
+
+        // The response, softly filled underneath.
+        juce::Path curve;
+        const int points = juce::jlimit (32, 256, (int) (plot.getWidth() / (1.5f * s)));
+        for (int i = 0; i <= points; ++i)
+        {
+            const float x  = (float) i / (float) points;
+            const float db = Filter::magnitudeDb (shown.type, shown.cutoffHz, shown.resonance, Synth2VisualModel::filterHz (x));
+            const auto  p  = at (x, Synth2VisualModel::filterY (db));
+            if (i == 0) curve.startNewSubPath (p);
+            else        curve.lineTo (p);
+        }
+        auto fill = curve;
+        fill.lineTo (plot.getBottomRight());
+        fill.lineTo (plot.getBottomLeft());
+        fill.closeSubPath();
+        juce::ColourGradient wash (curveColour.withAlpha (0.20f), 0.0f, plot.getY(), curveColour.withAlpha (0.0f), 0.0f, plot.getBottom(), false);
+        {
+            juce::Graphics::ScopedSaveState clip (g);
+            g.reduceClipRegion (plot.toNearestInt());
+            g.setGradientFill (wash);
+            g.fillPath (fill);
+            g.setColour (curveColour.withAlpha (0.25f));
+            g.strokePath (curve, juce::PathStrokeType (6.0f * s, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            g.setColour (curveColour);
+            g.strokePath (curve, juce::PathStrokeType (2.0f * s, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
+
+        if (parameters[0] != nullptr)
+        {
+            const float size = (isHandleHot() ? 11.0f : 8.0f) * s;
+            const auto  ring = juce::Rectangle<float> (size, size).withCentre (handleCentre());
+            g.setColour (Palette::well);
+            g.fillEllipse (ring);
+            if (isHandleHot())
+            {
+                g.setColour (handleColour.withAlpha (0.35f));
+                g.fillEllipse (ring.expanded (3.0f * s));
+                g.setColour (handleColour);
+                g.fillEllipse (ring);
+            }
+            g.setColour (handleColour);
+            g.drawEllipse (ring, juce::jmax (1.0f, 1.4f * s));
+        }
+    }
+
+private:
+    struct Drag
+    {
+        juce::Point<float> from;
+        float cutoffHz;    // where the handle was when the drag began
+        float resonance;
+    };
+
+    static constexpr float typeNameWidth = 46.0f;   // design pixels between the arrows
+
+    static const char* typeName (Filter::Type type) noexcept
+    {
+        static constexpr std::array<const char*, Filter::numTypes> names { "LOW 24", "LOW 12", "BAND", "HIGH 12", "HIGH 24", "NOTCH" };
+        return names[(size_t) type];
+    }
+
+    void paintTypePicker (juce::Graphics& g) const
+    {
+        using namespace Synth2;
+        const float s     = getUiScale();
+        const auto  back  = arrowBounds (false);
+        const auto  on    = arrowBounds (true);
+        const bool  live  = parameters[0] != nullptr;
+        const auto  mouse = getMouseXYRelative().toFloat();
+        const auto  arrow = [&] (juce::Rectangle<float> area, bool forward)
+        {
+            const bool over = live && isMouseOver() && area.expanded (3.0f * s).contains (mouse);
+            g.setColour (over ? Palette::textStrong : Palette::textDim);
+            const auto c = area.getCentre();
+            const float w = 2.5f * s;
+            const float h = 3.5f * s;
+            juce::Path p;
+            p.addTriangle (c.x + (forward ? w : -w), c.y, c.x + (forward ? -w : w), c.y - h, c.x + (forward ? -w : w), c.y + h);
+            g.fillPath (p);
+        };
+        if (live)
+            arrow (back, false);
+        g.setFont (Fonts::sans (9.0f * s, true, 0.22f));
+        g.setColour (Palette::textMid);
+        g.drawText (typeName (shown.type), juce::Rectangle (back.getRight(), back.getY(), on.getX() - back.getRight(), back.getHeight()),
+                    live ? juce::Justification::centred : juce::Justification::centredLeft, false);
+        if (live)
+            arrow (on, true);
+    }
+
+    juce::String readout() const
+    {
+        if (isHandleHot() && parameters[0] != nullptr)
+            return Synth2::Format::hertz (shown.cutoffHz) + "  RES " + Synth2::Format::percent (shown.resonance);
+        return Synth2::Format::hertz (shown.cutoffHz);
+    }
+
+    void stepType (int by)
+    {
+        auto& type = *parameters[0];
+        const int now  = juce::roundToInt (type.convertFrom0to1 (type.getValue()));
+        const int next = (now + by + Filter::numTypes) % Filter::numTypes;
+        type.beginChangeGesture();
+        type.setValueNotifyingHost (type.convertTo0to1 ((float) next));
+        type.endChangeGesture();
+        shown.type = (Filter::Type) next;
+        repaint();
+    }
+
+    static void set (juce::RangedAudioParameter& p, float value)
+    {
+        const float position = p.convertTo0to1 (value);
+        if (! juce::exactlyEqual (p.getValue(), position))
+            p.setValueNotifyingHost (position);
+    }
+
+    void endDrag()
+    {
+        parameters[1]->endChangeGesture();
+        parameters[2]->endChangeGesture();
+        drag.reset();
+    }
+
+    juce::Point<float> toPlot (float x, float y) const noexcept
+    {
+        const auto plot = plotArea();
+        return { plot.getX() + x * plot.getWidth(), plot.getBottom() - y * plot.getHeight() };
+    }
+
+    bool isOverHandle (juce::Point<float> position) const noexcept
+    {
+        return parameters[0] != nullptr && position.getDistanceFrom (handleCentre()) <= 9.0f * getUiScale();
+    }
+
+    void setHot (bool isHot)
+    {
+        if (isHot == hot)
+            return;
+        hot = isHot;
+        setMouseCursor (isHot ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::NormalCursor);
+        repaint();
+    }
+
+    FilterDisplayState  shown;
+    Parameters          parameters {};
+    std::optional<Drag> drag;
+    bool                hot = false;
+    juce::Colour        curveColour  { Synth2::Palette::cyan };
+    juce::Colour        handleColour { Synth2::Palette::violet };
 };

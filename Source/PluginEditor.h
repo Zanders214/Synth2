@@ -29,8 +29,12 @@
     in the window has it, and passes on the keys nothing else used.
 
     Click an empty spot on the bench to add a module there: an oscillator,
-    with its own unison stack, or an envelope (up to four of each). Drag a
+    with its own unison stack, a filter, with its own sweep envelope, or an
+    envelope (up to four of each). Drag a
     module by its header to move it; its cross takes it off the bench. The
+    bench zooms (Cmd / Ctrl + wheel, a pinch, or its pill's minus, plus and
+    Fit) and pans (the wheel, or dragging an empty spot) over a canvas
+    bigger than its box. The
     EFFECTS tab works the same way, with a drive, a delay and a reverb (one
     of each), played in the order their cards read in.
 
@@ -39,14 +43,15 @@
     them all.
 
     The gear picks how sound flows between the modules, and so which
-    oscillator each envelope shapes: by number (ENV 1 shapes OSC 1),
-    following the layout (each module shows its place in the order, and each
-    envelope takes the first free oscillator before it), or along patch
-    cables, OSC -> ENV -> OUT. With patch cables the modules get jacks: drag
-    from an OUT to an envelope's IN or to the output's IN to patch a cable
-    (an oscillator that doesn't reach the output is greyed out and silent),
-    and drag a cable off either end to unplug it. An oscillator no envelope
-    shapes simply starts and stops with its key.
+    oscillator each envelope shapes and each filter filters: by number (ENV 1
+    and FILTER 1 take OSC 1), following the layout (each module shows its
+    place in the order, and each envelope and filter takes the first free
+    oscillator before it), or along patch cables, OSC -> FILTER -> ENV -> OUT
+    (or ENV before FILTER). With patch cables the modules get jacks: drag
+    from an OUT to a filter's or an envelope's IN or to the output's IN to
+    patch a cable (an oscillator that doesn't reach the output is greyed out
+    and silent), and drag a cable off either end to unplug it. An oscillator
+    no envelope shapes simply starts and stops with its key.
 
     Everything is drawn natively (no WebView) and scales proportionally from
     the 1040 px design.
@@ -85,7 +90,9 @@ public:
     /** The patch cables, drawn over the bench and the bottom strip without
         taking any clicks from them, and the patching: a cable picked up from
         a jack (or the output's IN), dragged, and dropped on another or let
-        go. Everything here is in the editor's coordinates. */
+        go. Everything here is in the editor's coordinates, whatever the
+        bench's zoom; a cable to a card scrolled out of the bench's box
+        leaves at its edge. */
     class CableLayer final : public juce::Component
     {
     public:
@@ -116,6 +123,7 @@ public:
     private:
         void dropCable (juce::Point<float> at);
         void paintCable (juce::Graphics&, juce::Point<float> from, juce::Point<float> to, juce::Colour colour) const;
+        juce::RectangleList<int> cableArea (bool endsShow) const;
 
         // A cable being dragged: from which module, to where the mouse is.
         struct Patching
@@ -180,7 +188,7 @@ private:
     Synth2AudioProcessor::SignalFlow signalFlow() const;
     void showView();   // shows the cards as the bench's view says (gear menu, or a restored set)
     void showFlow();
-    AmpDisplayState ampState (const Synth2Engine::Settings& settings, int envelope, const std::array<int, Bench::numOscillators>& shapedBy) const;
+    AmpDisplayState ampState (const ParamID::Envelope& ids, const Synth2Engine::EnvelopeSettings& times, float outputDb) const;
 
     Synth2AudioProcessor& processorRef;
     Synth2LookAndFeel looks;

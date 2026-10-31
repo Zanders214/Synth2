@@ -104,6 +104,28 @@ float playAndMeasure (Synth2AudioProcessor& p, juce::MidiBuffer midi, int blocks
     return buffer.getRMSLevel (0, 0, block);
 }
 
+// How bright what `p` plays over the next `blocks` blocks is: how big its
+// sample-to-sample steps are against its level (more high harmonics, bigger
+// steps).
+float brightness (Synth2AudioProcessor& p, int blocks)
+{
+    juce::AudioBuffer<float> buffer (2, 512);
+    double steps = 0.0, level = 0.0;
+    for (int b = 0; b < blocks; ++b)
+    {
+        juce::MidiBuffer none;
+        buffer.clear();
+        p.processBlock (buffer, none);
+        const float* x = buffer.getReadPointer (0);
+        for (int n = 1; n < buffer.getNumSamples(); ++n)
+        {
+            steps += (double) ((x[n] - x[n - 1]) * (x[n] - x[n - 1]));
+            level += (double) (x[n] * x[n]);
+        }
+    }
+    return level > 0.0 ? (float) std::sqrt (steps / level) : 0.0f;
+}
+
 // Puts OSC 1 and ENV 1 on the bench, as a session from before the bench
 // opens, so a processor has something to play.
 void fillBench (Synth2AudioProcessor& p)
@@ -333,6 +355,102 @@ void testProcessorBasics()
     check (! bench.destinationOf (osc2).has_value() && bench.cables().empty(), "taking ENV 1 off unplugs its cables, in and out");
     setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::fixed);
     check (p.currentSettings().oscillators[3].routed, "in a fixed order, every oscillator is heard");
+}
+
+// The filters: their parameters, which oscillator each takes in each flow,
+// and the cable chains through them.
+void testFilters()
+{
+    std::printf ("Filters:\n");
+
+    Synth2AudioProcessor p;
+    p.prepareToPlay (48000.0, 512);
+    auto& state = p.getState();
+    const auto text = [&state] (const char* id, float value)
+    {
+        auto* parameter = state.getParameter (id);
+        return parameter->getText (parameter->convertTo0to1 (value), 32);
+    };
+    const auto& ids = ParamID::filter (1);
+    check (param (p, ids.on) < 0.5f && param (p, ids.active) >= 0.5f && juce::roundToInt (param (p, ids.type)) == (int) Filter::Type::low24
+               && approx (param (p, ids.cutoff), 1200.0f, 0.5f) && approx (param (p, ids.envAmount), 24.0f, 1e-4f),
+           "a filter starts off the bench, switched on, a LOW 24 at 1.2 kHz swept up two octaves");
+    check (text (ids.cutoff, 1200.0f) == "1.20 kHz" && text (ids.cutoff, 440.0f) == "440 Hz" && text (ids.envAmount, -12.0f) == "-12 st"
+               && text (ids.type, 3.0f) == "High 12",
+           "CUTOFF reads in Hz or kHz, ENV AMOUNT in signed semitones, TYPE by name");
+    check (! state.getParameter (ids.on)->isAutomatable() && state.getParameter (ids.cutoff)->isAutomatable(),
+           "being on the bench isn't automatable, the cutoff is");
+
+    // By number: FILTER n filters OSC n, while both are on the bench and it's switched on.
+    Bench::Model bench (state);
+    const Bench::ModuleId osc1 { Bench::Kind::oscillator, 0 }, osc2 { Bench::Kind::oscillator, 1 };
+    const Bench::ModuleId flt1 { Bench::Kind::filter, 0 }, flt2 { Bench::Kind::filter, 1 }, flt3 { Bench::Kind::filter, 2 };
+    const Bench::ModuleId env1 { Bench::Kind::envelope, 0 }, env2 { Bench::Kind::envelope, 1 };
+    setParam (p, ParamID::osc2On, 1.0f);
+    check (p.currentSettings().oscillators[1].filter == -1, "with no filter on the bench, OSC 2 has none");
+    bench.add (Bench::Kind::filter, { 0.0f, 352.0f });
+    check (bench.isPresent (flt1) && p.currentSettings().oscillators[0].filter == -1 && p.currentSettings().oscillators[1].filter == -1,
+           "the first filter added is FILTER 1, which has no OSC 1 to filter");
+    bench.add (Bench::Kind::filter, { 252.0f, 352.0f });
+    check (bench.isPresent (flt2) && p.currentSettings().oscillators[1].filter == 1, "in a fixed order, FILTER 2 filters OSC 2");
+    setParam (p, ids.cutoff, 300.0f);
+    setParam (p, ids.resonance, 0.7f);
+    setParam (p, ids.type, (float) Filter::Type::band);
+    setParam (p, ids.sweep.decay, 0.2f);
+    const auto settings = p.currentSettings();
+    check (approx (settings.filters[1].cutoffHz, 300.0f, 0.5f) && approx (settings.filters[1].resonance, 0.7f, 1e-4f)
+               && settings.filters[1].type == Filter::Type::band && approx (settings.filters[1].sweep.decaySeconds, 0.2f, 1e-3f),
+           "its settings and its sweep's stages reach the engine");
+    setParam (p, ids.active, 0.0f);
+    check (p.currentSettings().oscillators[1].filter == -1, "switched off, it lets OSC 2 through unfiltered");
+    setParam (p, ids.active, 1.0f);
+
+    // By the layout: each filter the first oscillator before it with none yet.
+    setParam (p, ParamID::osc1On, 1.0f);
+    setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::layout);
+    const auto filteredBy = bench.filterAssignment (Bench::Flow::layout);
+    check (filteredBy[0] == 0 && filteredBy[1] == 1 && p.currentSettings().oscillators[0].filter == 0,
+           "following the layout, the filters under OSC 1 and OSC 2 take them in reading order");
+    bench.add (Bench::Kind::envelope, { 504.0f, 352.0f });
+    check (bench.envelopeAssignment (Bench::Flow::layout)[0] == 0 && bench.filterAssignment (Bench::Flow::layout)[0] == 0,
+           "and an envelope after them takes an oscillator of its own as well");
+
+    // Along the cables: through at most one filter and one envelope, either way round.
+    setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::cables);
+    check (bench.connect (osc1, flt1) && bench.connect (flt1, env1) && ! bench.chainFrom (0).heard,
+           "OSC 1 into FILTER 1 into ENV 1 isn't heard yet");
+    check (bench.connect (env1) && bench.chainFrom (0).heard && p.currentSettings().oscillators[0].routed
+               && p.currentSettings().oscillators[0].filter == 0 && p.currentSettings().oscillators[0].envelope == 0,
+           "until ENV 1 goes to the output: then OSC 1 is heard, filtered by FILTER 1 and shaped by ENV 1");
+    check (bench.connect (osc2, env2) == false, "a module not on the bench can't be patched into");
+    bench.add (Bench::Kind::envelope, { 756.0f, 352.0f });
+    check (bench.connect (osc2, env2) && bench.connect (env2, flt2) && bench.connect (flt2)
+               && p.currentSettings().oscillators[1].filter == 1 && p.currentSettings().oscillators[1].envelope == 1
+               && p.currentSettings().oscillators[1].routed,
+           "the envelope can come first: OSC 2 into ENV 2 into FILTER 2 to the output");
+    check (! bench.connect (flt1, flt2) && ! bench.connect (env1, env2), "a filter can't go into a filter, nor an envelope into an envelope");
+    check (! bench.connect (flt2, env1) && ! bench.connect (env1, flt1), "a chain can't hold two envelopes, nor loop back on itself");
+    check (! bench.connect (osc1, osc2) && bench.inputOf (flt1) == osc1, "nothing goes into an oscillator, and refusals leave the cables be");
+    check (bench.connect (osc2, flt1) && bench.inputOf (flt1) == osc2 && ! bench.destinationOf (osc1).has_value()
+               && bench.chainFrom (1).filter == 0 && bench.chainFrom (1).envelope == 0,
+           "patching OSC 2 into FILTER 1 takes it from OSC 1, and OSC 2's chain now runs on through ENV 1");
+    bench.add (Bench::Kind::filter, { 504.0f, 0.0f });
+    bench.connect (osc1, flt3);
+    bench.connect (flt3);
+    bench.remove (flt3);
+    check (! bench.destinationOf (osc1).has_value() && ! bench.destinationOf (flt3).has_value() && ! bench.chainFrom (0).heard,
+           "taking a filter off unplugs its cables, in and out");
+    check (Bench::ModuleId::fromString ("flt:2") == flt3 && flt3.toString() == "flt:2" && ! Bench::ModuleId::fromString ("flt:7").has_value(),
+           "a filter's place on the bench is saved as flt:N");
+
+    // Laying the bench out afresh stacks each column the way sound runs (the
+    // third row as far down as the bench reaches).
+    bench.layOut();
+    const float third = std::min (704.0f, Bench::areaHeight - Bench::envelopeHeight);
+    check (bench.positionOf (osc1) == juce::Point<float> (0.0f, 0.0f) && bench.positionOf (flt1) == juce::Point<float> (0.0f, 352.0f)
+               && bench.positionOf (env1) == juce::Point<float> (0.0f, third) && bench.positionOf (osc2) == juce::Point<float> (252.0f, 0.0f)
+               && bench.positionOf (env2) == juce::Point<float> (252.0f, third) && bench.cables().empty(),
+           "laid out afresh: each oscillator over its filter over its envelope, unplugged");
 }
 
 void testBusLayouts()
@@ -674,7 +792,11 @@ void testEditor()
 
     // A click on the bench offers what can go on it, there.
     auto& tray = editor->getTrays().getAdd();
-    const auto clickBench = [&] (juce::Point<float> at) { bench.mouseDown (mouseAt (bench, at)); };
+    const auto clickBench = [&] (juce::Point<float> at)
+    {
+        bench.mouseDown (mouseAt (bench, at));
+        bench.mouseUp (mouseAt (bench, at, at));
+    };
     const auto addAt = [&] (int choice, juce::Point<float> at)
     {
         clickBench (at);
@@ -682,11 +804,12 @@ void testEditor()
     };
 
     clickBench ({ 150.0f, 40.0f });
-    check (tray.isOpen() && tray.getCaption() == "ADD TO THE BENCH" && tray.getNumChoices() == 2, "a click on the bench opens the add tray");
+    check (tray.isOpen() && tray.getCaption() == "ADD TO THE BENCH" && tray.getNumChoices() == 3, "a click on the bench opens the add tray");
     check (tray.getChoice (0).name == "Oscillator" && tray.getChoice (0).detail.startsWith ("4 of 4 left")
-               && tray.getChoice (1).name == "Envelope" && tray.getChoice (1).detail.startsWith ("4 of 4 left"),
-           "offering an oscillator and an envelope, four of each");
-    check (tray.getChoice (0).enabled && tray.getChoice (1).enabled, "both free");
+               && tray.getChoice (1).name == "Filter" && tray.getChoice (1).detail.startsWith ("4 of 4 left")
+               && tray.getChoice (2).name == "Envelope" && tray.getChoice (2).detail.startsWith ("4 of 4 left"),
+           "offering an oscillator, a filter and an envelope, in the order sound runs through them, four of each");
+    check (tray.getChoice (0).enabled && tray.getChoice (1).enabled && tray.getChoice (2).enabled, "all free");
     check (editor->getLocalBounds().toFloat().contains (tray.trayBounds())
                && tray.trayBounds().getPosition().getDistanceFrom ((juce::Point<float> (150.0f, 40.0f) + bench.getPosition().toFloat())) < 1.0f,
            "opening where the click was");
@@ -714,7 +837,7 @@ void testEditor()
     check (model.positionOf (osc1.getId()) == juce::Point<float> (252.0f, 0.0f) && osc1.getPosition() == juce::Point<int> (252, 0),
            "dragging OSC 1's header moves it, and the bench keeps the spot");
     dragHeader (osc1, { 2000.0f, 0.0f });
-    check (osc1.getRight() <= bench.getWidth() && model.positionOf (osc1.getId()).x <= Bench::areaWidth - Bench::moduleWidth,
+    check (osc1.getRight() <= bench.getWidth() && model.positionOf (osc1.getId()).x <= Bench::viewWidth - Bench::moduleWidth,
            "a module can't be dragged off the bench");
     dragHeader (osc1, { -(float) osc1.getX() + 252.0f, 0.0f });
 
@@ -722,7 +845,7 @@ void testEditor()
     addAt (0, { 900.0f, 40.0f });
     auto& osc2 = bench.getOscillator (1);
     check (param (p, ParamID::osc2On) >= 0.5f && pumpUntil ([&osc2] { return osc2.isVisible(); }), "a second oscillator is OSC 2");
-    check (juce::exactlyEqual (model.positionOf (osc2.getId()).x, Bench::areaWidth - Bench::moduleWidth), "kept inside the bench");
+    check (juce::exactlyEqual (model.positionOf (osc2.getId()).x, Bench::viewWidth - Bench::moduleWidth), "kept inside the bench's box");
     dragHeader (osc2, juce::Point<float> (300.0f, 30.0f) - osc2.getPosition().toFloat());
     const auto landed = model.positionOf (osc2.getId());
     check (! model.boundsOf (osc2.getId()).intersects (model.boundsOf (osc1.getId()))
@@ -743,25 +866,28 @@ void testEditor()
     check (! tray.getChoice (0).enabled && tray.getChoice (0).detail == "All four are on the bench", "a fifth oscillator is greyed out");
     tray.mouseDown (mouseAt (tray, tray.choiceBounds (0).getCentre()));
     check (tray.isOpen(), "and picking it does nothing");
-    tray.mouseDown (mouseAt (tray, tray.choiceBounds (1).getCentre()));   // ENV 1 at (0, 352)
+    tray.mouseDown (mouseAt (tray, tray.choiceBounds (2).getCentre()));   // ENV 1 at (0, 352)
     auto& env1 = bench.getEnvelope (0);
     check (pumpUntil ([&env1] { return env1.isVisible() && env1.getAlpha() >= 1.0f; }) && env1.getCaption() == "ENV 1"
                && env1.getBounds() == juce::Rectangle<int> (0, 352, 236, 336),
            "picking Envelope puts ENV 1 on the bench");
-    addAt (1, { 370.0f, 367.0f });    // ENV 2 at (252, 352)
-    addAt (1, { 622.0f, 367.0f });    // ENV 3 at (504, 352)
-    addAt (1, { 874.0f, 367.0f });    // ENV 4 at (756, 352)
+    addAt (2, { 370.0f, 367.0f });    // ENV 2 at (252, 352)
+    addAt (2, { 622.0f, 367.0f });    // ENV 3 at (504, 352)
+    addAt (2, { 874.0f, 367.0f });    // ENV 4 at (756, 352)
     const auto allShown = [&bench]
     {
-        return std::all_of (Bench::allModules.begin(), Bench::allModules.end(),
-                            [&bench] (const auto& id) { return bench.getModule (id).isVisible() && bench.getModule (id).getAlpha() >= 1.0f; });
+        return std::all_of (Bench::allModules.begin(), Bench::allModules.end(), [&bench] (const auto& id)
+        {
+            return id.kind == Bench::Kind::filter || (bench.getModule (id).isVisible() && bench.getModule (id).getAlpha() >= 1.0f);
+        });
     };
     check (pumpUntil (allShown) && ! anyOverlap (bench), "eight modules, none covering another");
     check (model.positionOf (bench.getOscillator (1).getId()) == juce::Point<float> (0.0f, 0.0f)
                && model.positionOf (bench.getEnvelope (3).getId()) == juce::Point<float> (756.0f, 352.0f),
            "each where it was put");
     clickBench ({ 500.0f, 650.0f });
-    check (! tray.getChoice (0).enabled && ! tray.getChoice (1).enabled, "now the tray has nothing left to add");
+    check (! tray.getChoice (0).enabled && tray.getChoice (1).enabled && ! tray.getChoice (2).enabled,
+           "now the tray has only filters left to add");
     tray.close();
 
     // In a fixed order, ENV n shapes OSC n, wherever they sit, and says so.
@@ -930,7 +1056,7 @@ void testEditor()
     env1.mouseDown (mouseAt (env1, env1.closeBounds().getCentre()));
     check (pumpUntil ([&] { return orderIs ({ { o4, 4 }, { e2, 5 }, { e3, 6 }, { e4, 7 } }) && tagsAre ({ "", "> OSC 2", "> OSC 1", "> OSC 3" }); }),
            "taking ENV 1 away renumbers them, and the envelopes after it move up an oscillator");
-    addAt (1, { 118.0f, 367.0f });
+    addAt (2, { 118.0f, 367.0f });
     check (pumpUntil ([&] { return allShown() && tagsAre ({ "> OSC 2", "> OSC 1", "> OSC 3", "> OSC 4" }); }), "putting it back restores them");
 
     // Patch cables: oscillators get an OUT jack, envelopes an IN and an OUT,
@@ -944,7 +1070,7 @@ void testEditor()
            "the oscillators show OUT jacks, the envelopes IN and OUT, and no numbers");
     bool allDimmed = true;
     for (const auto& id : Bench::allModules)
-        allDimmed = allDimmed && bench.getModule (id).isDimmed();
+        allDimmed = allDimmed && (id.kind == Bench::Kind::filter || bench.getModule (id).isDimmed());
     check (allDimmed, "with nothing patched, everything is greyed out");
     check (holdAndMeasure (p) < 1e-4f, "and silent");
     const auto unpatched = render (*editor);
@@ -1310,6 +1436,250 @@ void testViews()
            "Both and Full bring the cards back as they were");
 }
 
+// Turns the wheel over `target` at `at` by `delta` (holding Cmd / Ctrl when `command`).
+void wheelAt (juce::Component& target, juce::Point<float> at, juce::Point<float> delta, bool command = false)
+{
+    const auto now = juce::Time::getCurrentTime();
+    const juce::MouseEvent e (juce::Desktop::getInstance().getMainMouseSource(), at,
+                              command ? juce::ModifierKeys (juce::ModifierKeys::commandModifier) : juce::ModifierKeys(),
+                              1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &target, &target, now, at, now, 0, false);
+    juce::MouseWheelDetails wheel {};
+    wheel.deltaX   = delta.x;
+    wheel.deltaY   = delta.y;
+    wheel.isSmooth = true;
+    target.mouseWheelMove (e, wheel);
+}
+
+void testBenchZoom()
+{
+    std::printf ("Bench zoom and pan:\n");
+
+    Synth2AudioProcessor p;
+    p.prepareToPlay (48000.0, 512);
+    std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
+    auto* editor = dynamic_cast<Synth2AudioProcessorEditor*> (base.get());
+    if (editor == nullptr)
+        return;
+
+    auto& bench = editor->getBench();
+    auto& pill  = bench.getZoomPill();
+    Bench::Model model (p.getState());
+    using Kind = Bench::Kind;
+    check (bench.getViewport() == Bench::Viewport {} && pill.zoomText() == "100%", "a new bench opens at 100%, on the canvas's top left");
+    check (pill.isVisible() && pill.getRight() < bench.getRight() && pill.getRight() > bench.getRight() - 30
+               && pill.getY() < bench.getBottom() && pill.getBottom() > bench.getBottom() && pill.getBottom() < editor->getKeyboard().getY(),
+           "with the zoom pill on its bottom edge, at its right, clear of the keyboard");
+    check (approx (Bench::areaWidth / Bench::areaHeight, Bench::viewWidth / Bench::viewHeight, 0.01f)
+               && Bench::areaWidth >= 6.0f * Bench::moduleWidth + 5.0f * Bench::gap && Bench::areaHeight >= 3.0f * Bench::oscillatorHeight + 2.0f * Bench::gap,
+           "the canvas holds three rows of six cards, in the box's proportions");
+
+    // Three oscillators and two envelopes, one oscillator and one envelope
+    // past what the box shows at 100%.
+    const Bench::ModuleId o1 { Kind::oscillator, 0 }, o2 { Kind::oscillator, 1 }, o3 { Kind::oscillator, 2 };
+    const Bench::ModuleId e1 { Kind::envelope, 0 },   e2 { Kind::envelope, 1 };
+    bench.add (Kind::oscillator, { 0.0f, 0.0f });
+    bench.add (Kind::oscillator, { 252.0f, 0.0f });
+    bench.add (Kind::envelope, { 0.0f, 352.0f });
+    model.add (Kind::oscillator, { 1100.0f, 0.0f });
+    model.add (Kind::envelope, { 1260.0f, 704.0f });
+    auto& osc1 = bench.getModule (o1);
+    auto& osc3 = bench.getModule (o3);
+    auto& env1 = bench.getModule (e1);
+    auto& env2 = bench.getModule (e2);
+    check (pumpUntil ([&] { return osc3.isVisible() && env2.isVisible() && osc3.getAlpha() >= 1.0f; }) && model.positionOf (o3) == juce::Point<float> (1100.0f, 0.0f),
+           "cards can sit anywhere on the canvas");
+    check (osc3.getX() >= bench.getWidth() && env2.getY() >= bench.getHeight(), "and those past the box are out of sight");
+
+    // Cmd + wheel zooms round the pointer, as does a pinch.
+    bench.setViewport ({ 1.0f, { 300.0f, 200.0f } });
+    const juce::Point<float> pointer (400.0f, 300.0f);
+    const auto under = bench.toDesign (pointer);
+    wheelAt (bench, pointer, { 0.0f, 0.1f }, true);
+    const float zoomedIn = bench.getViewport().zoom;
+    check (zoomedIn > 1.1f && bench.toDesign (pointer).getDistanceFrom (under) < 0.01f, "Cmd + wheel up zooms in, the canvas under the pointer staying put");
+    check (osc1.getWidth() == juce::roundToInt (Bench::moduleWidth * zoomedIn) && osc1.getBounds() == bench.boundsFor (o1)
+               && approx ((float) osc1.getDial (0).getWidth(), 52.0f * zoomedIn, 1.0f),
+           "and the cards are drawn bigger, dials and all");
+    wheelAt (bench, pointer, { 0.0f, -0.2f }, true);
+    check (bench.getViewport().zoom < 1.0f && bench.toDesign (pointer).getDistanceFrom (under) < 0.01f, "Cmd + wheel down zooms out round it");
+    const float beforePinch = bench.getViewport().zoom;
+    bench.mouseMagnify (mouseAt (bench, pointer), 1.2f);
+    check (approx (bench.getViewport().zoom, beforePinch * 1.2f, 1e-4f) && bench.toDesign (pointer).getDistanceFrom (under) < 0.01f,
+           "a pinch zooms round the pointer too");
+    wheelAt (bench, pointer, { 0.0f, -5.0f }, true);
+    check (juce::exactlyEqual (bench.getViewport().zoom, Bench::fitZoom) && bench.getViewport().visibleArea().contains (juce::Rectangle<float> (Bench::areaWidth, Bench::areaHeight)),
+           "zooming out stops with the whole canvas in the box");
+    wheelAt (bench, pointer, { 0.0f, 5.0f }, true);
+    check (juce::exactlyEqual (bench.getViewport().zoom, Bench::maxZoom) && pill.zoomText() == "150%", "and zooming in at 150%");
+
+    // The pill's minus and plus step through the levels, round the middle.
+    bench.setViewport ({ 1.0f, { 200.0f, 150.0f } });
+    const auto pressPill = [&pill] (ZoomPill::Part part) { pill.mouseDown (mouseAt (pill, pill.partBounds (part).getCentre())); };
+    const auto middle = bench.toDesign (bench.getLocalBounds().toFloat().getCentre());
+    pressPill (ZoomPill::Part::zoomIn);
+    check (approx (bench.getViewport().zoom, 1.25f, 1e-6f) && pill.zoomText() == "125%"
+               && bench.toDesign (bench.getLocalBounds().toFloat().getCentre()).getDistanceFrom (middle) < 0.01f,
+           "plus zooms in a step, round the middle of the box");
+    pressPill (ZoomPill::Part::zoomIn);
+    pressPill (ZoomPill::Part::zoomIn);
+    check (juce::exactlyEqual (bench.getViewport().zoom, Bench::maxZoom), "up to 150%");
+    std::vector<float> steps;
+    for (int i = 0; i < 6; ++i)
+    {
+        pressPill (ZoomPill::Part::zoomOut);
+        steps.push_back (bench.getViewport().zoom);
+    }
+    check (steps == std::vector<float> { 1.25f, 1.0f, 0.8f, Bench::fitZoom, Bench::fitZoom, Bench::fitZoom }, "minus steps back down to the whole canvas");
+
+    // Fit frames the cards.
+    bench.setViewport ({ 1.5f, {} });
+    pressPill (ZoomPill::Part::fit);
+    bool allInside = true;
+    for (const auto& id : model.present())
+        allInside = allInside && bench.getLocalBounds().contains (bench.getModule (id).getBounds());
+    check (allInside && bench.getViewport().zoom <= 1.0f, "Fit shows every card");
+    const float allFramed = bench.getViewport().zoom;
+    model.remove (o3);
+    model.remove (e2);
+    pressPill (ZoomPill::Part::fit);
+    check (pumpUntil ([&] { return ! osc3.isVisible() && ! env2.isVisible(); }) && bench.getViewport().zoom > allFramed
+               && bench.getViewport().zoom <= 1.0f && bench.getViewport().visibleArea().contains (model.extent()),
+           "with fewer cards it comes in closer, but no closer than 100%");
+    model.remove (o1);
+    model.remove (e1);
+    pressPill (ZoomPill::Part::fit);
+    check (juce::exactlyEqual (bench.getViewport().zoom, 1.0f) && bench.getViewport().visibleArea().contains (model.extent()), "as for one or two");
+    bench.add (Kind::oscillator, { 0.0f, 0.0f });
+    bench.add (Kind::envelope, { 0.0f, 352.0f });
+    model.add (Kind::envelope, { 1260.0f, 704.0f });
+    pumpUntil ([&] { return osc1.isVisible() && env1.isVisible() && env2.isVisible(); });
+
+    // The wheel pans, over the bench or a card; a dial takes it for itself.
+    bench.setViewport ({ 1.0f, { 100.0f, 100.0f } });
+    wheelAt (bench, { 600.0f, 500.0f }, { -30.0f / 512.0f, -50.0f / 512.0f });
+    check (bench.getViewport().pan.getDistanceFrom ({ 130.0f, 150.0f }) < 0.01f, "the wheel (or two fingers) pans");
+    check (bench.getViewport().pan == model.viewport().pan, "and the bench keeps where");
+    wheelAt (osc1, osc1.headerBounds().getCentre(), { 0.0f, 20.0f / 512.0f });
+    check (bench.getViewport().pan.getDistanceFrom ({ 130.0f, 130.0f }) < 0.01f, "over a card too");
+    const auto& pitch = osc1.getDial (0);
+    const double pitchBefore = pitch.getValue();
+    wheelAt (osc1.getDial (0), osc1.getDial (0).getLocalBounds().getCentre().toFloat(), { 0.0f, 0.2f });
+    check (! juce::exactlyEqual (pitch.getValue(), pitchBefore) && bench.getViewport().pan.getDistanceFrom ({ 130.0f, 130.0f }) < 0.01f,
+           "while over a dial it turns the dial");
+    osc1.getDial (0).setValue (pitchBefore, juce::sendNotificationSync);
+
+    // Dragging an empty spot pans; a click there adds a module, where it is on the canvas.
+    auto& tray = editor->getTrays().getAdd();
+    bench.setViewport ({ 1.0f, {} });
+    const juce::Point<float> spot (700.0f, 500.0f);
+    bench.mouseDown (mouseAt (bench, spot));
+    bench.mouseDrag (mouseAt (bench, spot + juce::Point<float> (-3.0f, 0.0f), spot));
+    check (bench.getViewport().pan == juce::Point<float>(), "a press that barely moves doesn't pan");
+    bench.mouseDrag (mouseAt (bench, spot + juce::Point<float> (-100.0f, -60.0f), spot));
+    bench.mouseUp (mouseAt (bench, spot + juce::Point<float> (-100.0f, -60.0f), spot));
+    check (bench.getViewport().pan.getDistanceFrom ({ 100.0f, 60.0f }) < 0.01f && ! tray.isOpen(), "dragging an empty spot pans, opening nothing");
+
+    bench.setViewport ({ 0.75f, { 100.0f, 100.0f } });
+    const juce::Point<float> clicked (600.0f, 400.0f);
+    const auto canvasAt = bench.toDesign (clicked);
+    bench.mouseDown (mouseAt (bench, clicked));
+    bench.mouseUp (mouseAt (bench, clicked, clicked));
+    check (tray.isOpen() && tray.trayBounds().getPosition().getDistanceFrom (clicked + bench.getPosition().toFloat()) < 1.0f,
+           "zoomed out, a click opens the add tray where it was");
+    tray.mouseDown (mouseAt (tray, tray.choiceBounds (0).getCentre()));
+    check (pumpUntil ([&] { return osc3.isVisible(); })
+               && model.positionOf (o3).getDistanceFrom (canvasAt - juce::Point<float> (0.5f * Bench::moduleWidth, 15.0f)) < 0.01f
+               && osc3.getBounds() == bench.boundsFor (o3) && osc3.getWidth() == juce::roundToInt (Bench::moduleWidth * 0.75f),
+           "and the module lands under the click, on the canvas");
+
+    // At 75%, a card dragged by its header lands under the pointer.
+    const auto o3Before = model.positionOf (o3);
+    const auto o3View   = osc3.getPosition();
+    dragHeader (osc3, { 90.0f, -60.0f });
+    check (osc3.getPosition() == o3View + juce::Point<int> (90, -60)
+               && model.positionOf (o3).getDistanceFrom (o3Before + juce::Point<float> (120.0f, -80.0f)) < 1.5f,
+           "a card dragged at 75% lands under the pointer");
+    check (bench.toView (model.positionOf (o3)).getDistanceFrom (osc3.getPosition().toFloat()) < 0.5f, "and stays there");
+
+    // A cable patches at 150%; a card out of the box can't take one.
+    setParam (p, ParamID::signalFlow, 2.0f);
+    check (pumpUntil ([&] { return env1.getHeader().isJackShown (BenchModule::Jack::in); }), "with patch cables, the jacks show");
+    bench.setViewport ({ 1.5f, {} });
+    const auto patchTo = [&editor] (BenchModule& module, juce::Point<float> to)
+    {
+        const auto from = module.jackBounds().getCentre();
+        module.mouseDown (mouseAt (module, from));
+        module.mouseDrag (mouseAt (module, module.getLocalPoint (editor, to), from));
+        module.mouseUp (mouseAt (module, module.getLocalPoint (editor, to), from));
+    };
+    patchTo (osc1, editor->getCables().jackCentre (e1, BenchModule::Jack::in));
+    check (model.inputOf (e1) == std::optional (o1), "at 150% a cable from OSC 1 patches into ENV 1's IN");
+    patchTo (env1, editor->getCables().outputJackBounds().getCentre());
+    check (model.isPatchedToOutput (e1), "and ENV 1 into the output's IN");
+    check (! bench.getLocalBounds().contains (osc3.getBounds().getCentre()), "OSC 3 is out of the box");
+    model.connect (o3);
+    patchTo (bench.getModule (o2), editor->getCables().jackCentre (e2, BenchModule::Jack::in));
+    check (! model.inputOf (e2).has_value(), "a cable dropped where a card out of the box would be plugs into nothing");
+    pumpUntil ([&] { return false; }, 100);
+    snapshot (render (*editor), "bench-zoomed-in");
+
+    // Zoomed out, the whole canvas.
+    bench.setViewport ({ Bench::fitZoom, {} });
+    check (osc3.getBounds() == bench.boundsFor (o3) && bench.getLocalBounds().contains (osc3.getBounds()), "zoomed right out, every card shows");
+    pumpUntil ([&] { return false; }, 100);
+    snapshot (render (*editor), "bench-zoomed-out");
+
+    // The zoom and pan are kept with the set.
+    bench.setViewport ({ 1.25f, { 120.0f, 80.0f } });
+    juce::MemoryBlock saved;
+    p.getStateInformation (saved);
+    Synth2AudioProcessor restored;
+    restored.setStateInformation (saved.getData(), (int) saved.getSize());
+    const Bench::Viewport kept { 1.25f, { 120.0f, 80.0f } };
+    check (Bench::Model (restored.getState()).viewport() == kept, "a saved set keeps the zoom and pan");
+    {
+        std::unique_ptr<juce::AudioProcessorEditor> other (restored.createEditor());
+        auto* reopened = dynamic_cast<Synth2AudioProcessorEditor*> (other.get());
+        check (reopened != nullptr && reopened->getBench().getViewport() == kept
+                   && reopened->getBench().getModule (o3).getBounds() == bench.boundsFor (o3),
+               "and opens looking as it was left");
+    }
+    bench.setViewport ({ 0.8f, { 10.0f, 20.0f } });
+    p.setStateInformation (saved.getData(), (int) saved.getSize());
+    check (pumpUntil ([&] { return bench.getViewport() == kept; }) && pill.zoomText() == "125%", "restoring it with the editor open zooms back");
+
+    // A session from before the zoom opens at 100%, the cards where they were.
+    auto xml = juce::AudioProcessor::getXmlFromBinary (saved.getData(), (int) saved.getSize());
+    if (auto* benchXml = xml != nullptr ? xml->getChildByName (Bench::benchType) : nullptr)
+        for (const auto& property : { Bench::zoomProperty, Bench::panXProperty, Bench::panYProperty })
+            benchXml->removeAttribute (property);
+    juce::MemoryBlock old;
+    juce::AudioProcessor::copyXmlToBinary (*xml, old);
+    Synth2AudioProcessor older;
+    older.setStateInformation (old.getData(), (int) old.getSize());
+    {
+        std::unique_ptr<juce::AudioProcessorEditor> other (older.createEditor());
+        auto* reopened = dynamic_cast<Synth2AudioProcessorEditor*> (other.get());
+        const Bench::Model olderModel (older.getState());
+        check (reopened != nullptr && reopened->getBench().getViewport() == Bench::Viewport {}
+                   && reopened->getBench().getModule (o1).getBounds() == juce::Rectangle<int> (0, 0, 236, 336)
+                   && reopened->getBench().getModule (e1).getBounds() == juce::Rectangle<int> (0, 352, 236, 336)
+                   && olderModel.positionOf (o3) == model.positionOf (o3),
+               "a set saved before the zoom opens at 100%, its cards where they were");
+    }
+
+    // Presets leave the zoom alone, unless their cards wouldn't all show.
+    bench.setViewport ({ 0.8f, {} });
+    p.loadPreset (2);
+    check (pumpUntil ([&] { return model.present().size() > 1; }) && bench.getViewport() == Bench::Viewport { 0.8f, {} },
+           "loading a preset keeps the zoom when its cards all show");
+    bench.setViewport ({ 1.5f, { 700.0f, 600.0f } });
+    p.loadPreset (3);
+    check (pumpUntil ([&] { return bench.getViewport() == model.viewport() && bench.getViewport().zoom < 1.5f; })
+               && bench.getViewport().visibleArea().contains (model.extent()),
+           "and frames them when they wouldn't");
+}
+
 // Drags `card` by its header so its top left moves by `by`.
 void dragCard (EffectCard& card, juce::Point<float> by)
 {
@@ -1318,6 +1688,116 @@ void dragCard (EffectCard& card, juce::Point<float> by)
     card.mouseDrag (mouseAt (card, grab + by * 0.5f, grab));
     card.mouseDrag (mouseAt (card, grab + by, grab));
     card.mouseUp (mouseAt (card, grab + by, grab));
+}
+
+// A FILTER card: its dials, its response well (TYPE's arrows, the cutoff and
+// resonance handle, the notes' swept cutoffs) and its SWEEP well.
+void testFilterCard()
+{
+    std::printf ("Filter card:\n");
+
+    Synth2AudioProcessor p;
+    p.prepareToPlay (48000.0, 512);
+    fillBench (p);
+    Bench::Model model (p.getState());
+    model.add (Bench::Kind::filter, { 252.0f, 352.0f });
+    std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
+    auto* editor = dynamic_cast<Synth2AudioProcessorEditor*> (base.get());
+    if (editor == nullptr)
+        return;
+    auto& card = editor->getBench().getFilter (0);
+    check (pumpUntil ([&card] { return card.isVisible() && card.getAlpha() >= 1.0f; }) && card.getCaption() == "FILTER 1"
+               && card.getBounds() == juce::Rectangle<int> (252, 352, 236, 336) && card.getNumDials() == 3,
+           "FILTER 1 is on the bench, as big as the other cards, with CUTOFF, RESONANCE and ENV AMT");
+    check (pumpUntil ([&card] { return card.getHeader().getTag() == "> OSC 1" && ! card.isDimmed(); }), "filtering OSC 1, by number");
+    check (p.currentSettings().oscillators[0].filter == 0, "which the engine plays through it");
+
+    card.getDial (0).setValue (500.0, juce::sendNotificationSync);
+    card.getDial (2).setValue (-12.0, juce::sendNotificationSync);
+    check (approx (param (p, ParamID::flt1Cutoff), 500.0f, 0.5f) && approx (param (p, ParamID::flt1EnvAmount), -12.0f, 1e-3f),
+           "its dials set its own CUTOFF and ENV AMOUNT");
+
+    // The response well.
+    auto& response = card.getResponse();
+    check (pumpUntil ([&response] { return approx (response.getFilterState().cutoffHz, 500.0f, 0.5f); }), "its well follows");
+    response.mouseDown (mouseAt (response, response.arrowBounds (true).getCentre()));
+    check (juce::roundToInt (param (p, ParamID::flt1Type)) == (int) Filter::Type::low12, "the right arrow steps LOW 24 to LOW 12");
+    response.mouseDown (mouseAt (response, response.arrowBounds (false).getCentre()));
+    response.mouseDown (mouseAt (response, response.arrowBounds (false).getCentre()));
+    check (juce::roundToInt (param (p, ParamID::flt1Type)) == (int) Filter::Type::notch, "and the left one back, and round to NOTCH");
+
+    GestureCount gestures;
+    p.addListener (&gestures);
+    const auto handleAt  = response.handleCentre();
+    const auto handleTo  = handleAt.translated (30.0f, -15.0f);
+    const float resonanceBefore = param (p, ParamID::flt1Resonance);
+    response.mouseMove (mouseAt (response, handleAt.translated (2.0f, 2.0f)));
+    check (response.isHandleHot(), "hovering the handle picks it out");
+    response.mouseDown (mouseAt (response, handleAt));
+    response.mouseDrag (mouseAt (response, handleAt.translated (15.0f, -8.0f), handleAt));
+    response.mouseDrag (mouseAt (response, handleTo, handleAt));
+    check (param (p, ParamID::flt1Cutoff) > 600.0f && param (p, ParamID::flt1Resonance) > resonanceBefore + 0.1f,
+           "dragging it right and up raises CUTOFF and RESONANCE");
+    check (response.handleCentre().getDistanceFrom (handleTo) < 1.5f, "and it follows the pointer");
+    response.mouseUp (mouseAt (response, handleTo, handleAt));
+    check (gestures.begun == 2 && gestures.ended == 2, "the drag is one gesture for each, for the host");
+    response.mouseDoubleClick (mouseAt (response, response.handleCentre()));
+    check (approx (param (p, ParamID::flt1Cutoff), 1200.0f, 0.5f) && approx (param (p, ParamID::flt1Resonance), 0.2f, 1e-4f),
+           "a double-click puts both back");
+    p.removeListener (&gestures);
+
+    // The SWEEP well, edited like an AMP well.
+    auto& sweep = card.getSweep();
+    check (pumpUntil ([&sweep] { return sweep.isVisible() && sweep.getHeight() > 60; }) && sweep.getBottom() <= card.getHeight(),
+           "the SWEEP well fills the card under the dials");
+    using Handle = AmpDisplay::Handle;
+    const float decayBefore = param (p, ParamID::flt1Decay);
+    const auto  decayAt = sweep.handleCentre (Handle::decay);
+    sweep.mouseDown (mouseAt (sweep, decayAt));
+    sweep.mouseDrag (mouseAt (sweep, decayAt.translated (-30.0f, 0.0f), decayAt));
+    sweep.mouseUp (mouseAt (sweep, decayAt.translated (-30.0f, 0.0f), decayAt));
+    check (param (p, ParamID::flt1Decay) < decayBefore, "dragging its DECAY corner left shortens the sweep's DECAY");
+
+    // Each note shows where its sweep has its cutoff.
+    setParam (p, ParamID::flt1EnvAmount, 24.0f);
+    juce::MidiBuffer chordOn;
+    for (const int note : { 60, 64 })
+        chordOn.addEvent (juce::MidiMessage::noteOn (1, note, 0.8f), 0);
+    playAndMeasure (p, chordOn, 2);
+    const auto sounding = [] (const auto& notes)
+    {
+        return std::count_if (notes.begin(), notes.end(), [] (const auto& n) { return n.stage != NoteActivity::Stage::idle; });
+    };
+    check (pumpUntil ([&] { return sounding (response.getFilterState().notes) == 2 && sweep.getAmpState().numSounding() == 2; }),
+           "two notes: two swept cutoffs in the response well, two dots on the sweep");
+    snapshot (render (*editor), "filter-card");
+    releaseAll (p);
+
+    // A full bench: four of each, a filter added without a place of its own
+    // going under its oscillator's envelope, all in sight once the view fits.
+    for (const auto kind : { Bench::Kind::oscillator, Bench::Kind::filter, Bench::Kind::envelope })
+        while (model.canAdd (kind))
+        {
+            const int slot = 4 - model.left (kind);
+            model.add (kind, Bench::defaultPosition ({ kind, slot }));
+        }
+    model.layOut();
+    auto& bench = editor->getBench();
+    bench.fit();
+    const auto allIn = [&bench, &model]
+    {
+        const auto box = bench.getLocalBounds();
+        return std::all_of (Bench::allModules.begin(), Bench::allModules.end(), [&] (const auto& id)
+        {
+            const auto& module = bench.getModule (id);
+            return model.isPresent (id) && module.isVisible() && module.getAlpha() >= 1.0f && box.contains (module.getBounds());
+        });
+    };
+    check (pumpUntil (allIn) && ! anyOverlap (bench), "a full bench of twelve shows every card, none covering another, once it fits");
+    check (model.positionOf ({ Bench::Kind::filter, 3 }) == juce::Point<float> (756.0f, 352.0f)
+               && model.positionOf ({ Bench::Kind::envelope, 3 }) == juce::Point<float> (756.0f, 704.0f),
+           "each column runs oscillator, filter, envelope, the way sound does");
+    snapshot (render (*editor), "bench-full-twelve");
 }
 
 void testEffectsTab()
@@ -1343,6 +1823,7 @@ void testEffectsTab()
     editor->mouseDown (mouseAt (*editor, editor->tabBounds (Tab::effects).getCentre()));
     check (editor->getTab() == Tab::effects && effects.isVisible() && ! bench.isVisible() && effects.getBounds() == bench.getBounds(),
            "EFFECTS swaps the bench for the effects, in its place");
+    check (! bench.getZoomPill().isVisible(), "the bench's zoom pill goes with it (the effects don't zoom)");
     check (editor->getKeyboard().isVisible() && editor->getOutputDial().isVisible(), "with the keyboard and OUTPUT still below");
 
     auto& drive  = effects.getDrive();
@@ -1647,14 +2128,18 @@ void testPresets()
 
         bool modulesMatch = true;
         bool shapedByOwn  = true;
+        bool filteredByOwn = true;
         float attack = 0.0f;
         for (int slot = 0; slot < Bench::numOscillators; ++slot)
         {
             const auto& osc = preset.oscillators[(size_t) slot];
             const bool shaped = osc.has_value() && osc->envelope.has_value();
+            const bool filtered = osc.has_value() && osc->filter.has_value();
             modulesMatch = modulesMatch && bench.isPresent ({ Bench::Kind::oscillator, slot }) == osc.has_value()
-                                        && bench.isPresent ({ Bench::Kind::envelope, slot }) == shaped;
-            shapedByOwn  = shapedByOwn && settings.oscillators[(size_t) slot].envelope == (shaped ? slot : -1);
+                                        && bench.isPresent ({ Bench::Kind::envelope, slot }) == shaped
+                                        && bench.isPresent ({ Bench::Kind::filter, slot }) == filtered;
+            shapedByOwn   = shapedByOwn && settings.oscillators[(size_t) slot].envelope == (shaped ? slot : -1);
+            filteredByOwn = filteredByOwn && settings.oscillators[(size_t) slot].filter == (filtered ? slot : -1);
             if (shaped)
                 attack = juce::jmax (attack, osc->envelope->delaySeconds + osc->envelope->attackSeconds);
         }
@@ -1668,7 +2153,7 @@ void testPresets()
         const float peak = holdChordPeak (q, juce::roundToInt ((attack + 0.5f) * 48000.0f / 512.0f));
         const std::string name = preset.name;
         check (q.getCurrentProgram() == i && modulesMatch && apart, name + ": its modules are on the bench, apart");
-        check (shapedByOwn, name + ": each envelope shapes its own oscillator");
+        check (shapedByOwn && filteredByOwn, name + ": each envelope and filter takes its own oscillator");
         check (peak > 0.2f && peak < 1.0f, name + ": a chord sounds without clipping (peak " + std::to_string (peak) + ")");
     }
 
@@ -1686,6 +2171,24 @@ void testPresets()
         check (param (q, ParamID::reverbOn) < 0.5f && param (q, ParamID::delayOn) < 0.5f
                    && approx (param (q, ParamID::reverbSize), 0.5f, 1e-4f),
                "and the next one sets them back to their defaults");
+    }
+
+    // The filtered ones darken as their sweeps fall: brighter as a note
+    // starts than a second on.
+    for (const auto* swept : { "Filter Pluck", "Acid Bass" })
+    {
+        Synth2AudioProcessor q;
+        q.prepareToPlay (48000.0, 512);
+        q.setCurrentProgram (names.indexOf (swept));
+        check (q.currentSettings().oscillators[0].filter == 0, std::string (swept) + ": OSC 1 goes through FILTER 1");
+        juce::MidiBuffer on;
+        on.addEvent (juce::MidiMessage::noteOn (1, 48, 1.0f), 0);
+        playAndMeasure (q, on, 1);
+        const float early = brightness (q, 4);
+        playAndMeasure (q, {}, 90);
+        const float late = brightness (q, 4);
+        check (early > late * 1.5f, std::string (swept) + ": its sweep closes the filter as the note sounds ("
+                                        + std::to_string (early) + " then " + std::to_string (late) + ")");
     }
 
     // The plucks fall away while the key is still held.
@@ -1884,6 +2387,7 @@ int main()
     std::printf ("Synth2 plugin tests\n===================\n");
 
     testProcessorBasics();
+    testFilters();
     testBusLayouts();
     testPlaying();
     testStateRoundTrip();
@@ -1891,6 +2395,8 @@ int main()
     testEditor();
     testBypass();
     testViews();
+    testFilterCard();
+    testBenchZoom();
     testEffectsTab();
     testEffectsRack();
     testTypedKeys();

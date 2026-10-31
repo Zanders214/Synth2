@@ -7,6 +7,7 @@
 
 #include "EffectSettings.h"
 #include "Envelope.h"
+#include "Filter.h"
 #include "Oscillator.h"
 #include "Unison.h"
 
@@ -17,7 +18,8 @@
     oscillators' WAVE wells (the shape at its pitch and level, and a faint copy
     per unison voice, each placed and tinted by its detune and pan) and the
     envelopes' AMP wells (the envelope's shape, filling the well, and a dot per
-    sounding note riding it), and the effects' wells (the delay's repeats and
+    sounding note riding it), the filters' response wells (see Filter's own
+    magnitudeDb), and the effects' wells (the delay's repeats and
     the reverb's ring).
 
     It draws on the very same Oscillator::naive and Unison maths the engine
@@ -433,6 +435,56 @@ struct Synth2VisualModel
     /** The SUSTAIN level for DECAY's handle dragged to height `y` (0..1 up
         the well). */
     static float sustainAt (const Envelope& e, float y) noexcept { return clamp01 (y / e.peak); }
+
+    // ---- FILTER ------------------------------------------------------------
+
+    // The response well: 20 Hz to 20 kHz evenly by octave across it, and
+    // filterFloorDb to filterCeilingDb up it.
+    static constexpr float filterFloorDb   = -48.0f;
+    static constexpr float filterCeilingDb = 30.0f;
+
+    /** Where `hz` falls across the response well (0..1). */
+    static float filterX (float hz) noexcept
+    {
+        return clamp01 (std::log2 (std::max (hz, Filter::minHz) / Filter::minHz) / std::log2 (Filter::maxHz / Filter::minHz));
+    }
+
+    /** The frequency at `x` (0..1) across the response well. */
+    static float filterHz (float x) noexcept
+    {
+        return Filter::minHz * std::exp2 (clamp01 (x) * std::log2 (Filter::maxHz / Filter::minHz));
+    }
+
+    /** How high (0..1) a gain of `db` stands in the response well. */
+    static float filterY (float db) noexcept
+    {
+        return clamp01 ((db - filterFloorDb) / (filterCeilingDb - filterFloorDb));
+    }
+
+    // The response handle stands at the cutoff, as high as the resonance:
+    // from just off the bottom at none to just under the top at the most.
+    static constexpr float resonanceFloorY   = 0.1f;
+    static constexpr float resonanceCeilingY = 0.9f;
+
+    /** How high (0..1) the response handle stands for `resonance`. */
+    static float resonanceY (float resonance) noexcept
+    {
+        return resonanceFloorY + clamp01 (resonance) * (resonanceCeilingY - resonanceFloorY);
+    }
+
+    /** The resonance for the response handle at height `y` (0..1). */
+    static float resonanceAt (float y) noexcept
+    {
+        return clamp01 ((y - resonanceFloorY) / (resonanceCeilingY - resonanceFloorY));
+    }
+
+    /** Where the sweep has a note's cutoff, `level` (0..1) of the way up its
+        envelope: ENV AMOUNT semitones at the top, within what the filter
+        plays. */
+    static float sweptHz (float cutoffHz, float envAmount, float level) noexcept
+    {
+        return std::clamp (cutoffHz * std::exp2 (envAmount * level / 12.0f), Filter::minHz, Filter::maxHz);
+    }
 
     // ---- EFFECTS -----------------------------------------------------------
 

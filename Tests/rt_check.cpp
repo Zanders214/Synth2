@@ -7,13 +7,15 @@
 // oscillators on, with notes stolen, the sustain pedal, the on-screen
 // keyboard's notes, and the settings moving underneath (each oscillator's
 // VOICES, both WAVEs, OSC 2 switching on and off, the tuning, every stage of
-// the envelopes and which oscillator each shapes) while they sound.
+// the envelopes and which oscillator each shapes, the filters, their types,
+// cutoffs and sweeps, and the cable chains through them) while they sound.
 
 #include <juce_audio_utils/juce_audio_utils.h>
 #include "PluginProcessor.h"
 #include "Bench.h"
 #include "ParamIDs.h"
 #include "Rack.h"
+#include <cmath>
 #include <cstdio>
 
 // The whole audio callback, not just the engine, runs as a real-time context:
@@ -90,6 +92,12 @@ int main()
             set (ParamID::osc2Wave,  (float) ((b / 12 + 1) % 4));
             set (ParamID::osc2Pitch, (float) ((b / 12) % 25 - 12));
             set (ParamID::osc1Fine,  (float) ((b / 12) % 11) * 5.0f - 25.0f);
+            set (ParamID::flt1Type,      (float) ((b / 12) % Filter::numTypes));
+            set (ParamID::flt1Cutoff,    40.0f * std::pow (2.0f, (float) ((b / 12) % 10)));
+            set (ParamID::flt1Resonance, 0.25f * (float) ((b / 12) % 5));
+            set (ParamID::flt1EnvAmount, 12.0f * (float) ((b / 12) % 9) - 48.0f);
+            set (ParamID::flt1Decay,     0.02f + 0.1f * (float) ((b / 12) % 4));
+            set (ParamID::flt2Type,      (float) ((b / 12 + 3) % Filter::numTypes));
         }
         if (b % 40 == 20)
             set (ParamID::osc2On, 0.0f);
@@ -107,10 +115,15 @@ int main()
             set (ParamID::env4On,     (float) ((b / 72 + 1) % 2));
             set (ParamID::osc1Active, (float) ((b / 24) % 3 != 1));   // switched off and on mid-note
             set (ParamID::env1Active, (float) ((b / 24) % 4 != 2));
+            set (ParamID::flt1On,     (float) ((b / 24 + 1) % 3 != 0));   // filters come and go mid-note
+            set (ParamID::flt2On,     (float) ((b / 48) % 2));
+            set (ParamID::flt1Active, (float) ((b / 24) % 5 != 3));
             set (ParamID::signalFlow, (float) ((b / 24) % 3));
             if ((b / 24) % 2 == 0)
             {
-                bench.connect ({ Bench::Kind::oscillator, 1 }, Bench::ModuleId { Bench::Kind::envelope, 1 });
+                // OSC 2 through FILTER 2 (when it's there) into ENV 2, out.
+                bench.connect ({ Bench::Kind::oscillator, 1 }, Bench::ModuleId { Bench::Kind::filter, 1 });
+                bench.connect ({ Bench::Kind::filter, 1 }, Bench::ModuleId { Bench::Kind::envelope, 1 });
                 bench.connect ({ Bench::Kind::envelope, 1 });
             }
             else
@@ -152,7 +165,7 @@ int main()
     }
 
     std::printf ("PASS: %d blocks of 16-voice unison chords on up to four oscillators (stolen notes,\n"
-                 "      sustain pedal, on-screen keys, settings, modules, envelopes, routing and effects changing mid-note),\n"
+                 "      sustain pedal, on-screen keys, settings, modules, envelopes, filters, routing and effects changing mid-note),\n"
                  "      no RT-safety violations\n", blocks);
     return 0;
 }

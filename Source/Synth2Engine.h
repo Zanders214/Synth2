@@ -57,6 +57,7 @@ public:
     static constexpr float maxFineCents = 50.0f;   // and its FINE tune
     static constexpr int   numOscillators = SynthVoice::numOscillators;
     static constexpr int   numEnvelopes   = 4;
+    static constexpr int   numFilters     = 4;
 
     // An oscillator no envelope shapes still opens and closes this fast, so
     // it never clicks.
@@ -65,8 +66,8 @@ public:
 
     /** One oscillator: whether it is on the bench, and routed to the output,
         its shape, its tuning against the note, its level, its unison stack,
-        which envelope shapes it (-1 for none) and whether its power switch
-        is on. */
+        which envelope shapes it (-1 for none), whether its power switch is
+        on, and which filter it goes through (-1 for none). */
     struct OscillatorSettings
     {
         bool     on          = false;
@@ -80,6 +81,7 @@ public:
         float    width       = 0.5f;
         int      envelope    = -1;
         bool     active      = true;
+        int      filter      = -1;
     };
 
     /** One envelope (see Envelope.h): how long a note waits, takes to fade
@@ -100,6 +102,21 @@ public:
         float releaseCurve   = 0.0f;
     };
 
+    /** One filter (see Filter.h): its type, its cutoff before the sweep,
+        its RESONANCE (0..1), how far its sweep envelope moves the cutoff at
+        the top (ENV AMOUNT, in semitones, either way), and that envelope.
+        With the defaults it is a plucky low-pass. */
+    struct FilterSettings
+    {
+        Filter::Type     type       = Filter::Type::low24;
+        float            cutoffHz   = 1200.0f;
+        float            resonance  = 0.2f;
+        float            envAmount  = 24.0f;
+        EnvelopeSettings sweep      { 0.0f, 0.005f, 0.0f, 0.5f, 0.0f, 0.3f };
+    };
+
+    static constexpr float maxEnvAmount = 48.0f;
+
     struct Settings
     {
         // OSC 1 plays from the start, under ENV 1; the others each have their
@@ -112,6 +129,7 @@ public:
             OscillatorSettings { false, true, Waveform::triangle, 12, 0.0f, 0.4f, 1, 15.0f, 0.5f, 3 } };
 
         std::array<EnvelopeSettings, numEnvelopes> envelopes {};
+        std::array<FilterSettings, numFilters> filters {};
         Effects::Settings effects {};
         float outputDb = 0.0f;
     };
@@ -133,7 +151,12 @@ public:
             smoothed.level[k] .setCurrentAndTargetValue (levelTarget (oscillator));
             smoothed.detune[k].setCurrentAndTargetValue (oscillator.detuneCents);
             smoothed.width[k] .setCurrentAndTargetValue (oscillator.width);
-            appliedEnvelopes[k].attack = -1.0f;   // hand every voice the envelope afresh
+            smoothed.cutoff[k].reset (sampleRate, glide);
+            smoothed.resonance[k].reset (sampleRate, glide);
+            smoothed.cutoff[k].setCurrentAndTargetValue (filterOf (oscillator).cutoffHz);
+            smoothed.resonance[k].setCurrentAndTargetValue (filterOf (oscillator).resonance);
+            appliedEnvelopes[k].attack = -1.0f;   // hand every voice the envelopes afresh
+            appliedSweeps[k].attack    = -1.0f;
         }
         applyEnvelopes();
         effects.set (settings.effects);
@@ -154,10 +177,22 @@ public:
             oscillator.detuneCents = juce::jlimit (0.0f, Unison::maxDetuneCents, oscillator.detuneCents);
             oscillator.width       = juce::jlimit (0.0f, 1.0f, oscillator.width);
             oscillator.envelope    = juce::jlimit (-1, numEnvelopes - 1, oscillator.envelope);
+            oscillator.filter      = juce::jlimit (-1, numFilters - 1, oscillator.filter);
             smoothed.fine[k]  .setTargetValue (oscillator.fineCents);
             smoothed.level[k] .setTargetValue (levelTarget (oscillator));
             smoothed.detune[k].setTargetValue (oscillator.detuneCents);
             smoothed.width[k] .setTargetValue (oscillator.width);
+            if (oscillator.filter >= 0)
+            {
+                smoothed.cutoff[k].setTargetValue (filterOf (oscillator).cutoffHz);
+                smoothed.resonance[k].setTargetValue (filterOf (oscillator).resonance);
+            }
+        }
+        for (auto& filter : settings.filters)
+        {
+            filter.cutoffHz  = juce::jlimit (Filter::minHz, Filter::maxHz, filter.cutoffHz);
+            filter.resonance = juce::jlimit (0.0f, 1.0f, filter.resonance);
+            filter.envAmount = juce::jlimit (-maxEnvAmount, maxEnvAmount, filter.envAmount);
         }
         smoothed.gain.setTargetValue (juce::Decibels::decibelsToGain (settings.outputDb, -100.0f));
         applyEnvelopes();
@@ -290,6 +325,15 @@ public:
         return activity;
     }
 
+    /** Where every voice is in the envelope sweeping oscillator `osc`'s filter. */
+    std::array<NoteActivity, maxNotes> getSweepActivity (int osc) const noexcept
+    {
+        std::array<NoteActivity, maxNotes> activity {};
+        for (size_t i = 0; i < voices.size(); ++i)
+            activity[i] = voices[i].getSweepActivity (osc);
+        return activity;
+    }
+
     /** The keys held down right now, one bit per MIDI note (notes 0..63 in the
         first word, 64..127 in the second). */
     std::array<std::uint64_t, 2> getHeldNotes() const noexcept
@@ -354,8 +398,11 @@ private:
             // it), which is fine-grained enough for pitch and pan; the output
             // gain moves every sample.
             for (size_t k = 0; k < (size_t) numOscillators; ++k)
-                for (auto* value : { &smoothed.fine[k], &smoothed.level[k], &smoothed.detune[k], &smoothed.width[k] })
+            {
+                for (auto* value : { &smoothed.fine[k], &smoothed.level[k], &smoothed.detune[k], &smoothed.width[k], &smoothed.resonance[k] })
                     value->skip (length);
+                smoothed.cutoff[k].skip (length);
+            }
             const auto chunkSettings = currentVoiceSettings();
 
             std::array<float, SynthVoice::maxChunk> mixL {};
@@ -397,6 +444,13 @@ private:
             oscillator.voices      = settings.oscillators[k].voices;
             oscillator.detuneCents = smoothed.detune[k].getCurrentValue();
             oscillator.width       = smoothed.width[k].getCurrentValue();
+
+            const int filter = settings.oscillators[k].filter;
+            oscillator.filtered  = filter >= 0;
+            oscillator.filter    = settings.filters[(size_t) juce::jmax (0, filter)].type;
+            oscillator.cutoffHz  = smoothed.cutoff[k].getCurrentValue();
+            oscillator.resonance = smoothed.resonance[k].getCurrentValue();
+            oscillator.envAmount = settings.filters[(size_t) juce::jmax (0, filter)].envAmount;
         }
         return voice;
     }
@@ -429,8 +483,31 @@ private:
         return oldestReleasing != nullptr ? *oldestReleasing : *oldest;
     }
 
-    // Hands each oscillator's envelope to the voices: the one that shapes
-    // it, or the short gate when none does. Only what changed is handed on.
+    static Envelope::Parameters stagesOf (const EnvelopeSettings& shape) noexcept
+    {
+        Envelope::Parameters envelope;
+        envelope.delay   = juce::jmax (0.0f, shape.delaySeconds);
+        envelope.attack  = juce::jmax (0.001f, shape.attackSeconds);
+        envelope.hold    = juce::jmax (0.0f, shape.holdSeconds);
+        envelope.decay   = juce::jmax (0.001f, shape.decaySeconds);
+        envelope.sustain = juce::jlimit (0.0f, 1.0f, shape.sustainLevel);
+        envelope.release = juce::jmax (0.005f, shape.releaseSeconds);
+        envelope.attackCurve  = shape.attackCurve;
+        envelope.decayCurve   = shape.decayCurve;
+        envelope.releaseCurve = shape.releaseCurve;
+        return envelope;
+    }
+
+    // The filter on `oscillator`, or the first one's settings when it has
+    // none (they go unused, but keep its smoothing somewhere sensible).
+    const FilterSettings& filterOf (const OscillatorSettings& oscillator) const noexcept
+    {
+        return settings.filters[(size_t) juce::jlimit (0, numFilters - 1, oscillator.filter)];
+    }
+
+    // Hands each oscillator's envelopes to the voices: the one that shapes
+    // it (or the short gate when none does), and the one sweeping its
+    // filter. Only what changed is handed on.
     void applyEnvelopes() noexcept
     {
         for (size_t k = 0; k < (size_t) numOscillators; ++k)
@@ -441,26 +518,22 @@ private:
             envelope.decay   = 0.0f;
             envelope.release = gateReleaseSeconds;
             if (shapedBy >= 0)
+                envelope = stagesOf (settings.envelopes[(size_t) shapedBy]);
+
+            if (auto& applied = appliedEnvelopes[k]; ! sameStages (envelope, applied))
             {
-                const auto& shape = settings.envelopes[(size_t) shapedBy];
-                envelope.delay   = juce::jmax (0.0f, shape.delaySeconds);
-                envelope.attack  = juce::jmax (0.001f, shape.attackSeconds);
-                envelope.hold    = juce::jmax (0.0f, shape.holdSeconds);
-                envelope.decay   = juce::jmax (0.001f, shape.decaySeconds);
-                envelope.sustain = juce::jlimit (0.0f, 1.0f, shape.sustainLevel);
-                envelope.release = juce::jmax (0.005f, shape.releaseSeconds);
-                envelope.attackCurve  = shape.attackCurve;
-                envelope.decayCurve   = shape.decayCurve;
-                envelope.releaseCurve = shape.releaseCurve;
+                applied = envelope;
+                for (auto& voice : voices)
+                    voice.setEnvelope ((int) k, envelope);
             }
 
-            auto& applied = appliedEnvelopes[k];
-            if (sameStages (envelope, applied))
-                continue;
-
-            applied = envelope;
-            for (auto& voice : voices)
-                voice.setEnvelope ((int) k, envelope);
+            const auto sweep = stagesOf (filterOf (settings.oscillators[k]).sweep);
+            if (auto& applied = appliedSweeps[k]; ! sameStages (sweep, applied))
+            {
+                applied = sweep;
+                for (auto& voice : voices)
+                    voice.setSweep ((int) k, sweep);
+            }
         }
     }
 
@@ -475,10 +548,13 @@ private:
         std::array<juce::SmoothedValue<float>, numOscillators> level;
         std::array<juce::SmoothedValue<float>, numOscillators> detune;
         std::array<juce::SmoothedValue<float>, numOscillators> width;
+        std::array<juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative>, numOscillators> cutoff;
+        std::array<juce::SmoothedValue<float>, numOscillators> resonance;
     };
     Smoothed smoothed;
 
     std::array<Envelope::Parameters, numOscillators> appliedEnvelopes {};
+    std::array<Envelope::Parameters, numOscillators> appliedSweeps {};
 
     static bool sameStages (const Envelope::Parameters& a, const Envelope::Parameters& b) noexcept
     {

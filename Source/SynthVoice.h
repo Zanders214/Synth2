@@ -6,6 +6,7 @@
 #include <cstdint>
 
 #include "Envelope.h"
+#include "Filter.h"
 #include "Oscillator.h"
 #include "Unison.h"
 
@@ -36,6 +37,15 @@ struct VoiceSettings
         int      voices      = 1;      // unison copies, 1..Unison::maxVoices
         float    detuneCents = 0.0f;   // the outer copies' offset, 0..Unison::maxDetuneCents
         float    width       = 0.0f;   // stereo spread, 0..1
+
+        // Its filter, if one is on it: the type, the cutoff before the
+        // sweep, RESONANCE, and how far the sweep moves the cutoff (in
+        // semitones, at the top of the sweep envelope).
+        bool         filtered  = false;
+        Filter::Type filter    = Filter::Type::low24;
+        float        cutoffHz  = 1000.0f;
+        float        resonance = 0.0f;
+        float        envAmount = 0.0f;
     };
     std::array<Oscillator, numOscillators> oscillators {};
 };
@@ -46,7 +56,9 @@ struct VoiceSettings
     One note, played by up to four oscillators. Each oscillator is a part of
     its own: a stack of up to 16 unison copies (see Unison.h) with its own
     detune and spread, under its own envelope (see Envelope.h), so each
-    oscillator can be shaped differently.
+    oscillator can be shaped differently, and, if a filter is on it, through
+    its own filter (see Filter.h), whose cutoff its own sweep envelope moves.
+    A filter coming or going fades in or out over 5 ms, so it never clicks.
 
     Changing VOICES while a note sounds fades copies in and out over 5 ms
     rather than switching them, and the stack's level and the copies' pans
@@ -69,13 +81,20 @@ public:
     {
         sampleRate = newSampleRate;
         for (auto& part : parts)
+        {
             part.envelope.setSampleRate (newSampleRate);
+            part.sweep.setSampleRate (newSampleRate);
+            part.filter.setSampleRate (newSampleRate);
+        }
         fadeStep = (float) (1.0 / (fadeSeconds * newSampleRate));
         kill();
     }
 
     /** Sets oscillator `osc`'s envelope. */
     void setEnvelope (int osc, const Envelope::Parameters& parameters) { parts[(size_t) osc].envelope.setParameters (parameters); }
+
+    /** Sets the envelope that sweeps oscillator `osc`'s filter. */
+    void setSweep (int osc, const Envelope::Parameters& parameters) { parts[(size_t) osc].sweep.setParameters (parameters); }
 
     /** Plays `midiNote` on MIDI `midiChannel` (1..16). A voice taken over while
         still sounding glides its envelopes on from where they were instead of
@@ -103,6 +122,9 @@ public:
                 part.stackLevel = Unison::stackGain ((float) count);
                 part.level      = osc.level;
                 part.layout     = {};
+                part.filter.reset();
+                part.filterMix  = osc.filtered ? 1.0f : 0.0f;
+                part.lastFilter = osc;
             }
         }
 
@@ -114,7 +136,10 @@ public:
         sustained  = false;
         noteHz     = 440.0 * std::exp2 ((midiNote - 69) / 12.0);
         for (auto& part : parts)
+        {
             part.envelope.noteOn();
+            part.sweep.noteOn();
+        }
     }
 
     /** The key went up (and the sustain pedal, if any, is up too). */
@@ -123,7 +148,10 @@ public:
         held      = false;
         sustained = false;
         for (auto& part : parts)
+        {
             part.envelope.noteOff();
+            part.sweep.noteOff();
+        }
     }
 
     /** The key went up while the sustain pedal is down: keep sounding until it lifts. */
@@ -139,6 +167,7 @@ public:
         for (auto& part : parts)
         {
             part.envelope.reset();
+            part.sweep.reset();
             part.envelopeLevel = 0.0f;
         }
         note      = -1;
@@ -168,11 +197,15 @@ public:
         if (! isActive())
             return activity;
 
-        const auto& envelope = parts[(size_t) osc].envelope;
-        activity.stage    = envelope.getStage();
-        activity.level    = envelope.getLevel();
-        activity.progress = envelope.getProgress();
-        return activity;
+        return activityOf (parts[(size_t) osc].envelope);
+    }
+
+    /** Where this note is in the envelope sweeping oscillator `osc`'s filter. */
+    NoteActivity getSweepActivity (int osc) const noexcept
+    {
+        if (! isActive())
+            return {};
+        return activityOf (parts[(size_t) osc].sweep);
     }
 
     /** Adds `numSamples` (at most maxChunk) of this note into left / right. */
@@ -197,6 +230,7 @@ public:
             else
             {
                 part.envelope.advance (numSamples);
+                part.sweep.advance (numSamples);
                 part.envelopeLevel = part.envelope.getLevel();
             }
             part.level = osc.level;
@@ -229,16 +263,30 @@ private:
         float width       = 0.0f;
     };
 
-    // One oscillator's share of the note: its unison stack and its envelope.
+    // One oscillator's share of the note: its unison stack, its envelope,
+    // and its filter with the envelope that sweeps it.
     struct Part
     {
         std::array<Copy, Unison::maxVoices> copies {};
         Envelope   envelope;
+        Envelope   sweep;
+        Filter     filter;
         Layout     layout;
         float      stackLevel    = 1.0f;
         float      level         = 0.0f;   // the level the last chunk ended on
         float      envelopeLevel = 0.0f;
+        float      filterMix     = 0.0f;   // how far the filter is in, 0..1
+        VoiceSettings::Oscillator lastFilter;   // the filter's settings, kept while it fades out
     };
+
+    static NoteActivity activityOf (const Envelope& envelope) noexcept
+    {
+        NoteActivity activity;
+        activity.stage    = envelope.getStage();
+        activity.level    = envelope.getLevel();
+        activity.progress = envelope.getProgress();
+        return activity;
+    }
 
     // Adds one oscillator's chunk into left / right: its sounding copies, one
     // row each, already under the part's envelope, then each faded and panned.
@@ -269,9 +317,55 @@ private:
         }
         BlepOscillator::renderAll (bank.data(), outs.data(), numPlaying, osc.wave, levels.data(), numSamples, false);
 
+        // With no filter on it (or fading), the copies go straight into the
+        // note; otherwise into a chunk of their own, to be filtered first.
+        if (! osc.filtered && juce::exactlyEqual (part.filterMix, 0.0f))
+        {
+            part.sweep.advance (numSamples);
+            for (size_t k = 0; k < (size_t) numPlaying; ++k)
+                mix (part.copies[playing[k]], (int) playing[k] < count, count, (int) playing[k], osc.width, relayout,
+                     rows[k].data(), left, right, numSamples, ramp);
+            return;
+        }
+
+        std::array<float, maxChunk> dryL {};
+        std::array<float, maxChunk> dryR {};
         for (size_t k = 0; k < (size_t) numPlaying; ++k)
             mix (part.copies[playing[k]], (int) playing[k] < count, count, (int) playing[k], osc.width, relayout,
-                 rows[k].data(), left, right, numSamples, ramp);
+                 rows[k].data(), dryL.data(), dryR.data(), numSamples, ramp);
+        filterInto (part, osc, dryL, dryR, left, right, numSamples);
+    }
+
+    // Filters a part's chunk and adds it into left / right. The cutoff
+    // follows the sweep envelope (in semitones, ENV AMOUNT at its top) to
+    // where it is at the chunk's end, and the filter fades in or out as it
+    // comes or goes, the unfiltered sound filling in for it.
+    void filterInto (Part& part, const VoiceSettings::Oscillator& osc, const std::array<float, maxChunk>& dryL,
+                     const std::array<float, maxChunk>& dryR, float* left, float* right, int numSamples) const noexcept
+    {
+        if (osc.filtered)
+            part.lastFilter = osc;
+        const auto& shape = part.lastFilter;
+        part.sweep.advance (numSamples);
+        const float sweepLevel = part.sweep.getLevel();
+        const float cutoff     = shape.cutoffHz * std::exp2 (shape.envAmount * sweepLevel / 12.0f);
+
+        std::array<float, maxChunk> wetL = dryL;
+        std::array<float, maxChunk> wetR = dryR;
+        part.filter.process (wetL.data(), wetR.data(), numSamples, shape.filter, cutoff, shape.resonance);
+
+        const float target = osc.filtered ? 1.0f : 0.0f;
+        float mixAmount = part.filterMix;
+        for (int n = 0; n < numSamples; ++n)
+        {
+            const auto i = (size_t) n;
+            left[n]  += dryL[i] + (wetL[i] - dryL[i]) * mixAmount;
+            right[n] += dryR[i] + (wetR[i] - dryR[i]) * mixAmount;
+            mixAmount = target > mixAmount ? juce::jmin (target, mixAmount + fadeStep) : juce::jmax (target, mixAmount - fadeStep);
+        }
+        part.filterMix = mixAmount;
+        if (juce::exactlyEqual (mixAmount, 0.0f))
+            part.filter.reset();
     }
 
     // Each sample's level for a part's copies: the oscillator's LEVEL (gliding
