@@ -89,8 +89,8 @@ namespace Rack
     inline constexpr float cardWidth   = 292.0f;
     inline constexpr float cardHeight  = 448.0f;
     inline constexpr float chainHeight = 40.0f;                                // the line spelling out the chain, over the area
-    inline constexpr float areaWidth   = Bench::areaWidth;
-    inline constexpr float areaHeight  = Bench::areaHeight - chainHeight;
+    inline constexpr float areaWidth   = Bench::viewWidth;                     // the bench's box (the effects don't zoom)
+    inline constexpr float areaHeight  = Bench::viewHeight - chainHeight;
     inline constexpr float gap         = 29.0f;                                // room for an arrow between two cards
 
     inline juce::Rectangle<float> boundsAt (juce::Point<float> topLeft) noexcept

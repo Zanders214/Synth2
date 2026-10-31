@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -22,21 +23,24 @@
     on it. Where each module sits, and the cables, live in a BENCH child of the
     plugin's state tree, saved and restored with the session:
 
-        BENCH { version: 2, envelopeView: "both", oscillatorView: "full" }
+        BENCH { version: 2, envelopeView: "both", oscillatorView: "full",
+                zoom: 1.0, panX: 0, panY: 0 }
           MODULE { id: "osc:0" .. "osc:3" | "env:0" .. "env:3", x, y }
           CABLE  { from: "osc:2", to: "env:1" | "out" }
           CABLE  { from: "env:1", to: "out" }
 
-    Positions are in design pixels from the bench area's top left, so they
-    scale with the window. A module keeps its last position while it is off
-    the bench, and comes back there.
+    Positions are in design pixels from the top left of the bench's canvas,
+    so they scale with the window. The canvas (areaWidth x areaHeight) is
+    bigger than the box it is seen through (viewWidth x viewHeight): the
+    bench zooms and pans over it (see Viewport). A module keeps its last
+    position while it is off the bench, and comes back there.
 
     Each envelope shapes one oscillator, picked by how sound flows (see
     envelopeAssignment): by number, by the layout, or along the cables.
 
-    How the modules show themselves (see View), from the gear menu, is kept
-    on the BENCH too, so a set opens looking as it was left. Presets leave it
-    alone.
+    How the modules show themselves (see View), from the gear menu, and how
+    far the bench is zoomed and panned (see Viewport) are kept on the BENCH
+    too, so a set opens looking as it was left. Presets leave them alone.
 */
 namespace Bench
 {
@@ -101,8 +105,10 @@ namespace Bench
     inline constexpr float moduleWidth      = 236.0f;
     inline constexpr float oscillatorHeight = 336.0f;   // its wave well over two rows of dials
     inline constexpr float envelopeHeight   = 336.0f;   // its AMP well over two rows of dials, like an oscillator
-    inline constexpr float areaWidth        = 992.0f;   // four modules and three 16 px gaps
-    inline constexpr float areaHeight       = 688.0f;   // two rows of oscillators
+    inline constexpr float viewWidth        = 992.0f;   // the box on screen: four modules and three 16 px gaps
+    inline constexpr float viewHeight       = 688.0f;   // and two rows of oscillators
+    inline constexpr float areaWidth        = 1496.0f;  // the canvas: six modules and five gaps,
+    inline constexpr float areaHeight       = 1040.0f;  // and three rows, in the box's proportions
     inline constexpr float gap              = 16.0f;
     inline constexpr float rowStep          = 120.0f;   // how much lower a module starts a new row
 
@@ -175,12 +181,13 @@ namespace Bench
     }
 
     /** Where a module of `kind` dropped at `wanted` lands: there (inside the
-        bench) if it covers none of `others`, else the nearest spot that is
-        free. If the bench has no free spot big enough, it stays where it was
-        dropped. */
-    inline juce::Point<float> resolveOverlap (juce::Point<float> wanted, Kind kind, const std::vector<juce::Rectangle<float>>& others)
+        canvas, or `area` of it from its top left) if it covers none of
+        `others`, else the nearest spot that is free. If there is no free spot
+        big enough, it stays where it was dropped. */
+    inline juce::Point<float> resolveOverlap (juce::Point<float> wanted, Kind kind, const std::vector<juce::Rectangle<float>>& others,
+                                              juce::Point<float> area = { areaWidth, areaHeight })
     {
-        return resolveOverlapIn (wanted, { moduleWidth, heightOf (kind) }, { areaWidth, areaHeight }, others, gap);
+        return resolveOverlapIn (wanted, { moduleWidth, heightOf (kind) }, area, others, gap);
     }
 
     /** The order modules at `positions` read in: row by row, top to bottom
@@ -216,6 +223,62 @@ namespace Bench
     {
         const float x = (float) id.slot * (moduleWidth + gap);
         return { x, id.kind == Kind::envelope ? oscillatorHeight + gap : 0.0f };
+    }
+
+    // ---- How far the bench is zoomed and panned ----------------------------------------
+
+    /** The zoom that shows the whole canvas in the box, and the most it zooms in. */
+    inline constexpr float fitZoom = viewWidth / areaWidth < viewHeight / areaHeight ? viewWidth / areaWidth : viewHeight / areaHeight;
+    inline constexpr float maxZoom = 1.5f;
+
+    /** How the box looks onto the canvas: `zoom` times design size (1 is as
+        the bench was before it zoomed), and `pan`, the canvas point (design
+        pixels) at the box's top left. */
+    struct Viewport
+    {
+        float              zoom = 1.0f;
+        juce::Point<float> pan;
+
+        /** How much of the canvas (design pixels) the box shows. */
+        juce::Point<float> visibleSize() const noexcept { return { viewWidth / zoom, viewHeight / zoom }; }
+
+        /** That part of the canvas. */
+        juce::Rectangle<float> visibleArea() const noexcept { return { pan.x, pan.y, viewWidth / zoom, viewHeight / zoom }; }
+
+        friend bool operator== (const Viewport& a, const Viewport& b) noexcept
+        {
+            return juce::exactlyEqual (a.zoom, b.zoom) && a.pan == b.pan;
+        }
+        friend bool operator!= (const Viewport& a, const Viewport& b) noexcept { return ! (a == b); }
+    };
+
+    /** `viewport` kept to what the bench can show: the zoom between fitZoom
+        and maxZoom, and the box on the canvas (centred on it along a side
+        the box shows all of). */
+    inline Viewport limitViewport (Viewport viewport) noexcept
+    {
+        viewport.zoom = juce::jlimit (fitZoom, maxZoom, std::isfinite (viewport.zoom) ? viewport.zoom : 1.0f);
+        const auto seen  = viewport.visibleSize();
+        const auto along = [] (float pan, float shown, float extent)
+        {
+            if (! std::isfinite (pan))
+                pan = 0.0f;
+            return shown >= extent ? 0.5f * (extent - shown) : juce::jlimit (0.0f, extent - shown, pan);
+        };
+        viewport.pan = { along (viewport.pan.x, seen.x, areaWidth), along (viewport.pan.y, seen.y, areaHeight) };
+        return viewport;
+    }
+
+    /** The viewport that frames `content` (design pixels on the canvas) with
+        a margin round it, no closer than 1 (or the whole canvas, for none). */
+    inline Viewport framing (juce::Rectangle<float> content) noexcept
+    {
+        if (content.isEmpty())
+            return limitViewport ({ fitZoom, {} });
+        const auto framed = content.expanded (gap * 2.0f);
+        const float zoom  = juce::jmin (1.0f, viewWidth / framed.getWidth(), viewHeight / framed.getHeight());
+        const Viewport sized { zoom, {} };
+        return limitViewport ({ zoom, framed.getCentre() - sized.visibleSize() * 0.5f });
     }
 
     // ---- How the modules show themselves -----------------------------------------------
@@ -291,6 +354,9 @@ namespace Bench
     inline const juce::Identifier versionProperty { "version" };
     inline const juce::Identifier envelopeViewProperty   { "envelopeView" };
     inline const juce::Identifier oscillatorViewProperty { "oscillatorView" };
+    inline const juce::Identifier zoomProperty    { "zoom" };
+    inline const juce::Identifier panXProperty    { "panX" };
+    inline const juce::Identifier panYProperty    { "panY" };
     inline const juce::String     outputJack      { "out" };
     inline constexpr int          currentVersion = 2;
 
@@ -393,7 +459,8 @@ namespace Bench
 
         /** Sets the modules on the bench out afresh, as a preset loads: the
             oscillators along the top row, each envelope under its
-            oscillator, and every cable unplugged. */
+            oscillator, and every cable unplugged. If the bench is zoomed or
+            panned so they don't all show, it frames them. */
         void layOut()
         {
             ensureBench();
@@ -401,6 +468,20 @@ namespace Bench
                 setPosition (id, defaultPosition (id));
             for (const auto& [from, to] : cables())
                 disconnect (from);
+
+            const auto shown   = viewport();
+            const auto modules = extent();
+            if (! modules.isEmpty() && ! shown.visibleArea().contains (modules))
+                setViewport (framing (modules));
+        }
+
+        /** The smallest box round every module on the bench (empty for none). */
+        juce::Rectangle<float> extent() const
+        {
+            juce::Rectangle<float> box;
+            for (const auto& id : present())
+                box = box.isEmpty() ? boundsOf (id) : box.getUnion (boundsOf (id));
+            return box;
         }
 
         /** The modules on the bench in reading order. */
@@ -590,6 +671,24 @@ namespace Bench
             tree.setProperty (oscillatorViewProperty, oscillatorViewNames[(size_t) newView.oscillators], nullptr);
         }
 
+        /** How far the bench is zoomed and panned (1 at the top left when none was saved). */
+        Viewport viewport() const
+        {
+            const auto tree = bench();
+            return limitViewport ({ (float) tree.getProperty (zoomProperty, 1.0),
+                                    { (float) tree.getProperty (panXProperty, 0.0), (float) tree.getProperty (panYProperty, 0.0) } });
+        }
+
+        void setViewport (const Viewport& newViewport)
+        {
+            ensureBench();
+            const auto limited = limitViewport (newViewport);
+            auto tree = bench();
+            tree.setProperty (zoomProperty, limited.zoom, nullptr);
+            tree.setProperty (panXProperty, limited.pan.x, nullptr);
+            tree.setProperty (panYProperty, limited.pan.y, nullptr);
+        }
+
     private:
         juce::ValueTree bench() const { return state.state.getChildWithName (benchType); }
 
@@ -699,6 +798,10 @@ namespace Bench
         }
 
     private:
+        // Older sets are set out on the bench as it was then, as big as its
+        // box, so they open as they did, every card in sight at 100%.
+        static constexpr juce::Point<float> oldArea { viewWidth, viewHeight };
+
         void setValue (const char* id, float value)   // NOSONAR(cpp:S5817): it changes a parameter
         {
             auto* parameter = state.getParameter (id);
@@ -746,7 +849,7 @@ namespace Bench
                                                       std::pair (to.hold, from.hold), std::pair (to.decay, from.decay),
                                                       std::pair (to.sustain, from.sustain), std::pair (to.release, from.release) })
                     setValue (target, valueOf (source));
-                model.setPosition (env, resolveOverlap (model.positionOf (env), Kind::envelope, model.othersThan (env)));
+                model.setPosition (env, resolveOverlap (model.positionOf (env), Kind::envelope, model.othersThan (env), oldArea));
                 model.setPresent (env, true);
             }
         }
@@ -769,7 +872,7 @@ namespace Bench
             std::vector<juce::Rectangle<float>> placed;
             for (const auto& id : model.readingOrder())
             {
-                const auto landed = resolveOverlap (model.positionOf (id), id.kind, placed);
+                const auto landed = resolveOverlap (model.positionOf (id), id.kind, placed, oldArea);
                 model.setPosition (id, landed);
                 placed.push_back (boundsAt (landed, id.kind));
             }
