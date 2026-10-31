@@ -46,6 +46,7 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
       keyboard (p.getKeyboardState())
 {
     addAndMakeVisible (benchView);
+    addAndMakeVisible (benchView.getZoomPill());
     addChildComponent (effectsView);
     addAndMakeVisible (keyboard);
     setWantsKeyboardFocus (playsTypedKeys());
@@ -63,6 +64,8 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
     {
         trays.openAdd (benchAt, viewAt + benchView.getPosition());
     });
+    // The cables follow the cards as the bench zooms and pans.
+    benchView.onViewportChange ([this] { cables.repaint(); });
     // And on the EFFECTS tab, offers the effects not yet in the chain.
     effectsView.onEmptyClick ([this] (juce::Point<float> rackAt, juce::Point<int> viewAt)
     {
@@ -288,6 +291,7 @@ void Synth2AudioProcessorEditor::showTab (Tab which)
         return;
     tab = which;
     benchView.setVisible (tab == Tab::bench);
+    benchView.getZoomPill().setVisible (tab == Tab::bench);
     effectsView.setVisible (tab == Tab::effects);
     cables.repaint();
     repaint();
@@ -452,11 +456,13 @@ void Synth2AudioProcessorEditor::CableLayer::dropCable (juce::Point<float> at)
         owner.model.connect (from);
         return;
     }
+    const auto box = owner.benchView.getBounds().toFloat();
     for (int e = 0; e < Bench::numEnvelopes; ++e)
     {
         const auto& env = owner.benchView.getEnvelope (e);
-        if (env.isVisible() && env.getHeader().isJackShown (BenchModule::Jack::in)
-            && owner.getLocalArea (&env, env.jackBounds (BenchModule::Jack::in)).expanded (reach).contains (at))
+        if (const auto jack = owner.getLocalArea (&env, env.jackBounds (BenchModule::Jack::in));
+            env.isVisible() && env.getHeader().isJackShown (BenchModule::Jack::in)
+            && box.contains (jack.getCentre()) && jack.expanded (reach).contains (at))
         {
             owner.model.connect (from, env.getId());
             return;
@@ -497,24 +503,46 @@ void Synth2AudioProcessorEditor::CableLayer::paintCable (juce::Graphics& g, juce
     g.fillEllipse (juce::Rectangle<float> (7.0f * s, 7.0f * s).withCentre (to));
 }
 
+// Where a cable may be drawn: over the bench's box, and, while its ends on
+// the bench show (`endsShow`), down over the bottom strip too, where it
+// reaches the output's IN or hangs below the bench. So a cable to a card
+// scrolled out of the box leaves at the box's edge.
+juce::RectangleList<int> Synth2AudioProcessorEditor::CableLayer::cableArea (bool endsShow) const
+{
+    const auto box = owner.benchView.getBounds();
+    juce::RectangleList<int> area (box);
+    if (endsShow)
+        area.add (getLocalBounds().withTop (box.getBottom()));
+    return area;
+}
+
 void Synth2AudioProcessorEditor::CableLayer::paint (juce::Graphics& g)
 {
     if (owner.tab != Tab::bench || owner.signalFlow() != Synth2AudioProcessor::SignalFlow::cables)
         return;
 
     // Each cable in the colour of the module it comes from.
+    const auto box    = owner.benchView.getBounds().toFloat();
     const auto output = outputJackBounds().getCentre();
     for (const auto& [from, to] : owner.model.cables())
     {
         const auto& source = owner.benchView.getModule (from);
         if (! source.isVisible() || (to.has_value() && ! owner.benchView.getModule (*to).isVisible()))
             continue;
-        const auto end = to.has_value() ? jackCentre (*to, BenchModule::Jack::in) : output;
-        paintCable (g, jackCentre (from), end, source.getHeader().getJackColour());
+        const auto start = jackCentre (from);
+        const auto end   = to.has_value() ? jackCentre (*to, BenchModule::Jack::in) : output;
+        const juce::Graphics::ScopedSaveState saved (g);
+        g.reduceClipRegion (cableArea (box.contains (start) && (! to.has_value() || box.contains (end))));
+        paintCable (g, start, end, source.getHeader().getJackColour());
     }
 
     if (patching.from.has_value())
-        paintCable (g, jackCentre (*patching.from), patching.to, owner.benchView.getModule (*patching.from).getHeader().getJackColour().withAlpha (0.8f));
+    {
+        const auto start = jackCentre (*patching.from);
+        const juce::Graphics::ScopedSaveState saved (g);
+        g.reduceClipRegion (cableArea (box.contains (start)));
+        paintCable (g, start, patching.to, owner.benchView.getModule (*patching.from).getHeader().getJackColour().withAlpha (0.8f));
+    }
 }
 
 // With the cables: every module's jacks, lit where a cable is plugged in, and
@@ -810,9 +838,12 @@ void Synth2AudioProcessorEditor::resized()
 
     // The bench, and in the same place the effects.
     benchView.setUiScale (s);
-    benchView.setBounds (px (kPanelPad), px (kBenchTop), px (Bench::areaWidth), px (Bench::areaHeight));
+    benchView.setBounds (px (kPanelPad), px (kBenchTop), px (Bench::viewWidth), px (Bench::viewHeight));
     effectsView.setUiScale (s);
     effectsView.setBounds (benchView.getBounds());
+    // The zoom pill on the bench's bottom edge, at its right, over the gap above the keyboard.
+    benchView.getZoomPill().setBounds (benchView.getRight() - px (12.0f + ZoomPill::pillWidth), benchView.getBottom() - px (0.5f * ZoomPill::pillHeight),
+                                       px (ZoomPill::pillWidth), px (ZoomPill::pillHeight));
 
     // Hairline, then the keyboard with OUTPUT (and, patching, its IN jack) at its right.
     area.setTop (benchView.getBottom() + px (12.0f));
