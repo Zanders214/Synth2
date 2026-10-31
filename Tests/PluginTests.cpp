@@ -1195,6 +1195,24 @@ void testViews()
     check (well.handleCentre (Handle::decay).getDistanceFrom (decayTo) < 1.5f, "and it follows the pointer");
     well.mouseUp (mouseAt (well, decayTo, decayAt));
 
+    // The attack's dot, halfway up its ramp, bends it: dragged up, the ramp
+    // bulges up under the pointer; a double-click straightens it again.
+    auto* attackCurve = p.getState().getParameter (ParamID::env1AttackCurve);
+    check (pumpUntil ([&] { return approx (well.getAmpState().dials.sustain, sustain->convertFrom0to1 (sustain->getValue()), 1e-6f); }),
+           "the well catches up with SUSTAIN");
+    const auto bendAt = well.handleCentre (Handle::attackCurve);
+    well.mouseMove (mouseAt (well, bendAt));
+    check (well.getHotHandle() == (int) Handle::attackCurve, "hovering the attack's dot picks it out");
+    const auto bendTo = bendAt.translated (0.0f, -20.0f);
+    well.mouseDown (mouseAt (well, bendAt));
+    well.mouseDrag (mouseAt (well, bendTo, bendAt));
+    check (attackCurve->convertFrom0to1 (attackCurve->getValue()) > 0.1f, "dragging it up bends the attack up");
+    check (well.handleCentre (Handle::attackCurve).getDistanceFrom (bendTo) < 1.5f, "and the dot follows the pointer");
+    well.mouseUp (mouseAt (well, bendTo, bendAt));
+    check (p.currentSettings().envelopes[0].attackCurve > 0.1f, "the engine is given the bend");
+    well.mouseDoubleClick (mouseAt (well, well.handleCentre (Handle::attackCurve)));
+    check (approx (attackCurve->convertFrom0to1 (attackCurve->getValue()), 0.0f, 1e-6f), "a double-click on the dot straightens the ramp");
+
     // A double-click as JUCE sends it: down, up, down, up, then the double-click.
     const auto corner = well.handleCentre (Handle::attack);
     gestures.begun = 0;
@@ -1222,7 +1240,11 @@ void testViews()
     setParam (p, ParamID::output, 0.0f);
     dragOn (well, well.handleCentre (Handle::release), well.handleCentre (Handle::release).translated (-30.0f, 0.0f));
     check (fills(), "a shorter RELEASE still fills the graph");
-    pumpUntil ([&] { return approx (well.getAmpState().outputDb, 0.0f, 1e-3f); });
+    setParam (p, ParamID::env1AttackCurve, 0.6f);
+    setParam (p, ParamID::env1DecayCurve, -0.7f);
+    setParam (p, ParamID::env1ReleaseCurve, -0.6f);
+    check (pumpUntil ([&] { return approx (well.getAmpState().outputDb, 0.0f, 1e-3f) && approx (well.getAmpState().dials.releaseCurve, -0.6f, 1e-4f); }),
+           "the well shows the ramps bent");
     snapshot (render (*editor), "15-envelope-graph");
 
     // The gear menu's views.

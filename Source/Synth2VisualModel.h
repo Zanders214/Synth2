@@ -132,7 +132,10 @@ struct Synth2VisualModel
         The envelope fills the well, whatever its size: the stages are
         scaled to span its whole width (see naturalWidth), and the top is
         the top of the well (OUTPUT's level is in the readout), so the shape
-        looks the same in a small well as in a tall one. */
+        looks the same in a small well as in a tall one.
+
+        The attack, decay and release ramps bend as their curves have them
+        (see ::Envelope::travel): rampLevel gives their heights. */
     struct Envelope
     {
         float delayEnd   = 0.0f;   // x where the rise starts
@@ -143,29 +146,40 @@ struct Synth2VisualModel
         float releaseEnd = 0.0f;   // x where it reaches silence
         float peak       = 1.0f;   // the top's height: the top of the well
         float sustain    = 0.0f;   // the sustain level's height
+        double attackK   = 0.0;    // each ramp's steepness (see ::Envelope::travel)
+        double decayK    = 0.0;
+        double releaseK  = 0.0;
     };
 
-    /** The envelope's dials: each time dial's position (0..1), and SUSTAIN's level. */
+    /** The envelope's dials: each time dial's position (0..1), SUSTAIN's
+        level, and each ramp's bend (-1..1, 0 straight). */
     struct EnvelopeDials
     {
-        float delay   = 0.0f;
-        float attack  = 0.0f;
-        float hold    = 0.0f;
-        float decay   = 0.0f;
-        float sustain = 1.0f;
-        float release = 0.0f;
+        float delay        = 0.0f;
+        float attack       = 0.0f;
+        float hold         = 0.0f;
+        float decay        = 0.0f;
+        float sustain      = 1.0f;
+        float release      = 0.0f;
+        float attackCurve  = 0.0f;
+        float decayCurve   = 0.0f;
+        float releaseCurve = 0.0f;
     };
 
-    /** The corners of the AMP well's envelope that can be dragged: each
-        stretches its stage sideways, and DECAY's corner also sets SUSTAIN
-        up and down. */
-    enum class Handle { delay, attack, hold, decay, release };
-    static constexpr int numHandles = 5;
+    /** What can be dragged on the AMP well's envelope: its corners, each
+        stretching its stage sideways (DECAY's corner also sets SUSTAIN up
+        and down), then a dot halfway along each ramp, dragged up and down
+        to bend it. */
+    enum class Handle { delay, attack, hold, decay, release, attackCurve, decayCurve, releaseCurve };
+    static constexpr int numCorners = 5;
+    static constexpr int numHandles = 8;
 
-    /** How long each handle's stage grows, from its dial at 0 to its dial
+    static constexpr bool isCurve (Handle h) noexcept { return (int) h >= numCorners; }
+
+    /** How long each corner's stage grows, from its dial at 0 to its dial
         at 1, in the units the stages are laid out in before they are scaled
         to fit the well (see naturalWidth). */
-    static constexpr std::array<float, numHandles> handleSpans { 0.10f, 0.17f, 0.08f, 0.15f, 0.20f };
+    static constexpr std::array<float, numCorners> handleSpans { 0.10f, 0.17f, 0.08f, 0.15f, 0.20f };
 
     // The least a ramp takes (so a time of 0 still slopes), and the sustain
     // stretch, in the same units.
@@ -177,7 +191,7 @@ struct Synth2VisualModel
     static float naturalWidth (const EnvelopeDials& dials) noexcept
     {
         float width = 3.0f * minRamp + sustainWidth;
-        const std::array<float, numHandles> dial { dials.delay, dials.attack, dials.hold, dials.decay, dials.release };
+        const std::array<float, numCorners> dial { dials.delay, dials.attack, dials.hold, dials.decay, dials.release };
         for (size_t h = 0; h < handleSpans.size(); ++h)
             width += handleSpans[h] * clamp01 (dial[h]);
         return width;
@@ -197,7 +211,29 @@ struct Synth2VisualModel
         e.sustainEnd = e.decayEnd + to01 * sustainWidth;
         e.releaseEnd = e.sustainEnd + to01 * (minRamp + span (Handle::release) * clamp01 (dials.release));
         e.sustain    = e.peak * clamp01 (dials.sustain);
+        e.attackK    = ::Envelope::risingSteepness (dials.attackCurve);
+        e.decayK     = ::Envelope::fallingSteepness (dials.decayCurve);
+        e.releaseK   = ::Envelope::fallingSteepness (dials.releaseCurve);
         return e;
+    }
+
+    /** A ramp's (the attack's, decay's or release's) height once `time`
+        (0..1) of it has passed, the release falling from the sustain level. */
+    static float rampLevel (const Envelope& e, ::Envelope::Stage ramp, float time) noexcept
+    {
+        using Stage = ::Envelope::Stage;
+        const auto along = [t = (double) clamp01 (time)] (double k) { return (float) ::Envelope::travel (t, k); };
+        switch (ramp)
+        {
+            case Stage::attack:  return e.peak * along (e.attackK);
+            case Stage::decay:   return e.peak - (e.peak - e.sustain) * along (e.decayK);
+            case Stage::release: return e.sustain * (1.0f - along (e.releaseK));
+            case Stage::idle:
+            case Stage::delay:
+            case Stage::hold:
+            case Stage::sustain: break;
+        }
+        return 0.0f;
     }
 
     static Envelope envelope (const EnvelopeDials& dials) noexcept { return envelope (dials, naturalWidth (dials)); }
@@ -242,21 +278,67 @@ struct Synth2VisualModel
             case Handle::hold:    return { e.holdEnd, e.peak };
             case Handle::decay:   return { e.decayEnd, e.sustain };
             case Handle::release: return { e.releaseEnd, 0.0f };
+            case Handle::attackCurve:  return { 0.5f * (e.delayEnd + e.attackEnd), rampLevel (e, ::Envelope::Stage::attack, 0.5f) };
+            case Handle::decayCurve:   return { 0.5f * (e.holdEnd + e.decayEnd), rampLevel (e, ::Envelope::Stage::decay, 0.5f) };
+            case Handle::releaseCurve: return { 0.5f * (e.sustainEnd + e.releaseEnd), rampLevel (e, ::Envelope::Stage::release, 0.5f) };
         }
         return {};
     }
+
+    /** Whether handle `h` is there to drag in a well `width` by `height`
+        pixels, its dots `radius` across: every corner is, and a ramp's dot
+        while its ramp is long enough to bend (a decay to a SUSTAIN at the
+        top, or a release from silence, has no fall to bend) and the dot,
+        wherever its bend has taken it, stays clear enough of every corner
+        to be pressed (see handleAt). */
+    static bool isShown (const Envelope& e, Handle h, float width, float height, float radius) noexcept
+    {
+        const auto longEnough = [&] (float x0, float y0, float x1, float y1)
+        {
+            return std::hypot ((x1 - x0) * width, (y1 - y0) * height) >= 3.0f * radius && std::abs (y1 - y0) * height >= radius;
+        };
+        bool canBend = true;
+        switch (h)
+        {
+            case Handle::attackCurve:  canBend = longEnough (e.delayEnd, 0.0f, e.attackEnd, e.peak); break;
+            case Handle::decayCurve:   canBend = longEnough (e.holdEnd, e.peak, e.decayEnd, e.sustain); break;
+            case Handle::releaseCurve: canBend = longEnough (e.sustainEnd, e.sustain, e.releaseEnd, 0.0f); break;
+            case Handle::delay:
+            case Handle::attack:
+            case Handle::hold:
+            case Handle::decay:
+            case Handle::release:      return true;
+        }
+        const auto dot = handlePosition (e, h);
+        for (int corner = 0; corner < numCorners && canBend; ++corner)
+        {
+            const auto p = handlePosition (e, (Handle) corner);
+            canBend = std::hypot ((dot.x - p.x) * width, (dot.y - p.y) * height) >= minDotGap;
+        }
+        return canBend;
+    }
+
+    /** How near (in pixels) a ramp's dot may come to a corner and still be
+        pressed: a press takes the dot when it is nearer to it than to the
+        corner by a pixel. */
+    static constexpr float minDotGap = 2.0f;
 
     /** The handle under a point (0..1 across and up a well `width` by
         `height` pixels), within `radius` pixels, or -1 for none. Where two
         handles sit on each other (a HOLD of 0 puts its corner on ATTACK's), a
         press on them takes the earlier one, and a press a few pixels to
-        their right the later one, so it can be pulled out. */
+        their right the later one, so it can be pulled out. A ramp's dot,
+        however far its bend has carried it towards a corner, takes a press
+        nearer to it than to the corner (by a pixel, so a tie goes to the
+        corner). */
     static int handleAt (const Envelope& e, Dot at, float width, float height, float radius) noexcept
     {
         int   best     = -1;
         float bestDist = radius;
         for (int h = 0; h < numHandles; ++h)
         {
+            if (isCurve ((Handle) h) && ! isShown (e, (Handle) h, width, height, radius))
+                continue;
             const auto  p    = handlePosition (e, (Handle) h);
             const float dist = std::hypot ((at.x - p.x) * width, (at.y - p.y) * height);
             const bool  tied = best >= 0 && std::abs (dist - bestDist) < 1.0f && (at.x - p.x) * width >= 3.0f;
@@ -278,9 +360,48 @@ struct Synth2VisualModel
             case Handle::attack:  return dials.attack;
             case Handle::hold:    return dials.hold;
             case Handle::decay:   return dials.decay;
-            case Handle::release: break;
+            case Handle::release:
+            case Handle::attackCurve:
+            case Handle::decayCurve:
+            case Handle::releaseCurve: break;
         }
         return dials.release;
+    }
+
+    /** The bend a ramp's dot (handle `h`) sets. */
+    static float& curveOf (EnvelopeDials& dials, Handle h) noexcept
+    {
+        switch (h)
+        {
+            case Handle::attackCurve: return dials.attackCurve;
+            case Handle::decayCurve:  return dials.decayCurve;
+            case Handle::delay:
+            case Handle::attack:
+            case Handle::hold:
+            case Handle::decay:
+            case Handle::release:
+            case Handle::releaseCurve: break;
+        }
+        return dials.releaseCurve;
+    }
+
+    /** The bend that puts ramp dot `h` at height `y` (0..1 up the well), so
+        it follows the pointer up and down: halfway through its time the
+        ramp is `share` of its way along, and a share that far bent comes
+        straight from travel's form, 1 / (1 + e^(k/2)). */
+    static float curveAt (const Envelope& e, Handle h, float y) noexcept
+    {
+        float share = 0.5f;
+        if (h == Handle::attackCurve && e.peak > 0.0f)
+            share = y / e.peak;
+        else if (h == Handle::decayCurve && e.peak > e.sustain)
+            share = (e.peak - y) / (e.peak - e.sustain);
+        else if (h == Handle::releaseCurve && e.sustain > 0.0f)
+            share = 1.0f - y / e.sustain;
+        const double s = std::clamp ((double) share, 1.0e-3, 1.0 - 1.0e-3);
+        const double k = 2.0 * std::log ((1.0 - s) / s);
+        const double bend = h == Handle::attackCurve ? -k / ::Envelope::maxSteepness : k / ::Envelope::maxSteepness;
+        return (float) std::clamp (bend, -1.0, 1.0);
     }
 
     /** The dial that puts handle `h`'s corner at `x` (0..1 across the well)

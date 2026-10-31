@@ -259,6 +259,88 @@ void testEnvelopeStages()
            "and falls to a quarter of its peak with SUSTAIN at 25% (got " + std::to_string (settled / hit) + ")");
 }
 
+void testEnvelopeCurves()
+{
+    std::printf ("Envelope curves:\n");
+
+    // At 1 kHz, a 100 ms attack, a 100 ms decay to 0 and a 100 ms release.
+    using Stage = Envelope::Stage;
+    const auto shaped = [] (float attackCurve, float decayCurve, float releaseCurve)
+    {
+        Envelope e;
+        e.setSampleRate (1000.0);
+        Envelope::Parameters ps { 0.0f, 0.1f, 0.0f, 0.1f, 0.0f, 0.1f };
+        ps.attackCurve  = attackCurve;
+        ps.decayCurve   = decayCurve;
+        ps.releaseCurve = releaseCurve;
+        e.setParameters (ps);
+        return e;
+    };
+    const auto levelAfter = [] (Envelope& e, int samples)
+    {
+        for (int i = 0; i < samples; ++i)
+            e.getNextSample();
+        return e.getLevel();
+    };
+
+    auto straight = shaped (0.0f, 0.0f, 0.0f), up = shaped (1.0f, 1.0f, 1.0f), down = shaped (-1.0f, -1.0f, -1.0f);
+    for (auto* e : { &straight, &up, &down })
+        e->noteOn();
+    const float midStraight = levelAfter (straight, 50), midUp = levelAfter (up, 50), midDown = levelAfter (down, 50);
+    check (approx (midStraight, 0.5f, 1e-3f) && midUp > 0.9f && midDown < 0.1f,
+           "halfway through ATTACK, bent up it is near the top, bent down near the bottom (straight: halfway)");
+    check (approx ((float) Envelope::travel (0.5, Envelope::risingSteepness (1.0f)), midUp, 0.02f), "as travel() draws it");
+    for (auto* e : { &straight, &up, &down })
+        levelAfter (*e, 51);
+    check (straight.getStage() == Stage::decay && up.getStage() == Stage::decay && down.getStage() == Stage::decay,
+           "a bend keeps the attack's time");
+
+    const float fallStraight = levelAfter (straight, 50), fallUp = levelAfter (up, 50), fallDown = levelAfter (down, 50);
+    check (approx (fallStraight, 0.5f, 0.02f) && fallUp > 0.9f && fallDown < 0.1f,
+           "halfway through DECAY, bent up it is still high, bent down it has nearly fallen");
+    levelAfter (up, 51);
+    check (up.getStage() == Stage::sustain && approx (up.getLevel(), 0.0f, 1e-6f), "and still lands on SUSTAIN in DECAY's time");
+
+    // The release, from the top.
+    auto held = shaped (0.0f, 0.0f, -1.0f);
+    auto ps = held.getParameters();
+    ps.sustain = 1.0f;
+    held.setParameters (ps);
+    held.noteOn();
+    levelAfter (held, 200);
+    held.noteOff();
+    const float tail = levelAfter (held, 50);
+    check (tail < 0.1f && tail > 0.0f, "RELEASE bent down drops quickly, then tails off");
+    levelAfter (held, 51);
+    check (! held.isActive(), "and is silent after RELEASE's time");
+
+    // Bending a ramp under way carries on from where it is: no jump.
+    auto turned = shaped (0.0f, 0.0f, 0.0f);
+    turned.noteOn();
+    const float before = levelAfter (turned, 30);
+    ps = turned.getParameters();
+    ps.attackCurve = 1.0f;
+    turned.setParameters (ps);
+    const float after = levelAfter (turned, 1);
+    check (after > before && after - before < 0.1f, "bending the attack mid-way carries on from the level it had reached");
+
+    // Played again mid-release, a bent attack climbs from where it was.
+    auto again = shaped (0.7f, 0.0f, 0.0f);
+    again.noteOn();
+    levelAfter (again, 40);
+    again.noteOff();
+    const float caught = levelAfter (again, 20);
+    again.noteOn();
+    const float next = levelAfter (again, 1);
+    check (next >= caught && next - caught < 0.1f, "played again mid-release, a bent attack climbs from where it was");
+
+    bool undone = true;
+    for (const double k : { -8.0, -1.0, 0.0, 3.0, 8.0 })
+        for (const double t : { 0.0, 0.2, 0.5, 0.9, 1.0 })
+            undone = undone && approx ((float) Envelope::timeFor (Envelope::travel (t, k), k), (float) t, 1e-5f);
+    check (undone, "timeFor undoes travel, however steep");
+}
+
 // ---- Test 4: the unison stack: level, detune, width. ---------------------------
 void testUnison()
 {
@@ -1187,6 +1269,7 @@ int main()
     testSampleAccurate();
     testEnvelope();
     testEnvelopeStages();
+    testEnvelopeCurves();
     testUnison();
     testVoicesChangeMidNote();
     testOscillators();

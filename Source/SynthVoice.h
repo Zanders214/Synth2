@@ -291,10 +291,15 @@ private:
         const float stackFrom = part.stackLevel;
         part.stackLevel = Unison::stackGain (sounding);
 
+        // A held note resting on its SUSTAIN level needs no stepping.
+        const bool settled = part.envelope.isSettled();
+        if (settled)
+            part.envelopeLevel = part.envelope.getLevel();
         for (int n = 0; n < numSamples; ++n)
         {
             const float t = (float) (n + 1) * ramp;
-            part.envelopeLevel = part.envelope.getNextSample();
+            if (! settled)
+                part.envelopeLevel = part.envelope.getNextSample();
             const float stack  = stackFrom + (part.stackLevel - stackFrom) * t;
             const float glided = part.level + (oscLevel - part.level) * t;
             levels[(size_t) n] = glided * part.envelopeLevel * level * stack;

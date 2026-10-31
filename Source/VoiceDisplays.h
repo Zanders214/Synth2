@@ -273,7 +273,8 @@ struct AmpDisplayState
         const auto sameDials = [&same] (const auto& x, const auto& y)
         {
             return same (x.delay, y.delay) && same (x.attack, y.attack) && same (x.hold, y.hold) && same (x.decay, y.decay)
-                && same (x.sustain, y.sustain) && same (x.release, y.release);
+                && same (x.sustain, y.sustain) && same (x.release, y.release) && same (x.attackCurve, y.attackCurve)
+                && same (x.decayCurve, y.decayCurve) && same (x.releaseCurve, y.releaseCurve);
         };
         if (! (sameDials (a.dials, b.dials)
                && same (a.attackSeconds, b.attackSeconds) && same (a.releaseSeconds, b.releaseSeconds)
@@ -312,7 +313,9 @@ struct AmpDisplayState
     sideways for its stage's time, DECAY's corner up and down for SUSTAIN
     too. A dragged corner follows the pointer, the stages after it making
     room so the shape still fills the well; RELEASE's corner stays on the
-    right edge, and dragging it makes room before it. Shift drags finely, a double-click puts a corner's
+    right edge, and dragging it makes room before it. Halfway along each
+    ramp (the attack, decay and release) a dot drags up and down to bend
+    it, following the pointer, as in Vital. Shift drags finely, a double-click puts a corner's
     stage back to its default, and the readout names the stage and value
     under the pointer. Each drag is one gesture, so a host records and undoes it like a
     turn of the dial.
@@ -323,8 +326,9 @@ class AmpDisplay final : public DisplayWell,
 public:
     using Handle = Synth2VisualModel::Handle;
 
-    /** DELAY, ATTACK, HOLD, DECAY, SUSTAIN and RELEASE, in that order. */
-    using Parameters = std::array<juce::RangedAudioParameter*, 6>;
+    /** DELAY, ATTACK, HOLD, DECAY, SUSTAIN and RELEASE, then the attack's,
+        decay's and release's curves, in that order. */
+    using Parameters = std::array<juce::RangedAudioParameter*, 9>;
 
     AmpDisplay() { setInterceptsMouseClicks (false, false); }
 
@@ -332,7 +336,7 @@ public:
     {
         parameters = newParameters;
         setInterceptsMouseClicks (true, false);
-        setTooltip ("Drag a corner to shape the envelope (Shift for fine moves); double-click one to reset it");
+        setTooltip ("Drag a corner to shape the envelope, or a ramp's dot to bend it (Shift for fine moves); double-click one to reset it");
     }
 
     /** The plot the envelope is drawn in. */
@@ -362,7 +366,7 @@ public:
         if (h < 0)
             return;
         const auto corner = Synth2VisualModel::handlePosition (shape(), (Handle) h);
-        drag = Drag { (Handle) h, e.position, amp.dials, corner.x, Synth2VisualModel::naturalWidth (amp.dials) };
+        drag = Drag { (Handle) h, e.position, amp.dials, corner, Synth2VisualModel::naturalWidth (amp.dials) };
         for (auto* p : parametersFor (drag->handle))
             p->beginChangeGesture();
         repaint();
@@ -377,15 +381,17 @@ public:
         const float width  = juce::jmax (1.0f, plot.getWidth());
         const float height = juce::jmax (1.0f, plot.getHeight());
         const float dx     = fine * (e.position.x - drag->from.x) / width;
+        const float dy     = fine * (drag->from.y - e.position.y) / height;
         auto dials = drag->dials;
-        if (drag->handle == Handle::release)
+        if (Synth2VisualModel::isCurve (drag->handle))
+            Synth2VisualModel::curveOf (dials, drag->handle) = Synth2VisualModel::curveAt (shape(), drag->handle, drag->corner.y + dy);
+        else if (drag->handle == Handle::release)
             dials.release = Synth2VisualModel::dragDial (dials.release, dx, Handle::release, drag->fullWidth);
         else
-            Synth2VisualModel::dialOf (dials, drag->handle) = Synth2VisualModel::dialAt (dials, drag->handle, drag->cornerX + dx);
+            Synth2VisualModel::dialOf (dials, drag->handle) = Synth2VisualModel::dialAt (dials, drag->handle, drag->corner.x + dx);
         if (drag->handle == Handle::decay)
         {
             const auto start = Synth2VisualModel::envelope (drag->dials);
-            const float dy   = fine * (drag->from.y - e.position.y) / height;
             dials.sustain = Synth2VisualModel::sustainAt (start, start.sustain + dy);
         }
         apply (dials);
@@ -463,19 +469,31 @@ public:
         g.setColour (Synth2::Palette::gridLine);
         g.fillRect (juce::Rectangle (plot.getX(), plot.getBottom() - line, plot.getWidth(), line));
 
-        // The shape, softly filled underneath.
-        const std::array<std::pair<juce::Point<float>, Stage>, 7> corners { {
-            { at (0.0f, 0.0f), Stage::idle },
-            { at (e.delayEnd, 0.0f), Stage::delay },
-            { at (e.attackEnd, e.peak), Stage::attack },
-            { at (e.holdEnd, e.peak), Stage::hold },
-            { at (e.decayEnd, e.sustain), Stage::decay },
-            { at (e.sustainEnd, e.sustain), Stage::sustain },
-            { at (e.releaseEnd, 0.0f), Stage::release } } };
+        // The shape, softly filled underneath: each stage a run of points,
+        // the ramps traced along their bends.
+        const auto ramp = [&] (Stage stage, float from, float to)
+        {
+            std::vector<juce::Point<float>> points;
+            const int steps = juce::jlimit (2, 48, (int) ((to - from) * plot.getWidth() / 3.0f));
+            for (int i = 0; i <= steps; ++i)
+            {
+                const float t = (float) i / (float) steps;
+                points.push_back (at (from + t * (to - from), Synth2VisualModel::rampLevel (e, stage, t)));
+            }
+            return points;
+        };
+        const std::array<std::pair<std::vector<juce::Point<float>>, Stage>, 6> stages { {
+            { { at (0.0f, 0.0f), at (e.delayEnd, 0.0f) }, Stage::delay },
+            { ramp (Stage::attack, e.delayEnd, e.attackEnd), Stage::attack },
+            { { at (e.attackEnd, e.peak), at (e.holdEnd, e.peak) }, Stage::hold },
+            { ramp (Stage::decay, e.holdEnd, e.decayEnd), Stage::decay },
+            { { at (e.decayEnd, e.sustain), at (e.sustainEnd, e.sustain) }, Stage::sustain },
+            { ramp (Stage::release, e.sustainEnd, e.releaseEnd), Stage::release } } };
         juce::Path fill;
-        fill.startNewSubPath (corners.front().first);
-        for (const auto& [corner, stage] : corners)
-            fill.lineTo (corner);
+        fill.startNewSubPath (at (0.0f, 0.0f));
+        for (const auto& [points, stage] : stages)
+            for (const auto& point : points)
+                fill.lineTo (point);
         fill.closeSubPath();
         const auto washColour = colourFor (Stage::sustain);
         juce::ColourGradient wash (washColour.withAlpha (0.18f), 0.0f, at (0.0f, e.peak).y,
@@ -485,16 +503,15 @@ public:
 
         // Each stage in its dial's colour, with a glow under it (a stage with
         // no length, a delay or hold of 0, isn't drawn).
-        for (size_t i = 1; i < corners.size(); ++i)
+        for (const auto& [points, stage] : stages)
         {
-            const auto from = corners[i - 1].first;
-            const auto to   = corners[i].first;
-            if (from.getDistanceFrom (to) < 0.5f)
+            if (points.front().getDistanceFrom (points.back()) < 0.5f)
                 continue;
             juce::Path part;
-            part.startNewSubPath (from);
-            part.lineTo (to);
-            const auto colour = colourFor (corners[i].second);
+            part.startNewSubPath (points.front());
+            for (size_t i = 1; i < points.size(); ++i)
+                part.lineTo (points[i]);
+            const auto colour = colourFor (stage);
             g.setColour (colour.withAlpha (0.25f));
             g.strokePath (part, juce::PathStrokeType (6.0f * s, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             g.setColour (colour);
@@ -529,7 +546,7 @@ private:
         Handle handle;
         juce::Point<float> from;
         Synth2VisualModel::EnvelopeDials dials;   // where they were when the drag began
-        float cornerX;                            // where its corner was across the well
+        Synth2VisualModel::Dot corner;            // where the handle was in the well
         float fullWidth;                          // the natural length spanning the well then
     };
 
@@ -555,7 +572,7 @@ private:
         const auto plot = plotArea();
         const Synth2VisualModel::Dot at { (position.x - plot.getX()) / juce::jmax (1.0f, plot.getWidth()),
                                           (plot.getBottom() - position.y) / juce::jmax (1.0f, plot.getHeight()) };
-        return Synth2VisualModel::handleAt (shape(), at, plot.getWidth(), plot.getHeight(), 9.0f * getUiScale());
+        return Synth2VisualModel::handleAt (shape(), at, plot.getWidth(), plot.getHeight(), handleRadius());
     }
 
     void setHot (int h)
@@ -578,6 +595,9 @@ private:
             case Handle::hold:    return { 2 };
             case Handle::decay:   return { 3, 4 };
             case Handle::release: return { 5 };
+            case Handle::attackCurve:  return { 6 };
+            case Handle::decayCurve:   return { 7 };
+            case Handle::releaseCurve: return { 8 };
         }
         return {};
     }
@@ -594,8 +614,11 @@ private:
     // positions, SUSTAIN as its level) and shows them at once.
     void apply (const Synth2VisualModel::EnvelopeDials& dials)
     {
-        const std::array<float, 6> positions { dials.delay, dials.attack, dials.hold, dials.decay,
-                                               parameters[4]->convertTo0to1 (dials.sustain), dials.release };
+        const std::array<float, 9> positions { dials.delay, dials.attack, dials.hold, dials.decay,
+                                               parameters[4]->convertTo0to1 (dials.sustain), dials.release,
+                                               parameters[6]->convertTo0to1 (dials.attackCurve),
+                                               parameters[7]->convertTo0to1 (dials.decayCurve),
+                                               parameters[8]->convertTo0to1 (dials.releaseCurve) };
         for (const auto i : indicesFor (drag->handle))
             if (! juce::exactlyEqual (parameters[i]->getValue(), positions[i]))
                 parameters[i]->setValueNotifyingHost (positions[i]);
@@ -606,7 +629,8 @@ private:
     // The readout: OUTPUT's level, or the stage (and value) under the pointer.
     juce::String readout() const
     {
-        static constexpr std::array<const char*, Synth2VisualModel::numHandles> names { "DELAY", "ATTACK", "HOLD", "DECAY", "RELEASE" };
+        static constexpr std::array<const char*, Synth2VisualModel::numHandles> names { "DELAY", "ATTACK", "HOLD", "DECAY", "RELEASE",
+                                                                                         "ATTACK CURVE", "DECAY CURVE", "RELEASE CURVE" };
         const int h = getHotHandle();
         if (h < 0 || parameters[0] == nullptr)
             return Synth2::Format::decibels (amp.outputDb);
@@ -616,16 +640,41 @@ private:
         return text;
     }
 
+    float handleRadius() const noexcept { return 9.0f * getUiScale(); }
+
     // A ring on each corner that can be dragged, filled on the one under
-    // the pointer.
+    // the pointer, and a small dot halfway along each ramp long enough to
+    // bend, ringed when it is under the pointer.
     void paintHandles (juce::Graphics& g) const
     {
-        static constexpr std::array<size_t, Synth2VisualModel::numHandles> colourOf { 0, 1, 2, 4, 5 };
-        const float s = getUiScale();
+        static constexpr std::array<size_t, Synth2VisualModel::numHandles> colourOf { 0, 1, 2, 4, 5, 1, 3, 5 };
+        const float s    = getUiScale();
+        const auto  plot = plotArea();
+        const auto  e    = shape();
         for (int h = 0; h < Synth2VisualModel::numHandles; ++h)
         {
             const auto  colour = colours[colourOf[(size_t) h]];
             const bool  isHot  = h == getHotHandle();
+            if (Synth2VisualModel::isCurve ((Handle) h))
+            {
+                if (! Synth2VisualModel::isShown (e, (Handle) h, plot.getWidth(), plot.getHeight(), handleRadius()))
+                    continue;
+                const auto centre = handleCentre ((Handle) h);
+                if (isHot)
+                {
+                    const auto ring = juce::Rectangle<float> (14.0f * s, 14.0f * s).withCentre (centre);
+                    g.setColour (colour.withAlpha (0.25f));
+                    g.fillEllipse (ring);
+                    g.setColour (colour);
+                    g.drawEllipse (ring, juce::jmax (1.0f, 1.4f * s));
+                }
+                const auto dot = juce::Rectangle<float> (7.0f * s, 7.0f * s).withCentre (centre);
+                g.setColour (Synth2::Palette::well);
+                g.fillEllipse (dot.expanded (1.5f * s));
+                g.setColour (colour);
+                g.fillEllipse (dot);
+                continue;
+            }
             const float size   = (isHot ? 11.0f : 8.0f) * s;
             const auto  ring   = juce::Rectangle<float> (size, size).withCentre (handleCentre ((Handle) h));
             g.setColour (Synth2::Palette::well);

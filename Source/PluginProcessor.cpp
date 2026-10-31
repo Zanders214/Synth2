@@ -5,6 +5,8 @@
 #include "Presets.h"
 #include "Rack.h"
 
+#include <tuple>
+
 namespace
 {
     // The MIDI channel the on-screen keyboard plays on.
@@ -36,6 +38,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
     AudioProcessorValueTreeState::ParameterLayout layout;
 
     const auto percentFromValue = [] (float value, int) { return String (roundToInt (value * 100.0f)) + " %"; };
+    const auto curveFromValue   = [] (float value, int)
+    {
+        const int bend = roundToInt (value * 100.0f);
+        return bend == 0 ? String ("Straight") : (bend > 0 ? "+" : "") + String (bend) + " %";
+    };
     const auto timeFromValue    = [] (float value, int)
     {
         return value < 1.0f ? String (roundToInt (value * 1000.0f)) + " ms"
@@ -143,6 +150,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
             ParameterID { ids.sustain, 5 }, stageName + "Sustain", NormalisableRange<float> (0.0f, 1.0f), defaults.sustainLevel,
             AudioParameterFloatAttributes().withStringFromValueFunction (percentFromValue)));
         time (ids.release, version, name + "Release",      0.005f, 10.0f, 0.5f, defaults.releaseSeconds);
+
+        // How each ramp bends (version 10): straight to start with, so
+        // older sessions sound as they did.
+        for (const auto& [id, rampName, value] : { std::tuple (ids.attackCurve, "Attack Curve", defaults.attackCurve),
+                                                   std::tuple (ids.decayCurve, "Decay Curve", defaults.decayCurve),
+                                                   std::tuple (ids.releaseCurve, "Release Curve", defaults.releaseCurve) })
+            layout.add (std::make_unique<AudioParameterFloat> (
+                ParameterID { id, 10 }, stageName + rampName, NormalisableRange<float> (-1.0f, 1.0f), value,
+                AudioParameterFloatAttributes().withStringFromValueFunction (curveFromValue)));
     };
 
     for (int index = 0; index < Synth2Engine::numEnvelopes; ++index)
@@ -275,6 +291,9 @@ Synth2Engine::Settings Synth2AudioProcessor::currentSettings() const noexcept
         envelope.decaySeconds   = param (ids.decay);
         envelope.sustainLevel   = param (ids.sustain);
         envelope.releaseSeconds = param (ids.release);
+        envelope.attackCurve    = param (ids.attackCurve);
+        envelope.decayCurve     = param (ids.decayCurve);
+        envelope.releaseCurve   = param (ids.releaseCurve);
     }
     // An effect plays while it is both in the chain and switched on.
     const auto playing = [&param] (const char* power, const char* inChain) { return param (power) >= 0.5f && param (inChain) >= 0.5f; };

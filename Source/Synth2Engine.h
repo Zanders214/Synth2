@@ -84,7 +84,8 @@ public:
 
     /** One envelope (see Envelope.h): how long a note waits, takes to fade
         in, stays at the top and takes to fall to its sustain level, that
-        level, and how long it rings on after its key goes up. With the
+        level, how long it rings on after its key goes up, and how its
+        attack, decay and release ramps bend (-1..1, 0 straight). With the
         defaults it fades in and stays up while the key is held. */
     struct EnvelopeSettings
     {
@@ -94,6 +95,9 @@ public:
         float decaySeconds   = 0.3f;
         float sustainLevel   = 1.0f;
         float releaseSeconds = 0.3f;
+        float attackCurve    = 0.0f;
+        float decayCurve     = 0.0f;
+        float releaseCurve   = 0.0f;
     };
 
     struct Settings
@@ -445,6 +449,9 @@ private:
                 envelope.decay   = juce::jmax (0.001f, shape.decaySeconds);
                 envelope.sustain = juce::jlimit (0.0f, 1.0f, shape.sustainLevel);
                 envelope.release = juce::jmax (0.005f, shape.releaseSeconds);
+                envelope.attackCurve  = shape.attackCurve;
+                envelope.decayCurve   = shape.decayCurve;
+                envelope.releaseCurve = shape.releaseCurve;
             }
 
             auto& applied = appliedEnvelopes[k];
@@ -477,7 +484,8 @@ private:
     {
         const auto same = [] (float x, float y) { return juce::exactlyEqual (x, y); };
         return same (a.delay, b.delay) && same (a.attack, b.attack) && same (a.hold, b.hold)
-            && same (a.decay, b.decay) && same (a.sustain, b.sustain) && same (a.release, b.release);
+            && same (a.decay, b.decay) && same (a.sustain, b.sustain) && same (a.release, b.release)
+            && same (a.attackCurve, b.attackCurve) && same (a.decayCurve, b.decayCurve) && same (a.releaseCurve, b.releaseCurve);
     }
     juce::Random  random { 0x5eed };
     std::uint64_t noteCounter = 0;
