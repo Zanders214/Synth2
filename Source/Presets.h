@@ -183,10 +183,6 @@ namespace Presets
           { Oscillator { saw, 0, 0.0f, 1.0f,   { 3, 8.0f, 0.6f }, adsr (0.001f, 0.35f, 0.0f, 0.3f) },
             Oscillator { sine, 12, 0.0f, 0.4f, {},                adsr (0.001f, 0.12f, 0.0f, 0.1f) } },
           -5.0f, Delay { dottedEighth, 0.35f, 0.6f, 0.2f, true }, Reverb { 0.45f, 0.5f, 1.0f, 0.15f, 10.0f } },
-        { "Filter Pluck", "A saw whose low-pass snaps shut as it rings",
-          { Oscillator { saw, 0, 0.0f, 1.0f, { 3, 10.0f, 0.6f }, adsr (0.002f, 1.2f, 0.3f, 0.35f),
-                         Filter { low24, 260.0f, 0.35f, 36.0f, Envelope { 0.0f, 0.001f, 0.0f, 0.45f, 0.0f, 0.3f, 0.0f, -0.6f, 0.0f } } } },
-          -4.0f, Delay { dottedEighth, 0.35f, 0.55f, 0.2f, true }, Reverb { 0.5f, 0.5f, 1.0f, 0.15f, 10.0f } },
         { "Wood Mallet", "A soft mallet that dies away",
           { Oscillator { sine, 0, 0.0f, 1.0f,     {}, adsr (0.001f, 0.6f, 0.0f, 0.5f) },
             Oscillator { triangle, 24, 0.0f, 0.3f, {}, adsr (0.001f, 0.06f, 0.0f, 0.06f) } },
@@ -224,14 +220,21 @@ namespace Presets
           { Oscillator { saw, -12, 0.0f, 1.0f,  { 3, 12.0f, 0.3f }, adsr (0.005f, 0.5f, 0.8f, 0.2f) },
             Oscillator { saw, -12, 18.0f, 0.9f, { 3, 12.0f, 0.3f }, adsr (0.005f, 0.5f, 0.8f, 0.2f) } },
           -7.5f, std::nullopt, std::nullopt, Drive { 0.35f, 0, 0.55f, 1.0f } },
-        { "Acid Bass", "A squelchy square, its resonant filter swept short",
-          { Oscillator { square, -12, 0.0f, 1.0f, {}, adsr (0.002f, 0.3f, 0.7f, 0.08f),
-                         Filter { low24, 180.0f, 0.72f, 30.0f, Envelope { 0.0f, 0.001f, 0.0f, 0.22f, 0.1f, 0.1f, 0.0f, -0.5f, 0.0f } } } },
-          -8.0f, std::nullopt, std::nullopt, Drive { 0.3f, 1, 0.6f, 1.0f } },
         { "Sub Bass", "A clean sine sub with a plucked edge",
           { Oscillator { sine, -12, 0.0f, 1.0f,    {}, ar (0.002f, 0.12f) },
             Oscillator { triangle, 0, 0.0f, 0.35f, {}, adsr (0.002f, 0.2f, 0.3f, 0.08f) } },
           -4.0f },
+
+        // Added later, at the end, so the presets before them keep the
+        // program numbers hosts have saved.
+        { "Filter Pluck", "A saw whose low-pass snaps shut as it rings",
+          { Oscillator { saw, 0, 0.0f, 1.0f, { 3, 10.0f, 0.6f }, adsr (0.002f, 1.2f, 0.3f, 0.35f),
+                         Filter { low24, 260.0f, 0.35f, 36.0f, Envelope { 0.0f, 0.001f, 0.0f, 0.45f, 0.0f, 0.3f, 0.0f, -0.6f, 0.0f } } } },
+          -4.0f, Delay { dottedEighth, 0.35f, 0.55f, 0.2f, true }, Reverb { 0.5f, 0.5f, 1.0f, 0.15f, 10.0f } },
+        { "Acid Bass", "A squelchy square, its resonant filter swept short",
+          { Oscillator { square, -12, 0.0f, 1.0f, {}, adsr (0.002f, 0.3f, 0.7f, 0.08f),
+                         Filter { low24, 180.0f, 0.72f, 30.0f, Envelope { 0.0f, 0.001f, 0.0f, 0.22f, 0.1f, 0.1f, 0.0f, -0.5f, 0.0f } } } },
+          -8.0f, std::nullopt, std::nullopt, Drive { 0.3f, 1, 0.6f, 1.0f } },
     }};
 
     inline constexpr int numPresets = (int) std::tuple_size_v<decltype (factory)>;

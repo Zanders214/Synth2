@@ -2117,6 +2117,14 @@ void testPresets()
     for (int i = 0; i < p.getNumPrograms(); ++i)
         names.addIfNotAlreadyThere (p.getProgramName (i));
     check (names.size() == Presets::numPresets && ! names.contains ({}), "each has a name of its own");
+    const juce::StringArray firstSixteen { "Empty Bench", "Supersaw Pad", "Warm Strings", "Slow Swell", "Trance Lead", "8-Bit Lead",
+                                           "Hollow Flute", "Saw Pluck", "Wood Mallet", "Chord Stab", "Drawbar Organ", "Glass Keys",
+                                           "Brass Section", "Fifth Stack", "Reese Bass", "Sub Bass" };
+    bool keptTheirNumbers = true;
+    for (int i = 0; i < firstSixteen.size(); ++i)
+        keptTheirNumbers = keptTheirNumbers && names[i] == firstSixteen[i];
+    check (keptTheirNumbers && names.indexOf ("Filter Pluck") >= firstSixteen.size() && names.indexOf ("Acid Bass") >= firstSixteen.size(),
+           "presets added later come after the first sixteen, which keep the program numbers hosts saved");
 
     // Every preset loads its modules, set out without overlapping, each
     // envelope shaping its own oscillator, and plays a big chord at full

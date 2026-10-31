@@ -150,7 +150,6 @@ you loaded is saved with your set.
 | **8-Bit Lead**    | Bare squares, the octave a short blip                   |
 | **Hollow Flute**  | A breathy triangle, its octave breathing in late        |
 | **Saw Pluck**     | A short, bright pluck for arpeggios                     |
-| **Filter Pluck**  | A saw whose low-pass snaps shut as it rings             |
 | **Wood Mallet**   | A soft mallet that dies away                            |
 | **Chord Stab**    | Held for a beat, then gone: house chords                |
 | **Drawbar Organ** | Sines at 16', 8' and 4', with a percussive click        |
@@ -158,8 +157,9 @@ you loaded is saved with your set.
 | **Brass Section** | Biting saws that settle, a square swelling in below     |
 | **Fifth Stack**   | Root, fifth and sub, for big chords                     |
 | **Reese Bass**    | Two beating saws an octave down                         |
-| **Acid Bass**     | A squelchy square, its resonant filter swept short      |
 | **Sub Bass**      | A clean sine sub with a plucked edge                    |
+| **Filter Pluck**  | A saw whose low-pass snaps shut as it rings             |
+| **Acid Bass**     | A squelchy square, its resonant filter swept short      |
 
 ### Signal flow
 
