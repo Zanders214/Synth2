@@ -338,7 +338,7 @@ public:
             const juce::Graphics::ScopedSaveState saved (g);
             g.reduceClipRegion (canvas.getIntersection (box.reduced (10.0f * s)).toNearestInt());
             g.setColour (Palette::gridLine.withMultipliedAlpha (1.6f));
-            constexpr float spacing = 24.0f;
+            static constexpr float spacing = 24.0f;   // static, so the lambdas below can use it without a capture (MSVC)
             const float dot  = juce::jmax (1.5f, 2.0f * z);
             const auto  seen = viewport.visibleArea();
             const auto  first = [] (float from) { return juce::jmax (1, (int) std::ceil (from / spacing)); };
