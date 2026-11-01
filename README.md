@@ -435,6 +435,33 @@ Alongside it: a RealtimeSanitizer gate (no allocation, lock or system call on th
 thread), a performance benchmark with a trend dashboard, and SonarCloud analysis with
 coverage (the upload waits until the repository has a `SONAR_TOKEN` secret).
 
+### Performance benchmark
+
+`Tests/perf_bench.cpp` plays held chords at 48 kHz / 512 (8 notes of 7 voices, and
+16 notes of 16 voices on one, two and four oscillators, with the effects and with the
+filters) and writes the median ns per block of each to `bench_result.json`. Build and
+run it locally with:
+
+```bash
+cmake -B build-bench -DCMAKE_BUILD_TYPE=Release -DSYNTH2_BUILD_BENCH=ON && cmake --build build-bench --target perf_bench
+```
+
+The `nanobench` job in `perf.yml` gates pull requests against their own base, not
+against stored numbers: GitHub's shared runners differ by about 1.5x from one run to
+the next, which is bigger than most regressions. So on one runner, in one job, it
+builds `perf_bench` from the PR (its merge commit) and from the base (the merge
+commit's first parent), and runs them in turns on one core, five rounds, swapping
+which goes first each round. For each series it takes head / base in every round and
+the median of those ratios. The job fails when a series' median is above **1.15** and
+leaves a warning above 1.07; a slow runner slows both builds alike, so it cancels out.
+The table is in the job's summary, and the runs' JSON files are uploaded as the
+`bench-runs` artifact. A series new in the PR is listed without a baseline. The
+thresholds and the number of rounds are the `BENCH_*` variables at the top of
+`perf.yml`, and the comparison is `.github/scripts/bench_gate.py`.
+
+Pushes to `dev` and `main` run the benchmark once and add it to the trend chart on
+the `gh-pages` branch (`dev/bench`), without alerting.
+
 When a pull request from `dev` is merged into `main`, the release workflow builds and
 tests all three platforms and publishes a GitHub Release containing:
 
