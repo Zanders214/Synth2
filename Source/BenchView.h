@@ -138,9 +138,10 @@ private:
     letting go lands it there, or on the nearest free spot if it would cover
     another. A module that arrives fades in; one that is taken off fades out.
 
-    On the panel (Bench::Flow::panel) every module sits fixed in its own
-    place, and a click on an empty spot adds nothing; the cards glide there
-    and back as the flow changes.
+    On the panel (Bench::Flow::panel) the box is a fixed synth panel
+    instead: no dots, no zoom or pan, and only the panel's six modules, each
+    fixed in a section of its own (Bench::panelBounds) and laid out to fill
+    it (BenchModule::setPanelShape). A click on an empty spot adds nothing.
 
     The box zooms (Cmd / Ctrl + wheel, a pinch, or its ZoomPill, which the
     editor puts on the box's bottom edge) and pans (the wheel, two fingers, or dragging an empty spot) over
@@ -262,6 +263,9 @@ public:
     /** Where module `id` sits in this view, as tall as its card is drawn. */
     juce::Rectangle<int> boundsFor (const Bench::ModuleId& id)
     {
+        if (wasPanel && Bench::onPanel (id))
+            return (Bench::panelBounds (id) * uiScale).toNearestInt();
+
         // A hair's grace, so a card dropped at a pixel lands on that pixel
         // whatever the zoom made of it.
         const auto snap    = [] (float v) { return (int) std::floor (v + 0.01f); };
@@ -277,7 +281,7 @@ public:
         {
             auto& card = getModule (id);
             card.setView (view);
-            if (! juce::Desktop::getInstance().getAnimator().isAnimating (&card))
+            if (! card.isBeingDragged() && ! juce::Desktop::getInstance().getAnimator().isAnimating (&card))
                 card.setBounds (boundsFor (id));
         }
     }
@@ -310,19 +314,25 @@ public:
             lookAt (saved);
 
         auto& animator = juce::Desktop::getInstance().getAnimator();
-        const bool panel  = model.isPanel();
-        const bool glide  = panel != wasPanel;
-        wasPanel = panel;
+        if (const bool panel = model.isPanel(); panel != wasPanel)
+        {
+            // Onto the panel or off it: every card takes its new shape and
+            // place at once, and the box repaints with or without its dots.
+            wasPanel = panel;
+            for (const auto& id : Bench::allModules)
+            {
+                auto& card = getModule (id);
+                card.setFixedInPlace (panel);
+                card.setPanelShape (panel);
+            }
+            placeCards (true);
+            pill.setVisible (pillWanted && ! panel);
+            repaint();
+        }
         for (const auto& id : Bench::allModules)
         {
             auto& card = getModule (id);
-            card.setFixedInPlace (panel);
-            const bool present = model.isPresent (id);
-            if (glide && present && card.isVisible())
-            {
-                animator.animateComponent (&card, boundsFor (id), 1.0f, 200, false, 0.4, 0.0);
-                continue;
-            }
+            const bool present = model.isShown (id);
             if (present && ! card.isVisible())
                 show (id, true);
             else if (! present && card.isVisible())
@@ -340,7 +350,17 @@ public:
         }
     }
 
-    bool isShowingHint() const { return model.isEmpty(); }
+    bool isShowingHint() const { return model.isEmpty() && ! model.isPanel(); }
+
+    /** Whether the panel is showing (as of the last sync). */
+    bool isShowingPanel() const noexcept { return wasPanel; }
+
+    /** Shows the ZoomPill along with the bench (it hides itself on the panel, which doesn't zoom). */
+    void setPillWanted (bool wanted)
+    {
+        pillWanted = wanted;
+        pill.setVisible (pillWanted && ! wasPanel);
+    }
 
     void paint (juce::Graphics& g) override
     {
@@ -352,6 +372,13 @@ public:
 
         g.setColour (Palette::well.withAlpha (0.55f));
         g.fillRoundedRectangle (box, 16.0f * s);
+        if (wasPanel)
+        {
+            // The panel: its sections on a plain dark ground.
+            g.setColour (Palette::hairline);
+            g.drawRoundedRectangle (box.reduced (0.5f), 16.0f * s, juce::jmax (1.0f, s));
+            return;
+        }
 
         // The dots lie on the canvas, so they move and grow with it.
         {
@@ -404,6 +431,8 @@ public:
     // drags more than a few pixels, which pans instead.
     void mouseDown (const juce::MouseEvent& e) override
     {
+        if (wasPanel)
+            return;   // the panel neither pans nor adds
         press = Press { e.position, viewport.pan, false, true };
     }
 
@@ -435,6 +464,8 @@ public:
     // pans. A dial takes the wheel over itself; the rest of a card passes it here.
     void mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override
     {
+        if (wasPanel)
+            return;
         if (e.mods.isCommandDown())
         {
             zoomAround (e.position, viewport.zoom * std::exp2 (3.0f * wheel.deltaY));
@@ -446,6 +477,8 @@ public:
 
     void mouseMagnify (const juce::MouseEvent& e, float scaleFactor) override
     {
+        if (wasPanel)
+            return;
         zoomAround (e.position, viewport.zoom * scaleFactor);
     }
 
@@ -462,6 +495,9 @@ private:
 
     /** Design pixels to this view's: the window's scale times the zoom. */
     float scale() const noexcept { return uiScale * viewport.zoom; }
+
+    /** How large the cards are drawn: at the zoom on the bench, at the window's scale on the panel. */
+    float cardScale() const noexcept { return wasPanel ? uiScale : scale(); }
 
     /** Looks onto the canvas as `newViewport` (already limited) says. */
     void lookAt (const Bench::Viewport& newViewport)
@@ -486,7 +522,7 @@ private:
             auto& card = getModule (id);
             card.setDragArea (canvas.getIntersection (getLocalBounds()));
             if (rescale)
-                card.setUiScale (scale());
+                card.setUiScale (cardScale());
             if (card.isBeingDragged())
                 continue;
             juce::Desktop::getInstance().getAnimator().cancelAnimation (&card, true);
@@ -539,4 +575,5 @@ private:
     float  uiScale  = 1.0f;
     bool   wasEmpty = true;
     bool   wasPanel = false;
+    bool   pillWanted = true;
 };

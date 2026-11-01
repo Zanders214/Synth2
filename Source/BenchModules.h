@@ -400,7 +400,10 @@ private:
     shapes ("> OSC 2").
 
     On the panel a module is fixed in its place: its header doesn't drag it,
-    and it has no cross, only its power switch.
+    and it has no cross, only its power switch. It takes the panel's shape
+    there too (see setPanelShape): a flat section, as wide as the panel gives
+    it, its display across the top and all its dials in one row beneath,
+    whatever the gear menu's views say.
 */
 class BenchModule : public juce::Component
 {
@@ -485,6 +488,19 @@ public:
     }
     bool isFixedInPlace() const noexcept { return fixedInPlace; }
 
+    /** Lays the module out as a section of the panel (its display across
+        the top, its dials in one row under it), or as a card on the bench. */
+    void setPanelShape (bool shouldBePanelShaped)
+    {
+        if (panelShape == shouldBePanelShaped)
+            return;
+        panelShape = shouldBePanelShaped;
+        showDials();
+        resized();
+        repaint();
+    }
+    bool isPanelShaped() const noexcept { return panelShape; }
+
     void setUiScale (float newScale)
     {
         uiScale = newScale;
@@ -499,9 +515,7 @@ public:
         if (newView == view)
             return;
         view = newView;
-        const bool withDials = Bench::showsDials (id.kind, view);
-        for (const auto& dial : dials)
-            dial->slider.setVisible (withDials);
+        showDials();
         resized();
         repaint();
     }
@@ -555,14 +569,31 @@ public:
         using namespace Synth2;
         const float s    = uiScale;
         const auto  card = getLocalBounds().toFloat().reduced (0.5f);
-        const float radius = 14.0f * s;
 
-        juce::ColourGradient fill (Palette::panelTop.brighter (0.06f), 0.0f, card.getY(),
-                                   Palette::panelBottom.brighter (0.04f), 0.0f, card.getBottom(), false);
-        g.setGradientFill (fill);
-        g.fillRoundedRectangle (card, radius);
-        g.setColour (dragging ? Palette::accent.withAlpha (0.6f) : Palette::strongLine);
-        g.drawRoundedRectangle (card, radius, juce::jmax (1.0f, s));
+        if (panelShape)
+        {
+            // A flat section of the panel, its header a shade lighter.
+            const float radius = 6.0f * s;
+            g.setColour (Palette::panelTop.withMultipliedBrightness (0.85f));
+            g.fillRoundedRectangle (card, radius);
+            juce::Path header;
+            header.addRoundedRectangle (card.getX(), card.getY(), card.getWidth(), headerBounds().getHeight(), radius, radius,
+                                        true, true, false, false);
+            g.setColour (Palette::panelTop.brighter (0.08f));
+            g.fillPath (header);
+            g.setColour (Palette::hairline);
+            g.drawRoundedRectangle (card, radius, juce::jmax (1.0f, s));
+        }
+        else
+        {
+            const float radius = 14.0f * s;
+            juce::ColourGradient fill (Palette::panelTop.brighter (0.06f), 0.0f, card.getY(),
+                                       Palette::panelBottom.brighter (0.04f), 0.0f, card.getBottom(), false);
+            g.setGradientFill (fill);
+            g.fillRoundedRectangle (card, radius);
+            g.setColour (dragging ? Palette::accent.withAlpha (0.6f) : Palette::strongLine);
+            g.drawRoundedRectangle (card, radius, juce::jmax (1.0f, s));
+        }
 
         paintHeader (g);
 
@@ -581,6 +612,23 @@ public:
 
         auto area = getLocalBounds().withTrimmedTop (px (30.0f)).reduced (px (12.0f), 0);
         area.removeFromTop (px (8.0f));
+
+        if (panelShape)
+        {
+            // Every dial in one row along the bottom, the display over them.
+            auto row = area.removeFromBottom (px (6.0f + 52.0f + 31.0f)).withTrimmedBottom (px (6.0f));
+            area.removeFromBottom (px (8.0f));
+            layoutWell (area);
+            const int columnWidth = dials.empty() ? 0 : row.getWidth() / (int) dials.size();
+            for (size_t i = 0; i < dials.size(); ++i)
+            {
+                auto column = i + 1 == dials.size() ? row : row.removeFromLeft (columnWidth);
+                dials[i]->column = column;
+                dials[i]->slider.setBounds (column.withHeight (px (52.0f)).withSizeKeepingCentre (px (52.0f), px (52.0f)));
+            }
+            return;
+        }
+
         layoutWell (area.removeFromTop (px (Bench::wellHeightOf (id.kind, view))));
         if (! Bench::showsDials (id.kind, view))
             return;
@@ -697,6 +745,15 @@ protected:
     /** Lays the module's display well (and anything over it) out in `well`. */
     virtual void layoutWell (juce::Rectangle<int> well) = 0;
 
+    /** Whether the gear menu's views hide the well's display, as the panel never does. */
+    bool wellHidden() const noexcept
+    {
+        if (panelShape)
+            return false;
+        return id.kind == Bench::Kind::oscillator ? view.oscillators == Bench::OscillatorView::compact
+                                                  : Bench::wellHeightOf (id.kind, view) <= 0.0f;
+    }
+
     float getUiScale() const noexcept { return uiScale; }
 
 private:
@@ -801,6 +858,14 @@ private:
         juce::String shownWhy;
     };
 
+    // The dials show unless the gear menu's view hides them, and always on the panel.
+    void showDials()
+    {
+        const bool withDials = panelShape || Bench::showsDials (id.kind, view);
+        for (const auto& dial : dials)
+            dial->slider.setVisible (withDials);
+    }
+
     // Greys the insides out (all but the power switch) when the module is
     // switched off or out of the flow; being off is the reason given.
     // `again` reapplies it to children added since.
@@ -831,6 +896,7 @@ private:
     float uiScale  = 1.0f;
     bool  dragging = false;
     bool  fixedInPlace = false;
+    bool  panelShape   = false;
 };
 
 /** An oscillator: its WAVE well, where the shape is picked too, over PITCH /
@@ -875,7 +941,7 @@ public:
 private:
     void layoutWell (juce::Rectangle<int> well) override
     {
-        const bool compact = getView().oscillators == Bench::OscillatorView::compact;
+        const bool compact = wellHidden();
         display.setUiScale (getUiScale());
         picker.setUiScale (getUiScale());
         picker.setCompact (compact);
@@ -988,6 +1054,8 @@ public:
     void resized() override
     {
         BenchModule::resized();
+        if (isPanelShaped())
+            return;   // the SWEEP well sits beside the response (see layoutWell)
         // The SWEEP well fills the room under the row of dials.
         const float s  = getUiScale();
         const auto  px = [s] (float v) { return juce::roundToInt (v * s); };
@@ -1000,6 +1068,15 @@ private:
     void layoutWell (juce::Rectangle<int> well) override
     {
         response.setUiScale (getUiScale());
+        if (isPanelShaped())
+        {
+            // On the panel the response and the SWEEP share the display's row.
+            const int between = juce::roundToInt (8.0f * getUiScale());
+            sweep.setUiScale (getUiScale());
+            response.setBounds (well.removeFromLeft ((well.getWidth() - between) / 2));
+            sweep.setBounds (well.withTrimmedLeft (between));
+            return;
+        }
         response.setBounds (well);
     }
 
