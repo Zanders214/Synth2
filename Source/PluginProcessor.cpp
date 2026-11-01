@@ -335,15 +335,17 @@ Synth2Engine::Settings Synth2AudioProcessor::currentSettings() const noexcept
     const auto param = [this] (const char* id) { return apvts.getRawParameterValue (id)->load(); };
 
     Synth2Engine::Settings settings;
-    // The panel goes by number, as the fixed order does.
+    // The panel goes by number, as the fixed order does, and plays only its
+    // two oscillators: OSC 3 and 4 wait, silent, for the bench.
     const int  chosen = juce::jlimit (0, Bench::numFlows - 1, juce::roundToInt (param (ParamID::signalFlow)));
-    const int  flow   = chosen == (int) SignalFlow::panel ? (int) SignalFlow::fixed : chosen;
+    const bool panel  = chosen == (int) SignalFlow::panel;
+    const int  flow   = panel ? (int) SignalFlow::fixed : chosen;
     const bool cables = flow == (int) SignalFlow::cables;
     for (size_t k = 0; k < settings.oscillators.size(); ++k)
     {
         const auto& ids  = ParamID::oscillators[k];
         auto& oscillator = settings.oscillators[k];
-        oscillator.on          = param (ids.on) >= 0.5f;
+        oscillator.on          = param (ids.on) >= 0.5f && (! panel || (int) k < Bench::panelSlots);
         oscillator.routed      = ! cables || routedToOutput[k].load (std::memory_order_relaxed);
         oscillator.wave        = (Waveform) juce::jlimit (0, 3, juce::roundToInt (param (ids.wave)));
         oscillator.semitones   = juce::roundToInt (param (ids.pitch));

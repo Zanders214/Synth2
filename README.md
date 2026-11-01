@@ -134,8 +134,8 @@ previous and next one, and a click on its name opens a tray of them all. Your DA
 the same presets as the plugin's programs. Loading one puts its modules on the bench
 (oscillators along the top, each with its own unison stack, its filter, if it has
 one, under it, and its DAHDSR envelope under that, patched the same way:
-OSC -> FILTER -> ENV -> OUT), keeps the signal flow you picked (on the panel, every
-module it doesn't use is there too, switched off),
+OSC -> FILTER -> ENV -> OUT), keeps the signal flow you picked (on the panel, each of
+the panel's modules it doesn't use is there too, switched off),
 puts just its effects
 on the EFFECTS tab, side by side and switched on (most pads and keys have a reverb,
 some a delay on the beat), and sets everything
@@ -190,13 +190,18 @@ sets saved before you could pick keep the fixed order they played in.
   output, so you hear it straight away; and switching to the cables with nothing
   patched patches each oscillator through its own filter and envelope by number, so
   it sounds as it did.
-- **Panel**: everything on one page, each module in its own place, like a hardware
-  synth. All twelve cards sit on the bench in four columns, OSC n over FILTER n over
-  ENV n, and stay put: they don't drag, have no cross, and a click on an empty spot
-  adds nothing. Each card's power switch turns it on and off, and sound goes by
-  number, as in the fixed order. Going to the panel puts the modules you didn't have
-  on it, switched off; leaving it takes the ones still switched off back off, keeps
-  the ones you switched on, and puts every card back where you had it on the bench.
+- **Panel**: a smaller, fixed two-oscillator synth on one page, with no workbench
+  (the tab reads PANEL). OSC 1 and OSC 2 are wide rows on the left, each with its
+  wave across the top and its six dials in a row beneath; FILTER 1 and FILTER 2 sit
+  beside them on the right, their response and SWEEP side by side; ENV 1 and ENV 2
+  run along the bottom. Nothing drags, zooms or pans, a click on an empty spot adds
+  nothing, and the gear's card views don't change it. Each section's power switch
+  turns it on and off, and sound goes by number, as in the fixed order. OSC 3 and 4
+  (and FILTER 3 and 4, ENV 3 and 4) keep their settings but are hidden and silent on
+  the panel, so a preset that uses them sounds thinner there; they play again when
+  you leave it. Going to the panel puts the panel's modules you didn't have on it,
+  switched off; leaving it takes the ones still switched off back off, keeps the
+  ones you switched on, and puts every card back where you had it on the bench.
 
 The oscillators, each through its own filter and under its own envelope, are summed,
 so the four ways differ only in which filter and envelope take which oscillator

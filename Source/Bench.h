@@ -42,10 +42,12 @@
     runs through at most one filter and one envelope, in either order, to
     the output (see chainFrom). The cables are the default.
 
-    On the panel (Flow::panel) every module has a place of its own, column by
-    column (see panelPosition), and sound goes by number. All twelve are on
+    The panel (Flow::panel) is a smaller, fixed synth: two of each module
+    (see onPanel), each in a section of its own (see panelBounds), and sound
+    goes by number. Modules 3 and 4 keep their settings but are hidden and
+    silent there, and play again off the panel. The panel's six are all on
     the bench there, and the power switches turn them on and off: going to
-    the panel puts each module that was off the bench on it, switched off
+    the panel puts each of them that was off the bench on it, switched off
     and marked spare, and leaving it takes the spare ones still switched off
     back off (see setFlow). Where each sits on the free bench is kept, so it
     comes back there.
@@ -276,20 +278,41 @@ namespace Bench
         return { x, 0.0f };
     }
 
-    /** Where module `id` sits on the panel: OSC n at the top of column n,
-        FILTER n under it and ENV n under that, the way sound runs, the four
-        columns in the middle of the canvas. */
-    inline juce::Point<float> panelPosition (const ModuleId& id) noexcept
+    /** How many of each module the panel has: OSC 1 and 2, FILTER 1 and 2, ENV 1 and 2. */
+    inline constexpr int panelSlots = 2;
+
+    /** Whether module `id` is one of the panel's. */
+    inline constexpr bool onPanel (const ModuleId& id) noexcept { return id.slot < panelSlots; }
+
+    /** The panel's sections, in the bench's box (design pixels, viewWidth x
+        viewHeight): the two oscillators as wide rows on the left, OSC 1 over
+        OSC 2, each filter beside its oscillator on the right, and the two
+        envelopes side by side along the bottom. */
+    namespace PanelLayout
     {
-        constexpr float left = 0.5f * (areaWidth - 4.0f * moduleWidth - 3.0f * gap);
-        const float x = left + (float) id.slot * (moduleWidth + gap);
+        inline constexpr float margin         = 12.0f;
+        inline constexpr float spacing        = 10.0f;
+        inline constexpr float envelopeRowHeight = 214.0f;
+        inline constexpr float filterWidth    = 368.0f;
+        inline constexpr float rowHeight      = 0.5f * (viewHeight - 2.0f * margin - 2.0f * spacing - envelopeRowHeight);
+        inline constexpr float oscillatorWidth = viewWidth - 2.0f * margin - spacing - filterWidth;
+        inline constexpr float envelopeWidth   = 0.5f * (viewWidth - 2.0f * margin - spacing);
+    }
+
+    /** Where module `id` (one of the panel's) sits on it, in the bench's box. */
+    inline juce::Rectangle<float> panelBounds (const ModuleId& id) noexcept
+    {
+        using namespace PanelLayout;
+        const float row = (float) juce::jlimit (0, panelSlots - 1, id.slot);
         switch (id.kind)
         {
-            case Kind::filter:     return { x, oscillatorHeight + gap };
-            case Kind::envelope:   return { x, oscillatorHeight + filterHeight + 2.0f * gap };
+            case Kind::filter:
+                return { margin + oscillatorWidth + spacing, margin + row * (rowHeight + spacing), filterWidth, rowHeight };
+            case Kind::envelope:
+                return { margin + row * (envelopeWidth + spacing), viewHeight - margin - envelopeRowHeight, envelopeWidth, envelopeRowHeight };
             case Kind::oscillator: break;
         }
-        return { x, 0.0f };
+        return { margin, margin + row * (rowHeight + spacing), oscillatorWidth, rowHeight };
     }
 
     // ---- How far the bench is zoomed and panned ----------------------------------------
@@ -505,10 +528,17 @@ namespace Bench
                 patchChains();
         }
 
-        /** Where `id` sits: its place on the panel, or where it was put. */
+        /** Where `id` sits: its place on the panel (for one of the panel's),
+            or where it was put. */
         juce::Point<float> positionOf (const ModuleId& id) const
         {
-            return isPanel() ? panelPosition (id) : placeOf (id);
+            return isPanel() && onPanel (id) ? panelBounds (id).getPosition() : placeOf (id);
+        }
+
+        /** Whether `id` shows: on the bench, and on the panel one of its six. */
+        bool isShown (const ModuleId& id) const
+        {
+            return isPresent (id) && (! isPanel() || onPanel (id));
         }
 
         /** Where `id` was put on the free bench, even while the panel shows it elsewhere. */
@@ -580,7 +610,7 @@ namespace Bench
             oscillator at the top of its column, with its filter (if there
             is one) under it and its envelope under that, the way sound runs
             through them, patched that way too (see patchChains); and on the
-            panel, every other module there, switched off. If the bench is
+            panel, every other one of its modules there, switched off. If the bench is
             zoomed or panned so they don't all show, it frames them. */
         void layOut()
         {
@@ -597,7 +627,10 @@ namespace Bench
             }
             patchChains();
             if (isPanel())
+            {
                 fillPanel();
+                return;   // the panel doesn't zoom; leaving it frames the bench
+            }
 
             const auto shown   = viewport();
             const auto modules = extent();
@@ -974,14 +1007,14 @@ namespace Bench
             parameter->endChangeGesture();
         }
 
-        // Every module onto the panel: each that was off the bench comes on
+        // The panel's modules onto it: each that was off the bench comes on
         // it switched off, marked spare.
         void fillPanel()
         {
             ensureBench();
             for (const auto& id : allModules)
             {
-                if (isPresent (id))
+                if (! onPanel (id) || isPresent (id))
                     continue;
                 if (! findModule (id).isValid())
                     setPosition (id, defaultPosition (id));

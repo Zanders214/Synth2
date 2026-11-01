@@ -312,7 +312,7 @@ void Synth2AudioProcessorEditor::showTab (Tab which)
         return;
     tab = which;
     benchView.setVisible (tab == Tab::bench);
-    benchView.getZoomPill().setVisible (tab == Tab::bench);
+    benchView.setPillWanted (tab == Tab::bench);
     effectsView.setVisible (tab == Tab::effects);
     cables.repaint();
     repaint();
@@ -754,7 +754,8 @@ void Synth2AudioProcessorEditor::paintHeader (juce::Graphics& g, float s) const
         }
         g.setFont (Fonts::sans (10.0f * s, true, 0.14f));
         g.setColour (showing ? Palette::accent : Palette::textDim);
-        g.drawText (which == Tab::bench ? "BENCH" : "EFFECTS", half, juce::Justification::centred, false);
+        const char* benchName = model.isPanel() ? "PANEL" : "BENCH";
+        g.drawText (which == Tab::bench ? benchName : "EFFECTS", half, juce::Justification::centred, false);
     }
 
     // The preset picker: the loaded preset's name in a pill, with arrows to

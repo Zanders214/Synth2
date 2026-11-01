@@ -2349,8 +2349,8 @@ void testPresets()
     snapshot (render (*editor), "10-preset-loaded");
 }
 
-// The cables by default, and the panel: every module in its own place,
-// switched on and off.
+// The cables by default, and the panel: a fixed two-oscillator synth, its
+// six modules each in a section of its own, switched on and off.
 void testPanel()
 {
     std::printf ("Panel:\n");
@@ -2360,7 +2360,8 @@ void testPanel()
     Bench::Model model (p.getState());
     using Kind = Bench::Kind;
     const Bench::ModuleId o1 { Kind::oscillator, 0 }, o2 { Kind::oscillator, 1 }, o3 { Kind::oscillator, 2 }, o4 { Kind::oscillator, 3 },
-                          f1 { Kind::filter, 0 }, e1 { Kind::envelope, 0 }, e2 { Kind::envelope, 1 };
+                          f1 { Kind::filter, 0 }, f2 { Kind::filter, 1 }, e1 { Kind::envelope, 0 }, e2 { Kind::envelope, 1 };
+    const std::vector<Bench::ModuleId> panelSix { o1, o2, f1, f2, e1, e2 };
     const auto isOn = [&p] (const Bench::ModuleId& id)
     {
         const auto slot = (size_t) id.slot;
@@ -2379,21 +2380,29 @@ void testPanel()
     model.move (o1, { 300.0f, 100.0f });   // over OSC 2's default place
     const auto freeAt = model.positionOf (o1);
 
-    // Onto the panel: all twelve, those that weren't there switched off.
+    // Onto the panel: its six, those that weren't there switched off, and
+    // nothing of 3 and 4 added.
     model.setFlow (Bench::Flow::panel);
     bool restOff = true;
-    for (const auto& id : Bench::allModules)
+    for (const auto& id : panelSix)
         if (id != o1 && id != e1)
             restOff = restOff && ! isOn (id);
-    check (model.isPanel() && model.present().size() == Bench::allModules.size() && isOn (o1) && isOn (e1) && restOff,
-           "on the panel every module is on the bench, those that weren't switched off");
+    check (model.isPanel() && model.present() == std::vector<Bench::ModuleId> { o1, o2, e1, e2, f1, f2 } && isOn (o1) && isOn (e1) && restOff,
+           "on the panel its six modules are on the bench, those that weren't switched off, and none of 3 and 4");
     bool inPlace = true;
-    for (const auto& id : Bench::allModules)
-        inPlace = inPlace && model.positionOf (id) == Bench::panelPosition (id);
-    check (inPlace && Bench::panelPosition (o2) == juce::Point<float> (504.0f, 0.0f) && Bench::panelPosition (f1) == juce::Point<float> (252.0f, 352.0f)
-               && Bench::panelPosition (e1) == juce::Point<float> (252.0f, 704.0f)
-               && model.extent() == juce::Rectangle<float> (252.0f, 0.0f, 992.0f, 1040.0f),
-           "each in its place: OSC n over FILTER n over ENV n, column by column, in the middle of the canvas, as tall as it");
+    for (const auto& id : panelSix)
+        inPlace = inPlace && model.positionOf (id) == Bench::panelBounds (id).getPosition()
+                          && juce::Rectangle<float> (Bench::viewWidth, Bench::viewHeight).contains (Bench::panelBounds (id));
+    for (const auto& a : panelSix)
+        for (const auto& b : panelSix)
+            inPlace = inPlace && (a == b || ! Bench::panelBounds (a).intersects (Bench::panelBounds (b)));
+    const auto at = [] (const Bench::ModuleId& id) { return Bench::panelBounds (id); };
+    check (inPlace && at (o2).getY() > at (o1).getBottom() && juce::exactlyEqual (at (o1).getX(), at (o2).getX())
+               && at (f1).getX() > at (o1).getRight() && juce::exactlyEqual (at (f1).getY(), at (o1).getY())
+               && juce::exactlyEqual (at (f2).getY(), at (o2).getY()) && at (e1).getY() > at (o2).getBottom()
+               && at (e2).getX() > at (e1).getRight() && juce::exactlyEqual (at (e2).getY(), at (e1).getY())
+               && at (o1).getWidth() > at (f1).getWidth(),
+           "each in its section, inside the box: OSC 1 over OSC 2 as wide rows, each filter beside its oscillator, ENV 1 and 2 along the bottom");
     check (p.currentSettings().oscillators[0].envelope == 0 && p.currentSettings().oscillators[0].routed
                && ! p.currentSettings().oscillators[1].active && p.currentSettings().oscillators[0].filter == -1,
            "sound goes by number: ENV 1 shapes OSC 1, the switched-off FILTER 1 lets it through");
@@ -2426,13 +2435,28 @@ void testPanel()
                && model.isPatchedToOutput (e2),
            "going to the cables with nothing patched patches each oscillator through its envelope, as it sounded");
 
-    // A preset on the panel stays on it, every module there.
+    // OSC 3 on the bench, and on: silent on the panel, back off it.
+    model.add (Kind::oscillator, Bench::defaultPosition (o3));
+    check (model.isPresent (o3) && isOn (o3) && p.currentSettings().oscillators[2].on, "OSC 3 on the bench plays");
+    model.setFlow (Bench::Flow::panel);
+    check (model.isPresent (o3) && ! model.isShown (o3) && ! p.currentSettings().oscillators[2].on && p.currentSettings().oscillators[0].on,
+           "on the panel OSC 3 is kept but hidden, and silent");
+    model.setFlow (Bench::Flow::cables);
+    check (model.isShown (o3) && p.currentSettings().oscillators[2].on, "and off the panel it plays again, as it was");
+    model.remove (o3);
+    setParam (p, ParamID::oscillator (2).active, 1.0f);
+
+    // A preset on the panel stays on it, its six there.
     model.setFlow (Bench::Flow::panel);
     p.loadPreset (Presets::numPresets - 1);
     int on = 0;
-    for (const auto& id : Bench::allModules)
+    bool sixThere = true;
+    for (const auto& id : panelSix)
+    {
         on += isOn (id) ? 1 : 0;
-    check (model.isPanel() && model.present().size() == Bench::allModules.size() && on > 0 && on < 12,
+        sixThere = sixThere && model.isShown (id);
+    }
+    check (model.isPanel() && sixThere && on > 0 && on < 6,
            "a preset loaded on the panel keeps it, its own modules on and the rest switched off");
     check (holdChordPeak (p, 8) > 0.02f, "and it sounds");
     releaseAll (p);
@@ -2441,8 +2465,10 @@ void testPanel()
     p.getStateInformation (saved);
     Synth2AudioProcessor restored;
     restored.setStateInformation (saved.getData(), (int) saved.getSize());
-    check (Bench::Model (restored.getState()).isPanel() && Bench::Model (restored.getState()).present().size() == Bench::allModules.size(),
-           "a set saved on the panel opens on it");
+    bool restoredSix = Bench::Model (restored.getState()).isPanel();
+    for (const auto& id : panelSix)
+        restoredSix = restoredSix && Bench::Model (restored.getState()).isShown (id);
+    check (restoredSix, "a set saved on the panel opens on it");
 
     // Following the layout goes by where the modules were put on the free
     // bench, even from a set restored on the panel with nothing spare.
@@ -2466,41 +2492,74 @@ void testPanel()
                "and a set reopened on the panel, switched to Follow layout, plays that order");
     }
 
-    // On screen: all twelve cards, fixed in place.
+    // On screen: the six sections, fixed in place, and none of 3 and 4.
+    model.add (Kind::envelope, Bench::defaultPosition ({ Kind::envelope, 2 }));   // ENV 3: kept, but not on the panel
     std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
     auto* editor = dynamic_cast<Synth2AudioProcessorEditor*> (base.get());
     if (editor == nullptr)
         return;
     auto& bench = editor->getBench();
-    const auto allShown = [&bench]
+    const auto sixShown = [&bench, &panelSix]
     {
-        return std::all_of (Bench::allModules.begin(), Bench::allModules.end(), [&bench] (const auto& id)
-                            { return bench.getModule (id).isVisible() && bench.getModule (id).getAlpha() >= 1.0f; });
+        bool shown = true;
+        for (const auto& id : Bench::allModules)
+        {
+            const bool wanted = std::find (panelSix.begin(), panelSix.end(), id) != panelSix.end();
+            shown = shown && bench.getModule (id).isVisible() == wanted && (! wanted || bench.getModule (id).getAlpha() >= 1.0f);
+        }
+        return shown;
     };
-    check (pumpUntil (allShown), "all twelve cards show");
-    bench.fit();
-    check (bench.getViewport().visibleArea().contains (model.extent()), "and fit in the box");
+    check (pumpUntil (sixShown) && bench.isShowingPanel(), "the panel's six sections show, and nothing of 3 and 4");
+    bool filled = true;
+    for (const auto& id : panelSix)
+        filled = filled && bench.getModule (id).getBounds() == bench.boundsFor (id)
+                        && bench.getLocalBounds().contains (bench.getModule (id).getBounds())
+                        && bench.getModule (id).isPanelShaped();
+    check (filled, "each fills its section, inside the box, in the panel's shape");
     auto& osc1 = bench.getOscillator (0);
-    auto& osc3 = bench.getOscillator (2);
+    auto& osc2 = bench.getOscillator (1);
     check (osc1.isFixedInPlace() && osc1.closeBounds().isEmpty(), "fixed in their places, with no cross");
-    check (bench.getFilter (0).getY() > osc1.getBottom() && bench.getEnvelope (0).getY() > bench.getFilter (0).getBottom()
-               && bench.getFilter (0).getX() == osc1.getX() && bench.getOscillator (1).getX() > osc1.getRight(),
-           "each column OSC over FILTER over ENV");
+    check (osc2.getY() > osc1.getBottom() && bench.getFilter (0).getX() > osc1.getRight() && bench.getFilter (0).getY() == osc1.getY()
+               && bench.getEnvelope (0).getY() > osc2.getBottom() && bench.getEnvelope (1).getX() > bench.getEnvelope (0).getRight(),
+           "the oscillators as rows on the left, the filters beside them, the envelopes along the bottom");
+    bool dialsInRow = true;
+    for (const auto& id : panelSix)
+    {
+        auto& module = bench.getModule (id);
+        for (int d = 0; d < module.getNumDials(); ++d)
+            dialsInRow = dialsInRow && module.getDial (d).isVisible() && module.getDial (d).getY() == module.getDial (0).getY()
+                                    && (d == 0 || module.getDial (d).getX() > module.getDial (d - 1).getRight());
+    }
+    check (dialsInRow, "each section's dials in one row");
+    check (! bench.getZoomPill().isVisible(), "the panel doesn't zoom: no zoom pill");
+    const auto viewportBefore = bench.getViewport();
+    bench.mouseWheelMove (mouseAt (bench, { 400.0f, 300.0f }), juce::MouseWheelDetails { 0.0f, 0.2f, false, false, false });
+    check (bench.getViewport() == viewportBefore && osc1.getBounds() == bench.boundsFor (o1), "and the wheel doesn't pan it");
+
+    model.setView ({ Bench::EnvelopeView::knobs, Bench::OscillatorView::compact });
+    check (pumpUntil ([&] { return bench.getEnvelope (0).getView() == model.view(); })
+               && osc1.getDisplay().isVisible() && bench.getEnvelope (0).getDisplay().isVisible() && bench.getEnvelope (0).getDial (0).isVisible(),
+           "the gear's card views leave the panel as it is");
+    model.setView ({});
+    pumpUntil ([&] { return bench.getEnvelope (0).getView() == model.view(); });
+
     const auto before = osc1.getPosition();
     dragHeader (osc1, { 120.0f, 60.0f });
-    check (osc1.getPosition() == before && model.positionOf (o1) == Bench::panelPosition (o1), "dragging a header moves nothing");
-    const juce::Point<float> empty ((float) bench.getWidth() - 30.0f, (float) bench.getHeight() * 0.5f);
+    check (osc1.getPosition() == before && model.positionOf (o1) == Bench::panelBounds (o1).getPosition(), "dragging a header moves nothing");
+    const juce::Point<float> empty ((float) bench.getWidth() - 4.0f, (float) bench.getHeight() * 0.5f);
     bench.mouseDown (mouseAt (bench, empty));
     bench.mouseUp (mouseAt (bench, empty, empty));
     check (! editor->getTrays().getAdd().isOpen(), "a click on an empty spot adds nothing");
 
-    const bool osc3WasOn = isOn (o3);
-    check (osc3WasOn || osc3.isDimmed(), "a card switched off is greyed out in its place");
-    osc3.getPower().triggerClick();
-    check (pumpUntil ([&] { return isOn (o3) != osc3WasOn; }) && pumpUntil ([&] { return osc3.isDimmed() == osc3WasOn; }),
+    const bool osc2WasOn = isOn (o2);
+    check (osc2WasOn || osc2.isDimmed(), "a section switched off is greyed out in its place");
+    osc2.getPower().triggerClick();
+    check (pumpUntil ([&] { return isOn (o2) != osc2WasOn; }) && pumpUntil ([&] { return osc2.isDimmed() == osc2WasOn; }),
            "its power switch turns it on or off");
-    if (! osc3WasOn)
-        snapshot (render (*editor), "bench-panel");
+    if (osc2WasOn)
+        osc2.getPower().triggerClick();
+    pumpUntil ([&] { return isOn (o2); });
+    snapshot (render (*editor), "bench-panel");
 
     // Back to the cables from the gear: the cards come loose again.
     auto& settings = editor->getTrays().getSettings();
@@ -2509,6 +2568,9 @@ void testPanel()
     settings.mouseDown (mouseAt (settings, settings.choiceBounds (2).getCentre()));
     check (! model.isPanel() && pumpUntil ([&] { return ! osc1.isFixedInPlace() && ! osc1.closeBounds().isEmpty(); }),
            "picking Patch cables lets the cards move again, with their crosses");
+    check (pumpUntil ([&] { return ! osc1.isPanelShaped() && osc1.getBounds() == bench.boundsFor (o1) && bench.getEnvelope (2).isVisible(); })
+               && bench.getZoomPill().isVisible(),
+           "card-shaped again, ENV 3 back, and the zoom pill");
     check (model.present().size() < Bench::allModules.size() && bench.getViewport().visibleArea().contains (model.extent()),
            "with the spare cards gone, and what is left framed");
 }
