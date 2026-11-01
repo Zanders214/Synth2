@@ -24,24 +24,28 @@ env:
   BENCH_ROUNDS: 5             # base/head pairs per PR
   BENCH_FAIL_RATIO: '1.15'    # fail when a series' median head/base ratio is above this
   BENCH_WARN_RATIO: '1.07'    # annotate (but pass) above this
-  # Paths relative to the workspace, so the head and base trees share ccache hits.
-  CCACHE_BASEDIR: ${{ github.workspace }}
 
 jobs:
   benchmark:
     name: nanobench
     runs-on: ubuntu-latest          # single runner only — cross-OS numbers aren't comparable
     steps:
+      # The head stays at the workspace root: github-action-benchmark runs its git
+      # fetch / switch of gh-pages there on pushes.
       - uses: actions/checkout@v4
         with:
-          path: head
           fetch-depth: 2            # a PR checks out its merge commit; parent 1 is the base
 
+      # The base goes in a worktree beside the workspace, and ccache takes paths
+      # relative to their parent, so the two trees share its hits.
       - name: Check out the base
         if: github.event_name == 'pull_request'
         run: |
-          git -C head worktree add --detach ../base HEAD^1
-          echo "head $(git -C head rev-parse --short HEAD), base $(git -C base rev-parse --short HEAD)"
+          git worktree add --detach ../base HEAD^1
+          echo "head $(git rev-parse --short HEAD), base $(git -C ../base rev-parse --short HEAD)"
+
+      - name: ccache base dir
+        run: echo "CCACHE_BASEDIR=$(dirname "$GITHUB_WORKSPACE")" >> "$GITHUB_ENV"
 
       - name: JUCE Linux deps
         run: |
@@ -68,11 +72,10 @@ jobs:
           # Generator-scoped key: the Makefiles-based build.yml / sonarcloud.yml
           # cache the same _deps path, and reusing it under -G Ninja trips a
           # "generator does not match" error in the JUCE subbuild.
-          path: head/build/_deps
+          path: build/_deps
           key: juce-ninja-${{ runner.os }}-8.0.4
 
       - name: Build perf_bench (head)
-        working-directory: head
         run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSYNTH2_BUILD_BENCH=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
@@ -80,7 +83,7 @@ jobs:
 
       - name: Build perf_bench (base)
         if: github.event_name == 'pull_request'
-        working-directory: base
+        working-directory: ../base
         run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSYNTH2_BUILD_BENCH=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
@@ -90,7 +93,7 @@ jobs:
       - name: Run benchmark
         if: github.event_name != 'pull_request'
         run: |
-          BIN=$(find head/build -type f -name perf_bench -path '*_artefacts*' | head -1)
+          BIN=$(find build -type f -name perf_bench -path '*_artefacts*' | head -1)
           echo "Running $BIN"
           xvfb-run -a "$BIN" bench_result.json
 
@@ -100,8 +103,8 @@ jobs:
       - name: Run benchmark (base and head, interleaved)
         if: github.event_name == 'pull_request'
         run: |
-          HEAD_BIN=$(find head/build -type f -name perf_bench -path '*_artefacts*' | head -1)
-          BASE_BIN=$(find base/build -type f -name perf_bench -path '*_artefacts*' | head -1)
+          HEAD_BIN=$(find build -type f -name perf_bench -path '*_artefacts*' | head -1)
+          BASE_BIN=$(find ../base/build -type f -name perf_bench -path '*_artefacts*' | head -1)
           mkdir -p bench
           cat > bench/run.sh <<'EOF'
           set -e
@@ -119,7 +122,7 @@ jobs:
 
       - name: Compare head with base
         if: github.event_name == 'pull_request'
-        run: python3 head/.github/scripts/bench_gate.py bench
+        run: python3 .github/scripts/bench_gate.py bench
 
       - name: Upload the runs
         if: always() && github.event_name == 'pull_request'
