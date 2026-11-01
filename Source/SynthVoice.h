@@ -309,6 +309,37 @@ private:
         std::array<float, maxChunk> levels;
         shape (part, osc.level, count, levels, numSamples, ramp);
 
+        // Most of the time (a held note) every copy is settled: in or out,
+        // and where it is panned. Then each goes straight into the note, or
+        // the chunk its filter takes.
+        const bool direct = ! osc.filtered && juce::exactlyEqual (part.filterMix, 0.0f);
+        if (allSettled (part, playing, numPlaying, count, relayout))
+        {
+            std::array<BlepOscillator*, Unison::maxVoices> bank {};
+            std::array<float, Unison::maxVoices> fades {}, panLeft {}, panRight {};
+            for (size_t k = 0; k < (size_t) numPlaying; ++k)
+            {
+                auto& copy  = part.copies[playing[k]];
+                bank[k]     = &copy.oscillator;
+                fades[k]    = copy.fade;
+                panLeft[k]  = copy.pan.left;
+                panRight[k] = copy.pan.right;
+            }
+            if (direct)
+            {
+                part.sweep.advance (numSamples);
+                BlepOscillator::renderPanned (bank.data(), numPlaying, osc.wave, levels.data(), fades.data(), panLeft.data(), panRight.data(),
+                                              left, right, numSamples);
+                return;
+            }
+            std::array<float, maxChunk> dryL {};
+            std::array<float, maxChunk> dryR {};
+            BlepOscillator::renderPanned (bank.data(), numPlaying, osc.wave, levels.data(), fades.data(), panLeft.data(), panRight.data(),
+                                          dryL.data(), dryR.data(), numSamples);
+            filterInto (part, osc, dryL, dryR, left, right, numSamples);
+            return;
+        }
+
         std::array<std::array<float, maxChunk>, Unison::maxVoices> rows;
         std::array<float*, Unison::maxVoices> outs {};
         std::array<BlepOscillator*, Unison::maxVoices> bank {};
@@ -321,7 +352,7 @@ private:
 
         // With no filter on it (or fading), the copies go straight into the
         // note; otherwise into a chunk of their own, to be filtered first.
-        if (! osc.filtered && juce::exactlyEqual (part.filterMix, 0.0f))
+        if (direct)
         {
             part.sweep.advance (numSamples);
             for (size_t k = 0; k < (size_t) numPlaying; ++k)
@@ -336,6 +367,28 @@ private:
             mix (part.copies[playing[k]], (int) playing[k] < count, count, (int) playing[k], osc.width, relayout,
                  rows[k].data(), dryL.data(), dryR.data(), numSamples, ramp);
         filterInto (part, osc, dryL, dryR, left, right, numSamples);
+    }
+
+    // Whether every copy playing is settled, so mix() would add it in as it
+    // is: faded all the way in (or out), and not moving to a new place in
+    // the stereo field.
+    static bool allSettled (const Part& part, const std::array<size_t, Unison::maxVoices>& playing, int numPlaying, int count,
+                            bool relayout) noexcept
+    {
+        for (size_t k = 0; k < (size_t) numPlaying; ++k)
+        {
+            const auto& copy  = part.copies[playing[k]];
+            const bool wanted = (int) playing[k] < count;
+            if (! juce::exactlyEqual (copy.fade, wanted ? 1.0f : 0.0f))
+                return false;
+            if (wanted && relayout)
+            {
+                const auto to = Unison::panGains (Unison::pan ((int) playing[k], count, part.layout.width));
+                if (! juce::exactlyEqual (copy.pan.left, to.left) || ! juce::exactlyEqual (copy.pan.right, to.right))
+                    return false;
+            }
+        }
+        return true;
     }
 
     // Filters a part's chunk and adds it into left / right. The cutoff

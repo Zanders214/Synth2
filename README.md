@@ -354,6 +354,14 @@ The standalone app (ZandersSynth2.app) plays on its own, with no DAW:
 The saw and square are band-limited (PolyBLEP), so high notes don't fill up with
 aliasing; the sine and triangle are played as they are.
 
+Each oscillator keeps its phase as a 32-bit fraction of a cycle, which wraps by
+itself as it overflows, and works its shape out from that in float (the sine as a
+short polynomial, within 2e-7 of the exact one). That lets each note step its
+unison copies several at a time, and once the copies have settled (no fade or
+spread gliding) play them straight into the stereo pair, faded and panned in the
+same pass, rather than one row at a time. The result is within a float's rounding
+of the exact shapes, about 95 dB below the sound.
+
 ## Building
 
 JUCE is pulled automatically via CMake `FetchContent` (pinned to `8.0.4`):
