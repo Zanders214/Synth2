@@ -10,19 +10,42 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: write             # the trend data is pushed to gh-pages
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+# A pull request is gated against its own base, built and run on the same runner:
+# shared runners differ by ~1.5x from run to run, which swamps any regression a
+# stored number from another run could catch. Pushes to dev/main only add to the
+# trend chart.
+env:
+  BENCH_ROUNDS: 5             # base/head pairs per PR
+  BENCH_FAIL_RATIO: '1.15'    # fail when a series' median head/base ratio is above this
+  BENCH_WARN_RATIO: '1.07'    # annotate (but pass) above this
 
 jobs:
   benchmark:
     name: nanobench
     runs-on: ubuntu-latest          # single runner only — cross-OS numbers aren't comparable
     steps:
+      # The head stays at the workspace root: github-action-benchmark runs its git
+      # fetch / switch of gh-pages there on pushes.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2            # a PR checks out its merge commit; parent 1 is the base
+
+      # The base goes in a worktree beside the workspace, and ccache takes paths
+      # relative to their parent, so the two trees share its hits.
+      - name: Check out the base
+        if: github.event_name == 'pull_request'
+        run: |
+          git worktree add --detach ../base HEAD^1
+          echo "head $(git rev-parse --short HEAD), base $(git -C ../base rev-parse --short HEAD)"
+
+      - name: ccache base dir
+        run: echo "CCACHE_BASEDIR=$(dirname "$GITHUB_WORKSPACE")" >> "$GITHUB_ENV"
 
       - name: JUCE Linux deps
         run: |
@@ -52,21 +75,67 @@ jobs:
           path: build/_deps
           key: juce-ninja-${{ runner.os }}-8.0.4
 
-      - name: Configure
-        run: >
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSYNTH2_BUILD_BENCH=ON
-          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - name: Build perf_bench (head)
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSYNTH2_BUILD_BENCH=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build --target perf_bench --parallel
 
-      - name: Build perf_bench
-        run: cmake --build build --target perf_bench --parallel
+      - name: Build perf_bench (base)
+        if: github.event_name == 'pull_request'
+        working-directory: ../base
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSYNTH2_BUILD_BENCH=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build --target perf_bench --parallel
 
+      # Pushes: one run, for the trend chart.
       - name: Run benchmark
+        if: github.event_name != 'pull_request'
         run: |
           BIN=$(find build -type f -name perf_bench -path '*_artefacts*' | head -1)
           echo "Running $BIN"
           xvfb-run -a "$BIN" bench_result.json
 
+      # PRs: base and head in turns on one core, the order swapped every round
+      # (base-head, head-base, ...) so a runner drifting faster or slower over the
+      # job weighs on both alike.
+      - name: Run benchmark (base and head, interleaved)
+        if: github.event_name == 'pull_request'
+        run: |
+          HEAD_BIN=$(find build -type f -name perf_bench -path '*_artefacts*' | head -1)
+          BASE_BIN=$(find ../base/build -type f -name perf_bench -path '*_artefacts*' | head -1)
+          mkdir -p bench
+          cat > bench/run.sh <<'EOF'
+          set -e
+          for i in $(seq 1 "$BENCH_ROUNDS"); do
+            if [ $((i % 2)) -eq 1 ]; then order="base head"; else order="head base"; fi
+            for side in $order; do
+              if [ "$side" = base ]; then bin="$BASE_BIN"; else bin="$HEAD_BIN"; fi
+              echo "::group::round $i: $side"
+              taskset -c 1 "$bin" "bench/$side-$i.json"
+              echo "::endgroup::"
+            done
+          done
+          EOF
+          HEAD_BIN="$HEAD_BIN" BASE_BIN="$BASE_BIN" xvfb-run -a bash bench/run.sh
+
+      - name: Compare head with base
+        if: github.event_name == 'pull_request'
+        run: python3 .github/scripts/bench_gate.py bench
+
+      - name: Upload the runs
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-runs
+          path: bench/*.json
+          if-no-files-found: ignore
+
+      # The trend chart (gh-pages, dev/bench). It doesn't alert: numbers stored
+      # from other runs are only comparable to within the runners' spread.
       - uses: benchmark-action/github-action-benchmark@v1
+        if: github.event_name != 'pull_request'
         with:
           name: ZandersSynth2 DSP
           tool: customSmallerIsBetter
@@ -74,9 +143,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           gh-pages-branch: gh-pages
           benchmark-data-dir-path: dev/bench
-          # publish data only from the integration branches; PRs just compare + comment
           auto-push: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
-          comment-on-alert: true
-          fail-on-alert: true
-          alert-threshold: '150%'          # generous, to absorb shared-runner noise
+          comment-on-alert: false
+          fail-on-alert: false
           summary-always: true
