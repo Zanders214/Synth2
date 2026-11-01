@@ -216,6 +216,9 @@ public:
 
         const float ramp = 1.0f / (float) numSamples;
         bool sounding = false;
+        volatile float spin = 0.0f;   // THROWAWAY: a deliberate slowdown to check the perf gate fails
+        for (int n = 0; n < numSamples * 8; ++n)
+            spin = spin + 1.0f;
         for (size_t k = 0; k < parts.size(); ++k)
         {
             auto& part = parts[k];
