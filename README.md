@@ -42,8 +42,8 @@ was on) along the top and an envelope under each, sounding as it did: the unison
 and the envelope they used to share are copied into each. A set from the first bench,
 with its single Unison and Envelope modules, is brought over the same way.
 
-The keyboard and the OUTPUT dial stay in a strip along the bottom, whichever tab is
-showing.
+The keyboard and the GLIDE and OUTPUT dials stay in a strip along the bottom,
+whichever tab is showing.
 
 ### Zoom and pan
 
@@ -130,7 +130,21 @@ out. Its tail is levelled, so a long room is longer rather than louder.
 ### Presets
 
 The pill in the middle of the header holds the factory presets: its arrows step to the
-previous and next one, and a click on its name opens a tray of them all. Your DAW lists
+previous and next one, and a click on its name opens the **preset browser** over the
+bench (another click, its cross or Escape closes it). The keyboard stays playable under
+it, so each preset can be heard as you go:
+
+- **Categories** down the left: All, then **Init**, **Bass**, **Lead**, **Arp**, **Pluck**,
+  **Keys**, **Pads**, **Strings**, **Brass**, **SFX** and **Drums**, each with how many
+  presets it holds (one with none yet is greyed out).
+- **The list** in the middle, narrowed by the **search** box over it, which matches every
+  word you type against the names, descriptions and categories. A click loads a preset
+  and keeps the browser open; a double-click loads it and closes. The up and down arrow
+  keys load the previous and next one in the list.
+- **The loaded preset** on the right: its name and description, each oscillator's shape,
+  pitch, stack and filter or envelope, POLY or MONO with its GLIDE, and its effects.
+
+Your DAW lists
 the same presets as the plugin's programs. Loading one puts its modules on the bench
 (oscillators along the top, each with its own unison stack, its filter, if it has
 one, under it, and its DAHDSR envelope under that, patched the same way:
@@ -138,30 +152,31 @@ OSC -> FILTER -> ENV -> OUT), keeps the signal flow you picked (on the panel, ea
 the panel's modules it doesn't use is there too, switched off),
 puts just its effects
 on the EFFECTS tab, side by side and switched on (most pads and keys have a reverb,
-some a delay on the beat), and sets everything
+some a delay on the beat), sets its GLIDE and POLY / MONO, and sets everything
 it doesn't use back to its default; picking it again undoes your edits. Which preset
 you loaded is saved with your set.
 
-| Preset            | What it is                                              |
-|-------------------|---------------------------------------------------------|
-| **Empty Bench**   | Nothing on it: where a new instance starts              |
-| **Supersaw Pad**  | Nine wide saws, an octave blooming in on top            |
-| **Warm Strings**  | A soft saw section with a low triangle                  |
-| **Slow Swell**    | A shimmering stack, its layers delayed to arrive in turn |
-| **Trance Lead**   | A bright detuned saw and square                         |
-| **8-Bit Lead**    | Bare squares, the octave a short blip                   |
-| **Hollow Flute**  | A breathy triangle, its octave breathing in late        |
-| **Saw Pluck**     | A short, bright pluck for arpeggios                     |
-| **Wood Mallet**   | A soft mallet that dies away                            |
-| **Chord Stab**    | Held for a beat, then gone: house chords                |
-| **Drawbar Organ** | Sines at 16', 8' and 4', with a percussive click        |
-| **Glass Keys**    | Struck sines, the overtones dying first                 |
-| **Brass Section** | Biting saws that settle, a square swelling in below     |
-| **Fifth Stack**   | Root, fifth and sub, for big chords                     |
-| **Reese Bass**    | Two beating saws an octave down                         |
-| **Sub Bass**      | A clean sine sub with a plucked edge                    |
-| **Filter Pluck**  | A saw whose low-pass snaps shut as it rings             |
-| **Acid Bass**     | A squelchy square, its resonant filter swept short      |
+| Preset            | Category | What it is                                              |
+|-------------------|----------|---------------------------------------------------------|
+| **Empty Bench**   | Init     | Nothing on it: where a new instance starts              |
+| **Supersaw Pad**  | Pads     | Nine wide saws, an octave blooming in on top            |
+| **Warm Strings**  | Strings  | A soft saw section with a low triangle                  |
+| **Slow Swell**    | Pads     | A shimmering stack, its layers delayed to arrive in turn |
+| **Trance Lead**   | Lead     | A bright detuned saw and square                         |
+| **8-Bit Lead**    | Lead     | Bare squares, the octave a short blip                   |
+| **Hollow Flute**  | Lead     | A breathy triangle, its octave breathing in late        |
+| **Saw Pluck**     | Arp      | A short, bright pluck for arpeggios                     |
+| **Wood Mallet**   | Pluck    | A soft mallet that dies away                            |
+| **Chord Stab**    | Keys     | Held for a beat, then gone: house chords                |
+| **Drawbar Organ** | Keys     | Sines at 16', 8' and 4', with a percussive click        |
+| **Glass Keys**    | Keys     | Struck sines, the overtones dying first                 |
+| **Brass Section** | Brass    | Biting saws that settle, a square swelling in below     |
+| **Fifth Stack**   | Keys     | Root, fifth and sub, for big chords                     |
+| **Reese Bass**    | Bass     | Two beating saws an octave down                         |
+| **Sub Bass**      | Bass     | A clean sine sub with a plucked edge                    |
+| **Filter Pluck**  | Pluck    | A saw whose low-pass snaps shut as it rings             |
+| **Acid Bass**     | Bass     | A squelchy square, its resonant filter swept short      |
+| **Slide Lead**    | Lead     | An EDM supersaw lead, MONO, gliding 120 ms from note to note: play it legato |
 
 ### Signal flow
 
@@ -230,6 +245,8 @@ sum, on their own tab (see [Effects](#effects)).
 | **Cutoff**  | Where the filter bites, 20 Hz to 20 kHz, evenly by octave across the dial. |
 | **Resonance** | How much the filter rings at its cutoff, 0 to 100%: a peak there that grows to a whistle near the top, but never runs away. |
 | **Env Amt** | How far the filter's SWEEP envelope moves its cutoff, -48 to +48 semitones at the top of the sweep (+24, the default, two octaves up). Below 0 the sweep closes the filter instead. Its sweep has the same six stages and three bends as an envelope, edited on its SWEEP graph. |
+| **Glide**   | How long each note slides to its pitch from the note played before it, off to 2 s, the same time whatever the distance. |
+| **Poly / Mono** | The badge at the right of the header: a click switches between chords (**POLY**) and one note at a time (**MONO**). In MONO a key pressed while another is held takes the note over without starting its envelopes again (legato), gliding there, and letting it go slides back to the key still held. |
 | **Output**  | Output level, -24 to +6 dB.                                          |
 
 Every control is a parameter, so it's saved with your set and can be automated.
@@ -331,7 +348,7 @@ fades the copies in and out rather than switching them, so it doesn't click.
 ### Playing it
 
 - 16 notes of polyphony. A seventeenth note takes the voice that has been releasing
-  longest (or, failing that, the oldest note).
+  longest (or, failing that, the oldest note). Or MONO: one note, legato.
 - The **sustain pedal** (CC 64) holds released notes until it lifts. All Sound Off
   (CC 120) silences everything at once; All Notes Off (CC 123) releases everything.
 - MIDI is played sample-accurately: a note starts on the exact sample the host sends it.
@@ -401,6 +418,7 @@ Source/
   PluginProcessor.{h,cpp}    thin host wrapper + parameters (APVTS); the on-screen keyboard's lock-free hand-over; cables -> routing
   ParamIDs.h                 the parameter IDs
   Presets.h                  the factory presets, and loading one onto the bench
+  PresetBrowser.h            the preset browser: categories, search and the loaded preset, over the bench
   Synth2Engine.h             host-agnostic DSP core: 16 voices, up to four oscillators, MIDI, smoothing, effects, output
   Effects.h                  the drive, the delay and the reverb (in any order), after the mix
   Room.h                     the reverb's room: pre-delay, diffusion and an eight-line feedback delay network
@@ -436,7 +454,7 @@ Tests/
 
 The editor follows the **Neon Plugins** design system natively in JUCE (no WebView):
 the dark radial panel, the `Zanders` + product wordmark (Synth2 in violet), the
-BENCH | EFFECTS tabs, the preset picker, the mode badge and the settings gear, then the bench: a dark, faintly dotted area where
+BENCH | EFFECTS tabs, the preset picker, the POLY / MONO badge and the settings gear, then the bench: a dark, faintly dotted area where
 the modules sit as cards, each with a header (its name, its place or OUT jack, a
 cross, and on an envelope the oscillator it shapes) over its display and its Dials,
 coloured along the cyan → violet → pink → amber spectrum. The oscillators show their

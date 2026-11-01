@@ -48,6 +48,10 @@ struct VoiceSettings
         float        envAmount = 0.0f;
     };
     std::array<Oscillator, numOscillators> oscillators {};
+
+    // How long a note takes to slide to its pitch from the note before it
+    // (GLIDE): 0, it starts on its pitch.
+    float glideSeconds = 0.0f;
 };
 
 /**
@@ -68,6 +72,11 @@ struct VoiceSettings
     Every part's envelope follows the key, sounding or not, so an oscillator
     that comes in mid-note joins in step. Once the key is up, the note ends
     when every oscillator playing it has released.
+
+    With GLIDE, a note starts at the pitch it is given to slide from and
+    slides to its own, evenly in pitch, taking GLIDE whatever the distance.
+    slideTo() moves a sounding note to another key that way without starting
+    its envelopes again (MONO's legato).
 */
 class SynthVoice
 {
@@ -96,10 +105,12 @@ public:
     /** Sets the envelope that sweeps oscillator `osc`'s filter. */
     void setSweep (int osc, const Envelope::Parameters& parameters) { parts[(size_t) osc].sweep.setParameters (parameters); }
 
-    /** Plays `midiNote` on MIDI `midiChannel` (1..16). A voice taken over while
-        still sounding glides its envelopes on from where they were instead of
-        jumping back to silence. */
-    void start (int midiChannel, int midiNote, float velocity, std::uint64_t order, const VoiceSettings& settings, juce::Random& random)
+    /** Plays `midiNote` on MIDI `midiChannel` (1..16), sliding to it over
+        the settings' GLIDE from `glideFromHz` (0: starting on it). A voice
+        taken over while still sounding glides its envelopes on from where
+        they were instead of jumping back to silence. */
+    void start (int midiChannel, int midiNote, float velocity, std::uint64_t order, const VoiceSettings& settings, juce::Random& random,
+                double glideFromHz = 0.0)
     {
         if (! isActive())
         {
@@ -134,12 +145,25 @@ public:
         age        = order;
         held       = true;
         sustained  = false;
-        noteHz     = 440.0 * std::exp2 ((midiNote - 69) / 12.0);
+        glideTo (midiNote, glideFromHz, settings.glideSeconds);
         for (auto& part : parts)
         {
             part.envelope.noteOn();
             part.sweep.noteOn();
         }
+    }
+
+    /** Moves this sounding note to `midiNote` on `midiChannel`, sliding there
+        over `glideSeconds` from wherever its pitch is, its envelopes going on
+        as they were: held again if its key had gone up under the pedal. */
+    void slideTo (int midiChannel, int midiNote, std::uint64_t order, float glideSeconds)
+    {
+        channel   = midiChannel;
+        note      = midiNote;
+        age       = order;
+        held      = true;
+        sustained = false;
+        glideTo (midiNote, pitchHz, glideSeconds);
     }
 
     /** The key went up (and the sustain pedal, if any, is up too). */
@@ -173,6 +197,7 @@ public:
         note      = -1;
         held      = false;
         sustained = false;
+        glideLeft = 0;
     }
 
     bool isActive() const noexcept      { return note >= 0; }
@@ -181,6 +206,8 @@ public:
     bool isReleasing() const noexcept   { return isActive() && ! held && ! sustained; }
     int  getNote() const noexcept       { return note; }
     int  getChannel() const noexcept    { return channel; }
+    /** The pitch the note is sounding at, part way through a slide or at its own. */
+    double getPitchHz() const noexcept  { return pitchHz; }
 
     /** Whether this voice is sounding `midiNote` from MIDI `midiChannel`. */
     bool plays (int midiChannel, int midiNote) const noexcept
@@ -214,6 +241,7 @@ public:
         if (! isActive())
             return;
 
+        advanceGlide (numSamples);
         const float ramp = 1.0f / (float) numSamples;
         bool sounding = false;
         for (size_t k = 0; k < parts.size(); ++k)
@@ -246,6 +274,34 @@ public:
     }
 
 private:
+    // Heads for `midiNote`'s pitch, sliding there evenly in pitch over
+    // `seconds` from `fromHz` (0, or no GLIDE: there at once).
+    void glideTo (int midiNote, double fromHz, float seconds) noexcept
+    {
+        noteHz = 440.0 * std::exp2 ((midiNote - 69) / 12.0);
+        const int samples = juce::roundToInt (juce::jmax (0.0f, seconds) * sampleRate);
+        if (fromHz <= 0.0 || samples <= 0)
+        {
+            pitchHz   = noteHz;
+            glideLeft = 0;
+            return;
+        }
+        pitchHz   = fromHz;
+        glideLeft = samples;
+        glideStep = std::log2 (noteHz / fromHz) / samples;
+    }
+
+    // Moves a slide on by a chunk: the chunk plays at the pitch it ends on,
+    // close enough at 32 samples at most.
+    void advanceGlide (int numSamples) noexcept
+    {
+        if (glideLeft <= 0)
+            return;
+        const int step = juce::jmin (numSamples, glideLeft);
+        glideLeft -= step;
+        pitchHz = glideLeft == 0 ? noteHz : pitchHz * std::exp2 (glideStep * step);
+    }
+
     // One unison copy of an oscillator: its oscillator, how far it has faded
     // in, and its place in the detune spread and the stereo field.
     struct Copy
@@ -474,7 +530,7 @@ private:
                 copy.ratio = Unison::ratio (copy.cents);
             }
 
-            copy.oscillator.setIncrement (noteHz * copy.ratio * osc.ratio / sampleRate);
+            copy.oscillator.setIncrement (pitchHz * copy.ratio * osc.ratio / sampleRate);
             playing[(size_t) numPlaying++] = i;
         }
         return numPlaying;
@@ -524,7 +580,10 @@ private:
     std::array<Part, numOscillators> parts {};
 
     double sampleRate = 44100.0;
-    double noteHz     = 440.0;
+    double noteHz     = 440.0;   // the key's pitch
+    double pitchHz    = 440.0;   // where the note sounds now, sliding to noteHz
+    double glideStep  = 0.0;     // octaves a sample
+    int    glideLeft  = 0;       // samples still to slide
     float  fadeStep   = 0.0f;
     float  level      = 0.0f;
     int    note       = -1;

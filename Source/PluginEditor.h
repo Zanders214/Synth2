@@ -11,18 +11,20 @@
 #include "EffectsView.h"
 #include "Synth2LookAndFeel.h"
 #include "NeonKeyboard.h"
+#include "PresetBrowser.h"
 #include "WavePicker.h"
 
 /**
     Synth2AudioProcessorEditor — the Neon Plugins face for Synth2: a workbench.
 
     A dark panel, top to bottom: the wordmark, the BENCH / EFFECTS tabs, the
-    preset picker, the POLY badge and the gear (the signal-flow settings);
-    the bench, which starts empty and holds whatever modules are put on it,
-    wherever they are put (see BenchView), or on the EFFECTS tab the effects
-    every note goes through, put there and arranged the same way (see
-    EffectsView); and along the bottom, on both tabs, the keyboard that plays
-    it and the OUTPUT dial.
+    preset picker, the POLY / MONO badge and the gear (the signal-flow
+    settings); the bench, which starts empty and holds whatever modules are
+    put on it, wherever they are put (see BenchView), or on the EFFECTS tab
+    the effects every note goes through, put there and arranged the same way
+    (see EffectsView); and along the bottom, on both tabs, the keyboard that
+    plays it and the GLIDE and OUTPUT dials. A click on the badge switches
+    between playing chords (POLY) and one note at a time, legato (MONO).
 
     In the standalone app the computer's keys play that keyboard too (see
     NeonKeyboard): the editor keeps the keyboard focus whenever nothing else
@@ -39,8 +41,9 @@
     of each), played in the order their cards read in.
 
     The preset picker shows the factory preset last loaded: its arrows step
-    to the previous and next one, and a click on its name opens a tray of
-    them all.
+    to the previous and next one, and a click on its name opens the preset
+    browser over the bench (see PresetBrowser), by category and searchable,
+    the keyboard still playable under it; another click closes it.
 
     The gear picks how sound flows between the modules, and so which
     oscillator each envelope shapes and each filter filters: along patch
@@ -140,8 +143,8 @@ public:
     };
 
     /** The trays opened over everything: add a module (on the bench), add an
-        effect (on the EFFECTS tab), the gear's settings and the presets; and
-        the preset picker's arrows, which step through the presets. */
+        effect (on the EFFECTS tab) and the gear's settings; and the preset
+        picker's arrows, which step through the presets. */
     class Trays
     {
     public:
@@ -150,15 +153,12 @@ public:
         ChoiceTray& getAdd() noexcept      { return addTray; }
         ChoiceTray& getEffect() noexcept   { return effectTray; }
         ChoiceTray& getSettings() noexcept { return settingsTray; }
-        ChoiceTray& getPreset() noexcept   { return presetTray; }
-        std::array<ChoiceTray*, 4> all() noexcept { return { &addTray, &effectTray, &settingsTray, &presetTray }; }
+        std::array<ChoiceTray*, 3> all() noexcept { return { &addTray, &effectTray, &settingsTray }; }
         bool isSettingsOpen() const noexcept { return settingsTray.isOpen(); }
-        bool isPresetsOpen() const noexcept  { return presetTray.isOpen(); }
 
         void openAdd (juce::Point<float> benchAt, juce::Point<int> editorAt);
         void openEffect (juce::Point<float> rackAt, juce::Point<int> editorAt);
         void openSettings();
-        void openPresets();
         void stepPreset (int delta);
 
     private:
@@ -166,7 +166,6 @@ public:
         ChoiceTray addTray;
         ChoiceTray effectTray;
         ChoiceTray settingsTray;
-        ChoiceTray presetTray;
         juce::Point<float> addAt;      // on the bench
         juce::Point<float> effectAt;   // on the EFFECTS tab
     };
@@ -177,8 +176,11 @@ public:
     EffectsView&  getEffects() noexcept                { return effectsView; }
     CableLayer&   getCables() noexcept                 { return cables; }
     Trays&        getTrays() noexcept                  { return trays; }
+    PresetBrowser& getPresetBrowser() noexcept         { return presetBrowser; }
     WaveMenu&     getWaveMenu (int slot) noexcept      { return waveMenus[(size_t) slot]; }
     juce::Slider& getOutputDial() noexcept             { return outputDial; }
+    juce::Slider& getGlideDial() noexcept              { return glideDial; }
+    juce::Rectangle<float> badgeBounds() const noexcept { return layout.badge.toFloat(); }
     NeonKeyboard& getKeyboard() noexcept               { return keyboard; }
     juce::Rectangle<float> gearBounds() const noexcept { return layout.gear.toFloat(); }
     juce::Rectangle<float> presetBounds() const noexcept { return layout.preset.toFloat(); }
@@ -187,6 +189,8 @@ private:
     void timerCallback() override;
     void paintHeader (juce::Graphics&, float scale) const;
     void paintOutput (juce::Graphics&, float scale) const;
+    void toggleMono();
+    void togglePresets();
 
     Synth2AudioProcessor::SignalFlow signalFlow() const;
     void showView();   // shows the cards as the bench's view says (gear menu, or a restored set)
@@ -202,7 +206,10 @@ private:
     NeonKeyboard keyboard;
     juce::Slider outputDial;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment;
+    juce::Slider glideDial;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> glideAttachment;
     CableLayer   cables { *this };
+    PresetBrowser presetBrowser;
     std::array<WaveMenu, Bench::numOscillators> waveMenus;
     Trays        trays { *this };
 
@@ -216,6 +223,7 @@ private:
         juce::Rectangle<int> badge;
         juce::Rectangle<int> gear;
         juce::Rectangle<int> outputColumn;
+        juce::Rectangle<int> glideColumn;
         int stripSeparatorY = 0;
     };
     Layout layout;
@@ -225,6 +233,8 @@ private:
     {
         juce::String cables;
         float output = 0.0f;
+        float glide  = -1.0f;
+        int   mono   = -1;
         int   flow   = -1;
         int   preset = -1;
         Bench::View view;

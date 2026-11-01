@@ -260,6 +260,12 @@ namespace ParamID
     inline constexpr const char* reverbMix     = "reverbMix";
     inline constexpr const char* reverbPreDelay = "reverbPreDelay";
 
+    // How notes are played: GLIDE, how long each slides to its pitch from
+    // the note before it, and MONO, one note at a time, legato (see
+    // Synth2Engine.h).
+    inline constexpr const char* glide = "glide";
+    inline constexpr const char* mono  = "mono";
+
     // Whether each effect is in the chain, on the EFFECTS tab (see Rack.h);
     // its ...On above is its power switch.
     inline constexpr const char* driveInChain  = "driveInChain";
