@@ -138,6 +138,10 @@ private:
     letting go lands it there, or on the nearest free spot if it would cover
     another. A module that arrives fades in; one that is taken off fades out.
 
+    On the panel (Bench::Flow::panel) every module sits fixed in its own
+    place, and a click on an empty spot adds nothing; the cards glide there
+    and back as the flow changes.
+
     The box zooms (Cmd / Ctrl + wheel, a pinch, or its ZoomPill, which the
     editor puts on the box's bottom edge) and pans (the wheel, two fingers, or dragging an empty spot) over
     the canvas; how far is kept on the bench (see Bench::Viewport). Each card
@@ -305,11 +309,20 @@ public:
         if (const auto saved = model.viewport(); saved != viewport)
             lookAt (saved);
 
-        const auto& animator = juce::Desktop::getInstance().getAnimator();
+        auto& animator = juce::Desktop::getInstance().getAnimator();
+        const bool panel  = model.isPanel();
+        const bool glide  = panel != wasPanel;
+        wasPanel = panel;
         for (const auto& id : Bench::allModules)
         {
             auto& card = getModule (id);
+            card.setFixedInPlace (panel);
             const bool present = model.isPresent (id);
+            if (glide && present && card.isVisible())
+            {
+                animator.animateComponent (&card, boundsFor (id), 1.0f, 200, false, 0.4, 0.0);
+                continue;
+            }
             if (present && ! card.isVisible())
                 show (id, true);
             else if (! present && card.isVisible())
@@ -411,7 +424,7 @@ public:
     {
         const auto was = std::exchange (press, Press {});
         setMouseCursor (juce::MouseCursor::NormalCursor);
-        if (! was.down || was.panning || emptyClickHandler == nullptr)
+        if (! was.down || was.panning || emptyClickHandler == nullptr || model.isPanel())
             return;
         const auto design  = toDesign (was.at);
         const auto topLeft = juce::Point<float> (design.x - Bench::moduleWidth * 0.5f, design.y - 15.0f);
@@ -525,4 +538,5 @@ private:
     Press  press;
     float  uiScale  = 1.0f;
     bool   wasEmpty = true;
+    bool   wasPanel = false;
 };

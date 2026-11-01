@@ -25,7 +25,7 @@
 
         BENCH { version: 2, envelopeView: "both", oscillatorView: "full",
                 zoom: 1.0, panX: 0, panY: 0 }
-          MODULE { id: "osc:0" .. "osc:3" | "flt:0" .. "flt:3" | "env:0" .. "env:3", x, y }
+          MODULE { id: "osc:0" .. "osc:3" | "flt:0" .. "flt:3" | "env:0" .. "env:3", x, y, spare }
           CABLE  { from: "osc:2", to: "flt:1" | "env:1" | "out" }
           CABLE  { from: "flt:1", to: "env:1" | "out" }
           CABLE  { from: "env:1", to: "out" }
@@ -40,7 +40,15 @@
     by how sound flows (see envelopeAssignment and filterAssignment): by
     number, by the layout, or along the cables, where an oscillator's sound
     runs through at most one filter and one envelope, in either order, to
-    the output (see chainFrom).
+    the output (see chainFrom). The cables are the default.
+
+    On the panel (Flow::panel) every module has a place of its own, column by
+    column (see panelPosition), and sound goes by number. All twelve are on
+    the bench there, and the power switches turn them on and off: going to
+    the panel puts each module that was off the bench on it, switched off
+    and marked spare, and leaving it takes the spare ones still switched off
+    back off (see setFlow). Where each sits on the free bench is kept, so it
+    comes back there.
 
     How the modules show themselves (see View), from the gear menu, and how
     far the bench is zoomed and panned (see Viewport) are kept on the BENCH
@@ -60,8 +68,11 @@ namespace Bench
     {
         fixed,    // ENV n shapes OSC n, FILTER n filters it
         layout,   // each envelope and filter takes an oscillator before it in reading order
-        cables    // OSC -> FILTER -> ENV -> OUT (either way round), as patched
+        cables,   // OSC -> FILTER -> ENV -> OUT (either way round), as patched
+        panel     // every module in its own place, switched on and off; by number, like fixed
     };
+
+    inline constexpr int numFlows = 4;
 
     inline constexpr int numOscillators = 4;
     inline constexpr int numEnvelopes   = 4;
@@ -265,6 +276,22 @@ namespace Bench
         return { x, 0.0f };
     }
 
+    /** Where module `id` sits on the panel: OSC n at the top of column n,
+        FILTER n under it and ENV n under that, the way sound runs, the four
+        columns in the middle of the canvas. */
+    inline juce::Point<float> panelPosition (const ModuleId& id) noexcept
+    {
+        constexpr float left = 0.5f * (areaWidth - 4.0f * moduleWidth - 3.0f * gap);
+        const float x = left + (float) id.slot * (moduleWidth + gap);
+        switch (id.kind)
+        {
+            case Kind::filter:     return { x, oscillatorHeight + gap };
+            case Kind::envelope:   return { x, oscillatorHeight + filterHeight + 2.0f * gap };
+            case Kind::oscillator: break;
+        }
+        return { x, 0.0f };
+    }
+
     // ---- How far the bench is zoomed and panned ----------------------------------------
 
     /** The zoom that shows the whole canvas in the box, and the most it zooms in. */
@@ -404,6 +431,7 @@ namespace Bench
     inline const juce::Identifier zoomProperty    { "zoom" };
     inline const juce::Identifier panXProperty    { "panX" };
     inline const juce::Identifier panYProperty    { "panY" };
+    inline const juce::Identifier spareProperty   { "spare" };
     inline const juce::String     outputJack      { "out" };
     inline constexpr int          currentVersion = 2;
 
@@ -444,7 +472,47 @@ namespace Bench
 
         bool isEmpty() const { return present().empty(); }
 
+        /** How sound flows (the signalFlow parameter). */
+        Flow flow() const
+        {
+            return (Flow) juce::jlimit (0, numFlows - 1, juce::roundToInt (state.getRawParameterValue (ParamID::signalFlow)->load()));
+        }
+
+        /** Whether the modules sit in their places on the panel, rather than where they were put. */
+        bool isPanel() const { return flow() == Flow::panel; }
+
+        /** Makes sound flow by `newFlow`, as one gesture. Going to the panel
+            puts every module there (those that weren't, switched off and
+            spare); leaving it takes the spare ones still switched off back
+            off. Going to the cables with none patched patches each
+            oscillator's chain by number (see patchChains), so it sounds as it
+            did. */
+        void setFlow (Flow newFlow)
+        {
+            const auto was = flow();
+            if (newFlow == was)
+                return;
+            auto* parameter = state.getParameter (ParamID::signalFlow);
+            parameter->beginChangeGesture();
+            parameter->setValueNotifyingHost (parameter->convertTo0to1 ((float) newFlow));
+            parameter->endChangeGesture();
+
+            if (newFlow == Flow::panel)
+                fillPanel();
+            else if (was == Flow::panel)
+                leavePanel();
+            if (newFlow == Flow::cables && cables().empty())
+                patchChains();
+        }
+
+        /** Where `id` sits: its place on the panel, or where it was put. */
         juce::Point<float> positionOf (const ModuleId& id) const
+        {
+            return isPanel() ? panelPosition (id) : placeOf (id);
+        }
+
+        /** Where `id` was put on the free bench, even while the panel shows it elsewhere. */
+        juce::Point<float> placeOf (const ModuleId& id) const
         {
             const auto node = findModule (id);
             if (! node.isValid())
@@ -475,7 +543,9 @@ namespace Bench
         }
 
         /** Puts a new module of `kind` on the bench at `at` (or the nearest
-            free spot), switching it on as one gesture. Returns which it was. */
+            free spot), switching it on as one gesture. A new oscillator is
+            patched to the output when sound follows the cables, so it is
+            heard. Returns which it was. */
         std::optional<ModuleId> add (Kind kind, juce::Point<float> at)
         {
             const auto id = freeSlot (kind);
@@ -484,6 +554,8 @@ namespace Bench
 
             setPosition (*id, resolveOverlap (at, kind, othersThan (*id)));
             setPresent (*id, true);
+            if (kind == Kind::oscillator && flow() == Flow::cables)
+                connect (*id);
             return id;
         }
 
@@ -507,8 +579,9 @@ namespace Bench
         /** Sets the modules on the bench out afresh, as a preset loads: each
             oscillator at the top of its column, with its filter (if there
             is one) under it and its envelope under that, the way sound runs
-            through them; and every cable unplugged. If the bench is zoomed
-            or panned so they don't all show, it frames them. */
+            through them, patched that way too (see patchChains); and on the
+            panel, every other module there, switched off. If the bench is
+            zoomed or panned so they don't all show, it frames them. */
         void layOut()
         {
             ensureBench();
@@ -522,8 +595,9 @@ namespace Bench
                         y += heightOf (kind) + gap;
                     }
             }
-            for (const auto& [from, to] : cables())
-                disconnect (from);
+            patchChains();
+            if (isPanel())
+                fillPanel();
 
             const auto shown   = viewport();
             const auto modules = extent();
@@ -540,13 +614,15 @@ namespace Bench
             return box;
         }
 
-        /** The modules on the bench in reading order. */
+        /** The modules on the bench in reading order, as they were put on the
+            free bench (so following the layout means the same whether or not
+            the panel is showing). */
         std::vector<ModuleId> readingOrder() const
         {
             const auto ids = present();
             std::vector<juce::Point<float>> positions;
             for (const auto& id : ids)
-                positions.push_back (positionOf (id));
+                positions.push_back (placeOf (id));
 
             std::vector<ModuleId> ordered;
             for (const auto index : Bench::readingOrder (positions))
@@ -636,6 +712,25 @@ namespace Bench
                     all.emplace_back (*from, *to);
             }
             return all;
+        }
+
+        /** Unplugs every cable, then patches each oscillator on the bench by
+            number: OSC n into FILTER n (if it is there), into ENV n (if it is
+            there), out. So the cables sound as the fixed order does. */
+        void patchChains()
+        {
+            for (const auto& [from, to] : cables())
+                disconnect (from);
+            for (int slot = 0; slot < numOscillators; ++slot)
+            {
+                ModuleId at { Kind::oscillator, slot };
+                if (! isPresent (at))
+                    continue;
+                for (const auto kind : { Kind::filter, Kind::envelope })
+                    if (const ModuleId next { kind, slot }; isPresent (next) && connect (at, next))
+                        at = next;
+                connect (at);
+            }
         }
 
         /** The modules patched to the output, in the order they were patched. */
@@ -804,7 +899,7 @@ namespace Bench
         std::array<int, numOscillators> assignment (Kind kind, Flow flow) const
         {
             std::array<int, numOscillators> takenBy { -1, -1, -1, -1 };
-            if (flow == Flow::fixed)
+            if (flow == Flow::fixed || flow == Flow::panel)
             {
                 for (int k = 0; k < numOscillators; ++k)
                     if (isPresent ({ kind, k }) && isPresent ({ Kind::oscillator, k }))
@@ -866,10 +961,75 @@ namespace Bench
         {
             if (isPresent (id) == shouldBePresent)
                 return;
-            auto* parameter = state.getParameter (parameterFor (id));
+            setSwitch (parameterFor (id), shouldBePresent);
+        }
+
+        void setSwitch (const char* parameterId, bool on)   // NOSONAR(cpp:S5817): it changes a parameter
+        {
+            auto* parameter = state.getParameter (parameterId);
+            if (juce::exactlyEqual (parameter->getValue(), on ? 1.0f : 0.0f))
+                return;
             parameter->beginChangeGesture();
-            parameter->setValueNotifyingHost (shouldBePresent ? 1.0f : 0.0f);
+            parameter->setValueNotifyingHost (on ? 1.0f : 0.0f);
             parameter->endChangeGesture();
+        }
+
+        // Every module onto the panel: each that was off the bench comes on
+        // it switched off, marked spare.
+        void fillPanel()
+        {
+            ensureBench();
+            for (const auto& id : allModules)
+            {
+                if (isPresent (id))
+                    continue;
+                if (! findModule (id).isValid())
+                    setPosition (id, defaultPosition (id));
+                findModule (id).setProperty (spareProperty, true, nullptr);
+                setSwitch (activeParameterFor (id), false);
+                setPresent (id, true);
+            }
+        }
+
+        // Off the panel: the spare modules still switched off go back off the
+        // bench (switched on again, for when they are next added), those
+        // switched on stay, moved off anything they would cover, and nothing
+        // is spare any more.
+        void leavePanel()
+        {
+            std::vector<ModuleId> kept;
+            for (const auto& id : allModules)
+            {
+                auto node = findModule (id);
+                if (! node.isValid() || ! (bool) node.getProperty (spareProperty, false))
+                    continue;
+                node.removeProperty (spareProperty, nullptr);
+                if (! isPresent (id))
+                    continue;
+                if (state.getRawParameterValue (activeParameterFor (id))->load() < 0.5f)
+                {
+                    remove (id);
+                    setSwitch (activeParameterFor (id), true);
+                }
+                else
+                {
+                    kept.push_back (id);
+                }
+            }
+            for (const auto& id : kept)
+                move (id, positionOf (id));
+        }
+
+        static const char* activeParameterFor (const ModuleId& id) noexcept
+        {
+            const auto slot = (size_t) juce::jlimit (0, 3, id.slot);
+            switch (id.kind)
+            {
+                case Kind::envelope: return ParamID::envelopes[slot].active;
+                case Kind::filter:   return ParamID::filters[slot].active;
+                case Kind::oscillator: break;
+            }
+            return ParamID::oscillators[slot].active;
         }
 
         std::vector<juce::Rectangle<float>> othersThan (const ModuleId& id) const
@@ -896,11 +1056,16 @@ namespace Bench
 
         /** Brings a restored session up to date. `saved` is the state as it
             was saved (before the parameters it lacked were filled in): one
-            from before the bench is set out as it looked then, and one from
+            from before the flow could be picked keeps the fixed order (the
+            cables came to be the default later), one from before the bench is
+            set out as it looked then, and one from
             the first bench (one unison stack and one envelope for every
             oscillator) gets each oscillator its own of both. */
         void migrate (const juce::ValueTree& saved)
         {
+            // A set from before the flow could be picked played in the fixed order.
+            if (! hasSaved (saved, ParamID::signalFlow))
+                setValue (ParamID::signalFlow, (float) Flow::fixed);
             if (const auto savedBench = saved.getChildWithName (benchType); ! savedBench.isValid())
                 adoptClassicLayout (saved);
             else if ((int) savedBench.getProperty (versionProperty, 1) < currentVersion)

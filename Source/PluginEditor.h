@@ -43,11 +43,13 @@
     them all.
 
     The gear picks how sound flows between the modules, and so which
-    oscillator each envelope shapes and each filter filters: by number (ENV 1
-    and FILTER 1 take OSC 1), following the layout (each module shows its
-    place in the order, and each envelope and filter takes the first free
-    oscillator before it), or along patch cables, OSC -> FILTER -> ENV -> OUT
-    (or ENV before FILTER). With patch cables the modules get jacks: drag
+    oscillator each envelope shapes and each filter filters: along patch
+    cables, OSC -> FILTER -> ENV -> OUT (or ENV before FILTER), the default;
+    by number (ENV 1 and FILTER 1 take OSC 1); following the layout (each
+    module shows its place in the order, and each envelope and filter takes
+    the first free oscillator before it); or the panel, where all twelve
+    modules sit fixed in their own places, column by column, each switched on
+    and off by its power switch, and sound goes by number. With patch cables the modules get jacks: drag
     from an OUT to a filter's or an envelope's IN or to the output's IN to
     patch a cable (an oscillator that doesn't reach the output is greyed out
     and silent), and drag a cable off either end to unplug it. An oscillator

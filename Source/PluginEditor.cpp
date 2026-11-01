@@ -16,10 +16,11 @@ namespace
     float paramValue (const Synth2AudioProcessor& p, const char* id) { return p.getState().getRawParameterValue (id)->load(); }
 
     // The signal-flow choices, in the parameter's order.
-    const std::array<ChoiceTray::Choice, 3> flowChoices {
+    const std::array<ChoiceTray::Choice, 4> flowChoices {
         ChoiceTray::Choice { "Fixed order",   "ENV 1 shapes OSC 1, and so on" },
         ChoiceTray::Choice { "Follow layout", "Row by row: each ENV after its OSC" },
-        ChoiceTray::Choice { "Patch cables",  "OSC to ENV to OUT, as patched" } };
+        ChoiceTray::Choice { "Patch cables",  "OSC to ENV to OUT, as patched" },
+        ChoiceTray::Choice { "Panel",         "Everything in its place: switch it on and off" } };
 
     // The gear menu's view choices, in Bench::EnvelopeView's and
     // Bench::OscillatorView's order, after the signal-flow choices.
@@ -30,7 +31,7 @@ namespace
     const std::array<ChoiceTray::Choice, 2> oscillatorViewChoices {
         ChoiceTray::Choice { "Full",    "The live wave over the dials", true, false, "OSCILLATORS" },
         ChoiceTray::Choice { "Compact", "Just the shape's icon and name" } };
-    constexpr int firstEnvelopeView   = 3;
+    constexpr int firstEnvelopeView   = (int) flowChoices.size();
     constexpr int firstOscillatorView = firstEnvelopeView + 3;
 
     // How much of each end of the preset picker steps to the previous / next.
@@ -147,7 +148,7 @@ AmpDisplayState Synth2AudioProcessorEditor::ampState (const ParamID::Envelope& i
 
 Synth2AudioProcessor::SignalFlow Synth2AudioProcessorEditor::signalFlow() const
 {
-    return (Synth2AudioProcessor::SignalFlow) juce::jlimit (0, 2, juce::roundToInt (paramValue (processorRef, ParamID::signalFlow)));
+    return model.flow();
 }
 
 // The modules' headers follow the signal flow: their place in the order when
@@ -340,10 +341,13 @@ Synth2AudioProcessorEditor::Trays::Trays (Synth2AudioProcessorEditor& ownerToUse
             owner.showView();
             return;
         }
-        auto* flow = owner.processorRef.getState().getParameter (ParamID::signalFlow);
-        flow->beginChangeGesture();
-        flow->setValueNotifyingHost (flow->convertTo0to1 ((float) choice));
-        flow->endChangeGesture();
+        // Onto the panel or off it, the box frames what is on the bench now.
+        const auto was = owner.model.flow();
+        const auto now = (Bench::Flow) choice;
+        owner.model.setFlow (now);
+        if ((was == Bench::Flow::panel) != (now == Bench::Flow::panel))
+            owner.benchView.fit();
+        owner.shown.cables.clear();
         owner.showFlow();
     });
     effectTray.onChoose ([this] (int choice) { owner.effectsView.add (Rack::allEffects[(size_t) choice], effectAt); });
