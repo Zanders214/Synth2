@@ -2444,6 +2444,28 @@ void testPanel()
     check (Bench::Model (restored.getState()).isPanel() && Bench::Model (restored.getState()).present().size() == Bench::allModules.size(),
            "a set saved on the panel opens on it");
 
+    // Following the layout goes by where the modules were put on the free
+    // bench, even from a set restored on the panel with nothing spare.
+    {
+        Synth2AudioProcessor full;
+        Bench::Model all (full.getState());
+        for (const auto& id : Bench::allModules)
+            all.add (id.kind, Bench::defaultPosition (id));
+        all.move (o1, { 1260.0f, 0.0f });   // OSC 4 first in the row, OSC 1 last
+        all.move (o4, { 0.0f, 0.0f });
+        all.move (o1, { 756.0f, 0.0f });
+        all.setFlow (Bench::Flow::panel);
+        check (all.present().size() == Bench::allModules.size() && all.envelopeAssignment (Bench::Flow::layout)[3] == 0,
+               "on the panel, the layout's order still comes from the free bench (ENV 1 takes OSC 4, put first)");
+        juce::MemoryBlock panelSaved;
+        full.getStateInformation (panelSaved);
+        Synth2AudioProcessor reopened;
+        reopened.setStateInformation (panelSaved.getData(), (int) panelSaved.getSize());
+        Bench::Model (reopened.getState()).setFlow (Bench::Flow::layout);
+        check (reopened.currentSettings().oscillators[3].envelope == 0 && reopened.currentSettings().oscillators[0].envelope == 3,
+               "and a set reopened on the panel, switched to Follow layout, plays that order");
+    }
+
     // On screen: all twelve cards, fixed in place.
     std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
     auto* editor = dynamic_cast<Synth2AudioProcessorEditor*> (base.get());

@@ -505,10 +505,15 @@ namespace Bench
                 patchChains();
         }
 
+        /** Where `id` sits: its place on the panel, or where it was put. */
         juce::Point<float> positionOf (const ModuleId& id) const
         {
-            if (isPanel())
-                return panelPosition (id);
+            return isPanel() ? panelPosition (id) : placeOf (id);
+        }
+
+        /** Where `id` was put on the free bench, even while the panel shows it elsewhere. */
+        juce::Point<float> placeOf (const ModuleId& id) const
+        {
             const auto node = findModule (id);
             if (! node.isValid())
                 return defaultPosition (id);
@@ -609,13 +614,15 @@ namespace Bench
             return box;
         }
 
-        /** The modules on the bench in reading order. */
+        /** The modules on the bench in reading order, as they were put on the
+            free bench (so following the layout means the same whether or not
+            the panel is showing). */
         std::vector<ModuleId> readingOrder() const
         {
             const auto ids = present();
             std::vector<juce::Point<float>> positions;
             for (const auto& id : ids)
-                positions.push_back (positionOf (id));
+                positions.push_back (placeOf (id));
 
             std::vector<ModuleId> ordered;
             for (const auto index : Bench::readingOrder (positions))
