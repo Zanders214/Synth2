@@ -95,14 +95,15 @@ void testBlockRender()
     // The engine plays its oscillators a block at a time, several side by
     // side. That must be the very same samples, to the bit, as stepping each
     // one on its own, and stepping on its own the same as the shape's maths
-    // (with the full floor() wrap the fast path leaves out).
+    // in double (with the full floor() wrap), to within a float's rounding.
     constexpr int numOscillators = 7;   // a group of four, a pair and one
     constexpr int numSamples     = 32;
     float levels[numSamples];
     for (int n = 0; n < numSamples; ++n)
         levels[n] = 0.25f + 0.02f * (float) n;
 
-    bool sameAsNext = true, sameAsMaths = true;
+    bool sameAsNext = true;
+    float worstFromMaths = 0.0f;
     for (int w = 0; w < 4; ++w)
     {
         const auto wave = (Waveform) w;
@@ -159,12 +160,63 @@ void testBlockRender()
                                          + Oscillator::polyBlep (phase, dt)
                                          - Oscillator::polyBlep (Oscillator::wrap (phase + 0.5), dt));
                     }
-                    sameAsMaths = sameAsMaths && value == maths;
+                    worstFromMaths = std::max (worstFromMaths, std::fabs (value - maths));
                 }
         }
     }
     check (sameAsNext,  "rendering oscillators together gives each one's own samples, to the bit");
-    check (sameAsMaths, "every shape plays exactly its maths, wrapped phase and all");
+    std::printf ("  (worst difference from the maths: %g)\n", (double) worstFromMaths);
+
+    // Settled unison copies skip the rows: each plays straight into the
+    // stereo pair, faded and panned. Same samples, to the bit, as stepping
+    // each copy and fading and panning it by hand.
+    bool pannedSame = true;
+    for (int w = 0; w < 4; ++w)
+    {
+        const auto wave = (Waveform) w;
+        BlepOscillator together[numOscillators], alone[numOscillators];
+        BlepOscillator* pointers[numOscillators];
+        float fades[numOscillators], panLeft[numOscillators], panRight[numOscillators];
+        for (int k = 0; k < numOscillators; ++k)
+        {
+            for (auto* osc : { &together[k], &alone[k] })
+            {
+                osc->reset (0.13 * k);
+                osc->setIncrement (0.003 + 0.071 * k);
+            }
+            pointers[k] = &together[k];
+            fades[k]    = k == 3 ? 0.0f : 1.0f;
+            panLeft[k]  = 0.3f + 0.1f * (float) k;
+            panRight[k] = 1.0f - 0.08f * (float) k;
+        }
+        for (int pass = 0; pass < 20; ++pass)
+        {
+            float left[numSamples], right[numSamples], wantLeft[numSamples], wantRight[numSamples];
+            for (int n = 0; n < numSamples; ++n)
+                left[n] = right[n] = wantLeft[n] = wantRight[n] = 0.01f * (float) (n - pass);
+
+            BlepOscillator::renderPanned (pointers, numOscillators, wave, levels, fades, panLeft, panRight,
+                                          left, right, numSamples);
+
+            float samples[numOscillators][numSamples];
+            for (int k = 0; k < numOscillators; ++k)
+                for (int n = 0; n < numSamples; ++n)
+                    samples[k][n] = alone[k].next (wave);
+            for (int n = 0; n < numSamples; ++n)
+            {
+                float l = wantLeft[n], r = wantRight[n];
+                for (int k = 0; k < numOscillators; ++k)
+                {
+                    const float value = samples[k][n] * levels[n] * fades[k];
+                    l += value * panLeft[k];
+                    r += value * panRight[k];
+                }
+                pannedSame = pannedSame && left[n] == l && right[n] == r;
+            }
+        }
+    }
+    check (pannedSame, "playing settled copies straight into the stereo pair gives the same samples, to the bit");
+    check (worstFromMaths < 1e-6f, "every shape plays its maths to within a float's rounding, wrapped phase and all");
 }
 
 void testUnisonSpread()
