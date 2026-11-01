@@ -160,6 +160,9 @@ void testProcessorBasics()
     std::printf ("Processor basics:\n");
 
     Synth2AudioProcessor p;
+    check (approx (param (p, ParamID::signalFlow), (float) Synth2AudioProcessor::SignalFlow::cables, 1e-6f),
+           "sound follows the patch cables to start with");
+    setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::fixed);   // the checks below play in the fixed order
     check (p.getName() == "ZandersSynth2", "reports its name");
     check (p.acceptsMidi() && ! p.producesMidi() && ! p.isMidiEffect(), "takes MIDI in, makes none");
     check (p.hasEditor(), "has an editor");
@@ -276,7 +279,6 @@ void testProcessorBasics()
     for (const auto& env : ParamID::envelopes)
         empty = empty && param (p, env.on) < 0.5f;
     check (empty, "the bench starts empty");
-    check (approx (param (p, ParamID::signalFlow), (float) Synth2AudioProcessor::SignalFlow::fixed, 1e-6f), "with sound in a fixed order");
     check (! p.getState().getParameter (ParamID::osc1On)->isAutomatable() && ! p.getState().getParameter (ParamID::signalFlow)->isAutomatable(),
            "what is on the bench, and the flow, aren't automatable");
     check (approx (param (p, ParamID::osc1Pitch), 0.0f, 1e-6f) && approx (param (p, ParamID::osc1Fine), 0.0f, 1e-6f)
@@ -364,6 +366,7 @@ void testFilters()
     std::printf ("Filters:\n");
 
     Synth2AudioProcessor p;
+    setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::fixed);   // these checks play in the fixed order
     p.prepareToPlay (48000.0, 512);
     auto& state = p.getState();
     const auto text = [&state] (const char* id, float value)
@@ -453,8 +456,16 @@ void testFilters()
     const float third = std::min (704.0f, Bench::areaHeight - Bench::envelopeHeight);
     check (bench.positionOf (osc1) == juce::Point<float> (0.0f, 0.0f) && bench.positionOf (flt1) == juce::Point<float> (0.0f, 352.0f)
                && bench.positionOf (env1) == juce::Point<float> (0.0f, third) && bench.positionOf (osc2) == juce::Point<float> (252.0f, 0.0f)
-               && bench.positionOf (env2) == juce::Point<float> (252.0f, third) && bench.cables().empty(),
-           "laid out afresh: each oscillator over its filter over its envelope, unplugged");
+               && bench.positionOf (env2) == juce::Point<float> (252.0f, third),
+           "laid out afresh: each oscillator over its filter over its envelope");
+    bool chained = true;
+    for (int slot = 0; slot < 2; ++slot)
+    {
+        const auto chain = bench.chainFrom (slot);
+        chained = chained && chain.filter == slot && chain.envelope == slot && chain.heard;
+    }
+    check (chained && bench.inputOf (flt1) == osc1 && bench.inputOf (env1) == flt1,
+           "and patched the same way, each column OSC -> FILTER -> ENV -> OUT");
 }
 
 void testBusLayouts()
@@ -462,6 +473,7 @@ void testBusLayouts()
     std::printf ("Bus layouts:\n");
 
     Synth2AudioProcessor p;
+    setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::fixed);   // these checks play in the fixed order
     check (p.getTotalNumInputChannels() == 0 && p.getTotalNumOutputChannels() == 2, "an instrument: no input, stereo out");
 
     juce::AudioProcessor::BusesLayout layout;
@@ -481,6 +493,7 @@ void testPlaying()
     std::printf ("Playing:\n");
 
     Synth2AudioProcessor p;
+    setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::fixed);   // these checks play in the fixed order
     p.prepareToPlay (48000.0, 512);
 
     juce::MidiBuffer first;
@@ -530,6 +543,7 @@ void testPlaying()
 
     // A mono bus gets sound too.
     Synth2AudioProcessor mono;
+    setParam (mono, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::fixed);
     fillBench (mono);
     juce::AudioProcessor::BusesLayout layout;
     layout.outputBuses.add (juce::AudioChannelSet::mono());
@@ -767,6 +781,7 @@ void testEditor()
     std::printf ("Editor:\n");
 
     Synth2AudioProcessor p;
+    setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::fixed);   // these checks play in the fixed order
     p.prepareToPlay (48000.0, 512);
     std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
     auto* editor = dynamic_cast<Synth2AudioProcessorEditor*> (base.get());
@@ -1032,11 +1047,11 @@ void testEditor()
     // and each envelope shapes the first oscillator before it without one.
     auto& settings = editor->getTrays().getSettings();
     editor->mouseDown (mouseAt (*editor, editor->gearBounds().getCentre()));
-    check (settings.isOpen() && settings.getCaption() == "SIGNAL FLOW" && settings.getNumChoices() == 8
-               && settings.getChoice (0).ticked && ! settings.getChoice (1).ticked,
-           "the gear opens the signal-flow settings, Fixed order ticked");
-    check (settings.getChoice (3).heading == "ENVELOPES" && settings.getChoice (5).name == "Both" && settings.getChoice (5).ticked
-               && settings.getChoice (6).heading == "OSCILLATORS" && settings.getChoice (6).name == "Full" && settings.getChoice (6).ticked,
+    check (settings.isOpen() && settings.getCaption() == "SIGNAL FLOW" && settings.getNumChoices() == 9
+               && settings.getChoice (0).ticked && ! settings.getChoice (1).ticked && settings.getChoice (3).name == "Panel",
+           "the gear opens the signal-flow settings, Fixed order ticked, the panel last");
+    check (settings.getChoice (4).heading == "ENVELOPES" && settings.getChoice (6).name == "Both" && settings.getChoice (6).ticked
+               && settings.getChoice (7).heading == "OSCILLATORS" && settings.getChoice (7).name == "Full" && settings.getChoice (7).ticked,
            "then how envelopes and oscillators show, both and full ticked");
     check (editor->getLocalBounds().toFloat().contains (settings.trayBounds()) && settings.trayBounds().getY() > editor->gearBounds().getBottom(),
            "under the gear");
@@ -1068,14 +1083,28 @@ void testEditor()
     editor->mouseDown (mouseAt (*editor, editor->gearBounds().getCentre()));
     settings.mouseDown (mouseAt (settings, settings.choiceBounds (2).getCentre()));
     check (approx (param (p, ParamID::signalFlow), 2.0f, 1e-6f), "picking Patch cables sets the flow");
+    bool chained = true;
+    for (int slot = 0; slot < Bench::numOscillators; ++slot)
+        chained = chained && model.inputOf ({ Bench::Kind::envelope, slot }) == std::optional (Bench::ModuleId { Bench::Kind::oscillator, slot })
+                  && model.isPatchedToOutput ({ Bench::Kind::envelope, slot });
+    check (chained && pumpUntil ([&] { return ! osc1.isDimmed() && ! env1.isDimmed(); }),
+           "with nothing patched yet, each oscillator is patched through its envelope to the output, as it sounded");
+    check (holdAndMeasure (p) > 0.02f, "so it still sounds");
+    releaseAll (p);
+    for (const auto& [from, to] : model.cables())
+        model.disconnect (from);
     using Jack = BenchModule::Jack;
     check (pumpUntil ([&] { return osc1.getHeader().isJackShown() && ! osc1.getHeader().isJackShown (Jack::in) && osc1.getHeader().getOrder() == 0; })
                && env1.getHeader().isJackShown (Jack::in) && env1.getHeader().isJackShown (Jack::out) && env1.getHeader().getTag().isEmpty(),
            "the oscillators show OUT jacks, the envelopes IN and OUT, and no numbers");
-    bool allDimmed = true;
-    for (const auto& id : Bench::allModules)
-        allDimmed = allDimmed && (id.kind == Bench::Kind::filter || bench.getModule (id).isDimmed());
-    check (allDimmed, "with nothing patched, everything is greyed out");
+    const auto allDimmed = [&bench]
+    {
+        bool dimmed = true;
+        for (const auto& id : Bench::allModules)
+            dimmed = dimmed && (id.kind == Bench::Kind::filter || bench.getModule (id).isDimmed());
+        return dimmed;
+    };
+    check (pumpUntil (allDimmed), "with nothing patched, everything is greyed out");
     check (holdAndMeasure (p) < 1e-4f, "and silent");
     const auto unpatched = render (*editor);
 
@@ -1172,6 +1201,7 @@ void testBypass()
     std::printf ("Bypass:\n");
 
     Synth2AudioProcessor p;
+    setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::fixed);   // these checks play in the fixed order
     p.prepareToPlay (48000.0, 512);
     bool allOn = true;
     for (size_t k = 0; k < std::size (ParamID::oscillators); ++k)
@@ -1259,6 +1289,7 @@ void testViews()
     std::printf ("Envelope graph and views:\n");
 
     Synth2AudioProcessor p;
+    setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::fixed);   // these checks play in the fixed order
     p.prepareToPlay (48000.0, 512);
     fillBench (p);
     std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
@@ -1401,11 +1432,11 @@ void testViews()
         return at;
     };
     const auto smallShares = shares();
-    pick (3);
+    pick (4);
     check (model.view().envelopes == Bench::EnvelopeView::knobs && env1.getHeight() == 240 && ! well.isVisible()
                && env1.getDial (0).isVisible(),
            "Knobs: the envelope keeps its dials on a shorter card");
-    pick (4);
+    pick (5);
     check (model.view().envelopes == Bench::EnvelopeView::graph && env1.getHeight() == 336 && well.isVisible()
                && well.getHeight() == 286 && ! env1.getDial (0).isVisible(),
            "Graph: a big graph fills the card, no dials");
@@ -1414,7 +1445,7 @@ void testViews()
     for (size_t h = 0; h < bigShares.size(); ++h)
         sameShape = sameShape && bigShares[h].getDistanceFrom (smallShares[h]) < 1e-3f;
     check (sameShape, "with the same shape as the small graph, filling it the same way");
-    pick (7);
+    pick (8);
     check (model.view().oscillators == Bench::OscillatorView::compact && osc1.getHeight() == 268
                && ! osc1.getDisplay().isVisible() && osc1.getPicker().isCompact() && osc1.getPicker().getHeight() == 28,
            "Compact: the oscillator shows just its shape's pill over its dials");
@@ -1433,8 +1464,8 @@ void testViews()
     check (Bench::Model (restored.getState()).view() == model.view(), "and a saved set opens with it");
     check (Bench::Model (Synth2AudioProcessor().getState()).view() == Bench::View {}, "a new one opens with both and full");
 
-    pick (5);
     pick (6);
+    pick (7);
     check (env1.getHeight() == 336 && well.getHeight() == 96 && env1.getDial (0).isVisible() && osc1.getDisplay().isVisible()
                && ! osc1.getPicker().isCompact(),
            "Both and Full bring the cards back as they were");
@@ -1701,6 +1732,7 @@ void testFilterCard()
     std::printf ("Filter card:\n");
 
     Synth2AudioProcessor p;
+    setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::fixed);   // these checks play in the fixed order
     p.prepareToPlay (48000.0, 512);
     fillBench (p);
     Bench::Model model (p.getState());
@@ -2216,7 +2248,8 @@ void testPresets()
         check (struck > 0.02f && held < struck * 0.01f, std::string (pluck) + ": a held note dies away");
     }
 
-    // Loading one resets what it doesn't set, and lays the bench out afresh.
+    // Loading one resets what it doesn't set (but not how sound flows), and
+    // lays the bench out afresh, patched column by column.
     setParam (p, ParamID::osc1Voices, 9.0f);
     setParam (p, ParamID::osc3Voices, 5.0f);
     setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::cables);
@@ -2227,13 +2260,22 @@ void testPresets()
     bench.connect ({ Bench::Kind::envelope, 0 });
     const int sub = names.indexOf ("Sub Bass");
     p.setCurrentProgram (sub);
-    check (approx (param (p, ParamID::osc1Voices), 1.0f, 1e-6f) && approx (param (p, ParamID::osc3Voices), 1.0f, 1e-6f)
-               && approx (param (p, ParamID::signalFlow), 0.0f, 1e-6f),
-           "a preset puts back what it doesn't set (each stack's VOICES, the flow)");
-    check (bench.cables().empty() && bench.positionOf ({ Bench::Kind::oscillator, 0 }) == juce::Point<float> (0.0f, 0.0f)
+    check (approx (param (p, ParamID::osc1Voices), 1.0f, 1e-6f) && approx (param (p, ParamID::osc3Voices), 1.0f, 1e-6f),
+           "a preset puts back what it doesn't set (each stack's VOICES)");
+    check (approx (param (p, ParamID::signalFlow), (float) Synth2AudioProcessor::SignalFlow::cables, 1e-6f),
+           "but sound still follows the cables, as picked");
+    bool eachThroughItsOwn = true;
+    for (int slot = 0; slot < Bench::numOscillators; ++slot)
+        if (bench.isPresent ({ Bench::Kind::oscillator, slot }))
+            eachThroughItsOwn = eachThroughItsOwn && bench.chainFrom (slot).heard
+                                && bench.chainFrom (slot).envelope == (bench.isPresent ({ Bench::Kind::envelope, slot }) ? slot : -1);
+    check (eachThroughItsOwn && ! bench.cables().empty() && bench.positionOf ({ Bench::Kind::oscillator, 0 }) == juce::Point<float> (0.0f, 0.0f)
                && bench.positionOf ({ Bench::Kind::oscillator, 1 }) == juce::Point<float> (Bench::moduleWidth + Bench::gap, 0.0f)
                && bench.positionOf ({ Bench::Kind::envelope, 1 }) == Bench::defaultPosition ({ Bench::Kind::envelope, 1 }),
-           "unplugs the cables and sets each envelope under its oscillator");
+           "repatches each oscillator through its own envelope to the output, and sets each envelope under its oscillator");
+    p.prepareToPlay (48000.0, 512);
+    check (holdChordPeak (p, 8) > 0.02f, "so it sounds");
+    releaseAll (p);
 
     // A host setting the loaded program again changes nothing; picking it on
     // the face loads it afresh.
@@ -2307,6 +2349,149 @@ void testPresets()
     snapshot (render (*editor), "10-preset-loaded");
 }
 
+// The cables by default, and the panel: every module in its own place,
+// switched on and off.
+void testPanel()
+{
+    std::printf ("Panel:\n");
+
+    Synth2AudioProcessor p;
+    p.prepareToPlay (48000.0, 512);
+    Bench::Model model (p.getState());
+    using Kind = Bench::Kind;
+    const Bench::ModuleId o1 { Kind::oscillator, 0 }, o2 { Kind::oscillator, 1 }, o3 { Kind::oscillator, 2 }, o4 { Kind::oscillator, 3 },
+                          f1 { Kind::filter, 0 }, e1 { Kind::envelope, 0 }, e2 { Kind::envelope, 1 };
+    const auto isOn = [&p] (const Bench::ModuleId& id)
+    {
+        const auto slot = (size_t) id.slot;
+        const char* active = id.kind == Kind::oscillator ? ParamID::oscillators[slot].active
+                           : id.kind == Kind::filter     ? ParamID::filters[slot].active
+                                                         : ParamID::envelopes[slot].active;
+        return param (p, active) >= 0.5f;
+    };
+
+    // On the cables (the default), a new oscillator is patched to the output.
+    model.add (Kind::oscillator, { 0.0f, 0.0f });
+    check (model.isPatchedToOutput (o1) && holdAndMeasure (p) > 0.02f, "on the cables, a new oscillator is patched to the output, and heard");
+    releaseAll (p);
+    model.add (Kind::envelope, { 0.0f, 352.0f });
+    check (! model.inputOf (e1).has_value() && model.isPatchedToOutput (o1), "a new envelope waits to be patched");
+    model.move (o1, { 300.0f, 100.0f });   // over OSC 2's default place
+    const auto freeAt = model.positionOf (o1);
+
+    // Onto the panel: all twelve, those that weren't there switched off.
+    model.setFlow (Bench::Flow::panel);
+    bool restOff = true;
+    for (const auto& id : Bench::allModules)
+        if (id != o1 && id != e1)
+            restOff = restOff && ! isOn (id);
+    check (model.isPanel() && model.present().size() == Bench::allModules.size() && isOn (o1) && isOn (e1) && restOff,
+           "on the panel every module is on the bench, those that weren't switched off");
+    bool inPlace = true;
+    for (const auto& id : Bench::allModules)
+        inPlace = inPlace && model.positionOf (id) == Bench::panelPosition (id);
+    check (inPlace && Bench::panelPosition (o2) == juce::Point<float> (504.0f, 0.0f) && Bench::panelPosition (f1) == juce::Point<float> (252.0f, 352.0f)
+               && Bench::panelPosition (e1) == juce::Point<float> (252.0f, 704.0f)
+               && model.extent() == juce::Rectangle<float> (252.0f, 0.0f, 992.0f, 1040.0f),
+           "each in its place: OSC n over FILTER n over ENV n, column by column, in the middle of the canvas, as tall as it");
+    check (p.currentSettings().oscillators[0].envelope == 0 && p.currentSettings().oscillators[0].routed
+               && ! p.currentSettings().oscillators[1].active && p.currentSettings().oscillators[0].filter == -1,
+           "sound goes by number: ENV 1 shapes OSC 1, the switched-off FILTER 1 lets it through");
+    check (holdAndMeasure (p) > 0.02f, "and OSC 1 sounds");
+    releaseAll (p);
+    setParam (p, ParamID::osc2Active, 1.0f);
+    setParam (p, ParamID::env2Active, 1.0f);
+    check (p.currentSettings().oscillators[1].active && p.currentSettings().oscillators[1].envelope == 1,
+           "switching OSC 2 and ENV 2 on: ENV 2 shapes OSC 2");
+
+    // Off the panel: the spare modules still switched off go, the ones
+    // switched on stay, and OSC 1 goes back where it was put.
+    model.setFlow (Bench::Flow::cables);
+    const auto present = model.present();
+    check (present == std::vector<Bench::ModuleId> { o1, o2, e1, e2 }, "off the panel, the spare modules still switched off go");
+    check (model.positionOf (o1) == freeAt && isOn (o3) && isOn (o4), "OSC 1 is back where it was, and those taken off are on for next time");
+    check (model.isPatchedToOutput (o1) && ! model.destinationOf (o2).has_value(), "the cables stay as they were patched");
+    bool apart = true;
+    for (const auto& a : present)
+        for (const auto& b : present)
+            apart = apart && (a == b || ! model.boundsOf (a).intersects (model.boundsOf (b)));
+    check (apart, "and the modules kept from the panel sit clear of the others");
+
+    // Onto the cables with nothing patched: each oscillator through its own envelope.
+    for (const auto& [from, to] : model.cables())
+        model.disconnect (from);
+    model.setFlow (Bench::Flow::fixed);
+    model.setFlow (Bench::Flow::cables);
+    check (model.inputOf (e1) == std::optional (o1) && model.isPatchedToOutput (e1) && model.inputOf (e2) == std::optional (o2)
+               && model.isPatchedToOutput (e2),
+           "going to the cables with nothing patched patches each oscillator through its envelope, as it sounded");
+
+    // A preset on the panel stays on it, every module there.
+    model.setFlow (Bench::Flow::panel);
+    p.loadPreset (Presets::numPresets - 1);
+    int on = 0;
+    for (const auto& id : Bench::allModules)
+        on += isOn (id) ? 1 : 0;
+    check (model.isPanel() && model.present().size() == Bench::allModules.size() && on > 0 && on < 12,
+           "a preset loaded on the panel keeps it, its own modules on and the rest switched off");
+    check (holdChordPeak (p, 8) > 0.02f, "and it sounds");
+    releaseAll (p);
+
+    juce::MemoryBlock saved;
+    p.getStateInformation (saved);
+    Synth2AudioProcessor restored;
+    restored.setStateInformation (saved.getData(), (int) saved.getSize());
+    check (Bench::Model (restored.getState()).isPanel() && Bench::Model (restored.getState()).present().size() == Bench::allModules.size(),
+           "a set saved on the panel opens on it");
+
+    // On screen: all twelve cards, fixed in place.
+    std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
+    auto* editor = dynamic_cast<Synth2AudioProcessorEditor*> (base.get());
+    if (editor == nullptr)
+        return;
+    auto& bench = editor->getBench();
+    const auto allShown = [&bench]
+    {
+        return std::all_of (Bench::allModules.begin(), Bench::allModules.end(), [&bench] (const auto& id)
+                            { return bench.getModule (id).isVisible() && bench.getModule (id).getAlpha() >= 1.0f; });
+    };
+    check (pumpUntil (allShown), "all twelve cards show");
+    bench.fit();
+    check (bench.getViewport().visibleArea().contains (model.extent()), "and fit in the box");
+    auto& osc1 = bench.getOscillator (0);
+    auto& osc3 = bench.getOscillator (2);
+    check (osc1.isFixedInPlace() && osc1.closeBounds().isEmpty(), "fixed in their places, with no cross");
+    check (bench.getFilter (0).getY() > osc1.getBottom() && bench.getEnvelope (0).getY() > bench.getFilter (0).getBottom()
+               && bench.getFilter (0).getX() == osc1.getX() && bench.getOscillator (1).getX() > osc1.getRight(),
+           "each column OSC over FILTER over ENV");
+    const auto before = osc1.getPosition();
+    dragHeader (osc1, { 120.0f, 60.0f });
+    check (osc1.getPosition() == before && model.positionOf (o1) == Bench::panelPosition (o1), "dragging a header moves nothing");
+    const juce::Point<float> empty ((float) bench.getWidth() - 30.0f, (float) bench.getHeight() * 0.5f);
+    bench.mouseDown (mouseAt (bench, empty));
+    bench.mouseUp (mouseAt (bench, empty, empty));
+    check (! editor->getTrays().getAdd().isOpen(), "a click on an empty spot adds nothing");
+
+    const bool osc3WasOn = isOn (o3);
+    check (osc3WasOn || osc3.isDimmed(), "a card switched off is greyed out in its place");
+    osc3.getPower().triggerClick();
+    check (pumpUntil ([&] { return isOn (o3) != osc3WasOn; }) && pumpUntil ([&] { return osc3.isDimmed() == osc3WasOn; }),
+           "its power switch turns it on or off");
+    if (! osc3WasOn)
+        snapshot (render (*editor), "bench-panel");
+
+    // Back to the cables from the gear: the cards come loose again.
+    auto& settings = editor->getTrays().getSettings();
+    editor->mouseDown (mouseAt (*editor, editor->gearBounds().getCentre()));
+    check (settings.getChoice (3).ticked, "the gear shows the panel ticked");
+    settings.mouseDown (mouseAt (settings, settings.choiceBounds (2).getCentre()));
+    check (! model.isPanel() && pumpUntil ([&] { return ! osc1.isFixedInPlace() && ! osc1.closeBounds().isEmpty(); }),
+           "picking Patch cables lets the cards move again, with their crosses");
+    check (model.present().size() < Bench::allModules.size() && bench.getViewport().visibleArea().contains (model.extent()),
+           "with the spare cards gone, and what is left framed");
+}
+
+
 // ---- The computer's keys (standalone) ---------------------------------------------
 void testTypedKeys()
 {
@@ -2323,6 +2508,7 @@ void testTypedKeys()
 
     juce::AudioProcessor::setTypeOfNextNewPlugin (juce::AudioProcessor::wrapperType_Standalone);
     Synth2AudioProcessor p;
+    setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::fixed);   // these checks play in the fixed order
     juce::AudioProcessor::setTypeOfNextNewPlugin (juce::AudioProcessor::wrapperType_Undefined);
     p.prepareToPlay (48000.0, 512);
     fillBench (p);
@@ -2404,6 +2590,7 @@ int main()
     testPlaying();
     testStateRoundTrip();
     testPresets();
+    testPanel();
     testEditor();
     testBypass();
     testViews();

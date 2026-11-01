@@ -118,7 +118,7 @@ int main()
             set (ParamID::flt1On,     (float) ((b / 24 + 1) % 3 != 0));   // filters come and go mid-note
             set (ParamID::flt2On,     (float) ((b / 48) % 2));
             set (ParamID::flt1Active, (float) ((b / 24) % 5 != 3));
-            set (ParamID::signalFlow, (float) ((b / 24) % 3));
+            set (ParamID::signalFlow, (float) ((b / 24) % Bench::numFlows));   // the panel too
             if ((b / 24) % 2 == 0)
             {
                 // OSC 2 through FILTER 2 (when it's there) into ENV 2, out.

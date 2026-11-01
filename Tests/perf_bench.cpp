@@ -34,7 +34,8 @@ double benchChord (const char* name, int notes, int voices, ankerl::nanobench::B
         auto* p = proc.getState().getParameter (id);
         p->setValueNotifyingHost (p->convertTo0to1 (value));
     };
-    // Each oscillator in use plays the whole stack under its own envelope.
+    // Each oscillator in use plays the whole stack under its own envelope, by number.
+    set (ParamID::signalFlow, (float) Bench::Flow::fixed);
     for (int k = 0; k < 4; ++k)
     {
         set (ParamID::oscillator (k).on, k < numOscillators ? 1.0f : 0.0f);

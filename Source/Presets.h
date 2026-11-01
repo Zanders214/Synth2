@@ -323,9 +323,10 @@ namespace Presets
         return values;
     }
 
-    /** Loads `preset` into `state`: every parameter back to its default, then
-        the preset's own values, and the bench and the effects set out
-        afresh. Message thread. */
+    /** Loads `preset` into `state`: every parameter back to its default
+        (but how sound flows, which stays as it was picked), then the
+        preset's own values, and the bench and the effects set out afresh.
+        Message thread. */
     inline void apply (juce::AudioProcessorValueTreeState& state, const Preset& preset)
     {
         const auto set = [] (juce::RangedAudioParameter& parameter, float normalised)
@@ -339,7 +340,8 @@ namespace Presets
 
         const auto values = valuesOf (preset);
         for (auto* p : state.processor.getParameters())
-            if (auto* parameter = dynamic_cast<juce::RangedAudioParameter*> (p))
+            if (auto* parameter = dynamic_cast<juce::RangedAudioParameter*> (p); parameter != nullptr
+                                                                                   && parameter->getParameterID() != ParamID::signalFlow)
             {
                 const auto given = std::find_if (values.begin(), values.end(),
                                                  [parameter] (const auto& v) { return parameter->getParameterID() == v.first; });

@@ -398,6 +398,9 @@ private:
     oscillator into. When it follows the layout, the header shows where the
     module comes in the order; an envelope's header can also name what it
     shapes ("> OSC 2").
+
+    On the panel a module is fixed in its place: its header doesn't drag it,
+    and it has no cross, only its power switch.
 */
 class BenchModule : public juce::Component
 {
@@ -471,6 +474,17 @@ public:
     /** Where in its parent a drag can take the module (all of the parent when empty). */
     void setDragArea (juce::Rectangle<int> area) noexcept { dragArea = area; }
 
+    /** Fixes the module in its place (on the panel): no dragging it, and no cross. */
+    void setFixedInPlace (bool shouldBeFixed)
+    {
+        if (fixedInPlace == shouldBeFixed)
+            return;
+        fixedInPlace = shouldBeFixed;
+        dragging     = false;
+        repaint();
+    }
+    bool isFixedInPlace() const noexcept { return fixedInPlace; }
+
     void setUiScale (float newScale)
     {
         uiScale = newScale;
@@ -515,9 +529,12 @@ public:
     bool isBeingDragged() const noexcept { return dragging; }
 
     juce::Rectangle<float> headerBounds() const noexcept { return getLocalBounds().toFloat().withHeight (30.0f * uiScale); }
+    /** The cross's place (empty while the module is fixed in its place). */
     juce::Rectangle<float> closeBounds() const noexcept
     {
         const float s = uiScale;
+        if (fixedInPlace)
+            return {};
         return { (float) getWidth() - 30.0f * s, 5.0f * s, 20.0f * s, 20.0f * s };
     }
     juce::Rectangle<float> jackBounds (Jack which = Jack::out) const noexcept
@@ -603,7 +620,7 @@ public:
                 removeHandler();
             return;
         }
-        if (headerBounds().contains (e.position))
+        if (! fixedInPlace && headerBounds().contains (e.position))
         {
             dragging = true;
             dragStart = getPosition();
@@ -654,7 +671,7 @@ public:
         const auto mouse = getMouseXYRelative().toFloat();
         if (jackBounds (Jack::out).contains (mouse) || jackBounds (Jack::in).contains (mouse) || closeBounds().contains (mouse))
             return juce::MouseCursor::PointingHandCursor;
-        if (headerBounds().contains (mouse))
+        if (! fixedInPlace && headerBounds().contains (mouse))
             return juce::MouseCursor::DraggingHandCursor;
         return juce::MouseCursor::NormalCursor;
     }
@@ -722,7 +739,7 @@ private:
         {
             g.setFont (Fonts::sans (9.0f * s, true, 0.14f));
             g.setColour (dim.shown ? Palette::textFaint : Palette::accent);
-            g.drawText (tag, header.withRight (closeBounds().getX() - 8.0f * s), juce::Justification::centredRight, false);
+            g.drawText (tag, fixedInPlace ? header : header.withRight (closeBounds().getX() - 8.0f * s), juce::Justification::centredRight, false);
         }
 
         const auto jack = [&] (Jack which, const char* label)
@@ -738,6 +755,8 @@ private:
         if (headerState.isJackShown (Jack::out))
             jack (Jack::out, "OUT");
 
+        if (fixedInPlace)
+            return;
         const auto cross = closeBounds();
         const bool crossHot = over && cross.contains (mouse);
         if (crossHot)
@@ -811,6 +830,7 @@ private:
     juce::Rectangle<int> dragArea;
     float uiScale  = 1.0f;
     bool  dragging = false;
+    bool  fixedInPlace = false;
 };
 
 /** An oscillator: its WAVE well, where the shape is picked too, over PITCH /

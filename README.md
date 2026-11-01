@@ -133,7 +133,9 @@ The pill in the middle of the header holds the factory presets: its arrows step 
 previous and next one, and a click on its name opens a tray of them all. Your DAW lists
 the same presets as the plugin's programs. Loading one puts its modules on the bench
 (oscillators along the top, each with its own unison stack, its filter, if it has
-one, under it, and its DAHDSR envelope under that, in a fixed order with no cables),
+one, under it, and its DAHDSR envelope under that, patched the same way:
+OSC -> FILTER -> ENV -> OUT), keeps the signal flow you picked (on the panel, every
+module it doesn't use is there too, switched off),
 puts just its effects
 on the EFFECTS tab, side by side and switched on (most pads and keys have a reverb,
 some a delay on the beat), and sets everything
@@ -164,9 +166,10 @@ you loaded is saved with your set.
 ### Signal flow
 
 The gear at the top right picks how sound flows between the modules (and, below,
-how the cards show themselves: see [Views](#views)):
+how the cards show themselves: see [Views](#views)). Patch cables are the default;
+sets saved before you could pick keep the fixed order they played in.
 
-- **Fixed order** (the default): by number, wherever the modules sit: ENV 1 shapes
+- **Fixed order**: by number, wherever the modules sit: ENV 1 shapes
   OSC 1 and FILTER 1 filters it, ENV 2 and FILTER 2 take OSC 2, and so on. Each envelope
   and filter shows the oscillator it takes in its header ("> OSC 1"); one whose
   oscillator isn't on the bench is greyed out.
@@ -183,10 +186,20 @@ how the cards show themselves: see [Views](#views)):
   Each filter and envelope takes one cable in and sends one out; a patch that would put
   two filters or two envelopes in one chain, or loop round, doesn't take. Only what
   reaches the output is heard, and the rest is greyed out. Grab a cable by either end,
-  or drop it anywhere else, to unplug it.
+  or drop it anywhere else, to unplug it. A new oscillator comes patched to the
+  output, so you hear it straight away; and switching to the cables with nothing
+  patched patches each oscillator through its own filter and envelope by number, so
+  it sounds as it did.
+- **Panel**: everything on one page, each module in its own place, like a hardware
+  synth. All twelve cards sit on the bench in four columns, OSC n over FILTER n over
+  ENV n, and stay put: they don't drag, have no cross, and a click on an empty spot
+  adds nothing. Each card's power switch turns it on and off, and sound goes by
+  number, as in the fixed order. Going to the panel puts the modules you didn't have
+  on it, switched off; leaving it takes the ones still switched off back off, keeps
+  the ones you switched on, and puts every card back where you had it on the bench.
 
 The oscillators, each through its own filter and under its own envelope, are summed,
-so the three ways differ only in which filter and envelope take which oscillator
+so the four ways differ only in which filter and envelope take which oscillator
 (the filter is the same either side of the envelope: both work on each note on its
 own). The effects follow the
 sum, on their own tab (see [Effects](#effects)).

@@ -229,10 +229,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
     for (int index = 0; index < Synth2Engine::numFilters; ++index)
         addFilter (index);
 
-    // How sound flows between the modules.
+    // How sound flows between the modules: along the cables, unless a set
+    // from before them says otherwise (see Bench::Migration).
     layout.add (std::make_unique<AudioParameterChoice> (
-        ParameterID { ParamID::signalFlow, 3 }, "Signal Flow", StringArray { "Fixed order", "Follow layout", "Patch cables" },
-        (int) SignalFlow::fixed, AudioParameterChoiceAttributes().withAutomatable (false)));
+        ParameterID { ParamID::signalFlow, 3 }, "Signal Flow", StringArray { "Fixed order", "Follow layout", "Patch cables", "Panel" },
+        (int) SignalFlow::cables, AudioParameterChoiceAttributes().withAutomatable (false)));
 
     // The effects after the mix (version 6), both off to start with, so
     // older sessions sound as they did.
@@ -334,7 +335,9 @@ Synth2Engine::Settings Synth2AudioProcessor::currentSettings() const noexcept
     const auto param = [this] (const char* id) { return apvts.getRawParameterValue (id)->load(); };
 
     Synth2Engine::Settings settings;
-    const int  flow   = juce::jlimit (0, 2, juce::roundToInt (param (ParamID::signalFlow)));
+    // The panel goes by number, as the fixed order does.
+    const int  chosen = juce::jlimit (0, Bench::numFlows - 1, juce::roundToInt (param (ParamID::signalFlow)));
+    const int  flow   = chosen == (int) SignalFlow::panel ? (int) SignalFlow::fixed : chosen;
     const bool cables = flow == (int) SignalFlow::cables;
     for (size_t k = 0; k < settings.oscillators.size(); ++k)
     {
