@@ -312,12 +312,15 @@ struct Synth2VisualModel
             case Handle::release:      return true;
         }
         const auto dot = handlePosition (e, h);
-        for (int corner = 0; corner < numCorners && canBend; ++corner)
+        if (! canBend)
+            return false;
+        for (int corner = 0; corner < numCorners; ++corner)
         {
             const auto p = handlePosition (e, (Handle) corner);
-            canBend = std::hypot ((dot.x - p.x) * width, (dot.y - p.y) * height) >= minDotGap;
+            if (std::hypot ((dot.x - p.x) * width, (dot.y - p.y) * height) < minDotGap)
+                return false;
         }
-        return canBend;
+        return true;
     }
 
     /** How near (in pixels) a ramp's dot may come to a corner and still be

@@ -1550,18 +1550,18 @@ void testBenchZoom()
     // Cmd + wheel zooms round the pointer, as does a pinch.
     bench.setViewport ({ 1.0f, { 300.0f, 200.0f } });
     const juce::Point<float> pointer (400.0f, 300.0f);
-    const auto under = bench.toDesign (pointer);
+    const auto under = bench.mapping().toDesign (pointer);
     wheelAt (bench, pointer, { 0.0f, 0.1f }, true);
     const float zoomedIn = bench.getViewport().zoom;
-    check (zoomedIn > 1.1f && bench.toDesign (pointer).getDistanceFrom (under) < 0.01f, "Cmd + wheel up zooms in, the canvas under the pointer staying put");
+    check (zoomedIn > 1.1f && bench.mapping().toDesign (pointer).getDistanceFrom (under) < 0.01f, "Cmd + wheel up zooms in, the canvas under the pointer staying put");
     check (osc1.getWidth() == juce::roundToInt (Bench::moduleWidth * zoomedIn) && osc1.getBounds() == bench.boundsFor (o1)
                && approx ((float) osc1.getDial (0).getWidth(), 52.0f * zoomedIn, 1.0f),
            "and the cards are drawn bigger, dials and all");
     wheelAt (bench, pointer, { 0.0f, -0.2f }, true);
-    check (bench.getViewport().zoom < 1.0f && bench.toDesign (pointer).getDistanceFrom (under) < 0.01f, "Cmd + wheel down zooms out round it");
+    check (bench.getViewport().zoom < 1.0f && bench.mapping().toDesign (pointer).getDistanceFrom (under) < 0.01f, "Cmd + wheel down zooms out round it");
     const float beforePinch = bench.getViewport().zoom;
     bench.mouseMagnify (mouseAt (bench, pointer), 1.2f);
-    check (approx (bench.getViewport().zoom, beforePinch * 1.2f, 1e-4f) && bench.toDesign (pointer).getDistanceFrom (under) < 0.01f,
+    check (approx (bench.getViewport().zoom, beforePinch * 1.2f, 1e-4f) && bench.mapping().toDesign (pointer).getDistanceFrom (under) < 0.01f,
            "a pinch zooms round the pointer too");
     wheelAt (bench, pointer, { 0.0f, -5.0f }, true);
     check (juce::exactlyEqual (bench.getViewport().zoom, Bench::fitZoom) && bench.getViewport().visibleArea().contains (juce::Rectangle<float> (Bench::areaWidth, Bench::areaHeight)),
@@ -1572,10 +1572,10 @@ void testBenchZoom()
     // The pill's minus and plus step through the levels, round the middle.
     bench.setViewport ({ 1.0f, { 200.0f, 150.0f } });
     const auto pressPill = [&pill] (ZoomPill::Part part) { pill.mouseDown (mouseAt (pill, pill.partBounds (part).getCentre())); };
-    const auto middle = bench.toDesign (bench.getLocalBounds().toFloat().getCentre());
+    const auto middle = bench.mapping().toDesign (bench.getLocalBounds().toFloat().getCentre());
     pressPill (ZoomPill::Part::zoomIn);
     check (approx (bench.getViewport().zoom, 1.25f, 1e-6f) && pill.zoomText() == "125%"
-               && bench.toDesign (bench.getLocalBounds().toFloat().getCentre()).getDistanceFrom (middle) < 0.01f,
+               && bench.mapping().toDesign (bench.getLocalBounds().toFloat().getCentre()).getDistanceFrom (middle) < 0.01f,
            "plus zooms in a step, round the middle of the box");
     pressPill (ZoomPill::Part::zoomIn);
     pressPill (ZoomPill::Part::zoomIn);
@@ -1638,7 +1638,7 @@ void testBenchZoom()
 
     bench.setViewport ({ 0.75f, { 100.0f, 100.0f } });
     const juce::Point<float> clicked (600.0f, 400.0f);
-    const auto canvasAt = bench.toDesign (clicked);
+    const auto canvasAt = bench.mapping().toDesign (clicked);
     bench.mouseDown (mouseAt (bench, clicked));
     bench.mouseUp (mouseAt (bench, clicked, clicked));
     check (tray.isOpen() && tray.trayBounds().getPosition().getDistanceFrom (clicked + bench.getPosition().toFloat()) < 1.0f,
@@ -1656,7 +1656,7 @@ void testBenchZoom()
     check (osc3.getPosition() == o3View + juce::Point<int> (90, -60)
                && model.positionOf (o3).getDistanceFrom (o3Before + juce::Point<float> (120.0f, -80.0f)) < 1.5f,
            "a card dragged at 75% lands under the pointer");
-    check (bench.toView (model.positionOf (o3)).getDistanceFrom (osc3.getPosition().toFloat()) < 0.5f, "and stays there");
+    check (bench.mapping().toView (model.positionOf (o3)).getDistanceFrom (osc3.getPosition().toFloat()) < 0.5f, "and stays there");
 
     // A cable patches at 150%; a card out of the box can't take one.
     setParam (p, ParamID::signalFlow, 2.0f);
@@ -2164,7 +2164,7 @@ void testPresets()
 
     Synth2AudioProcessor p;
     const juce::TemporaryFile noUserPresets;   // so the browser lists only the factory's
-    p.getUserPresets().setFolder (noUserPresets.getFile(), false);
+    p.getPresetLoader().getUserPresets().setFolder (noUserPresets.getFile(), false);
     check (p.getNumPrograms() == Presets::numPresets && Presets::numPresets > 10, "the host sees the factory presets as programs");
     check (p.getCurrentProgram() == 0 && p.getProgramName (0) == "Empty Bench" && Bench::Model (p.getState()).isEmpty(),
            "a new instance is on the first, the empty bench");
@@ -2374,31 +2374,31 @@ void testPresets()
     editor->mouseDown (mouseAt (*editor, picker.getCentre()));
     check (browser.isOpen() && browser.getBounds() == editor->getBench().getBounds() && editor->getKeyboard().isVisible(),
            "its name opens the preset browser over the bench, the keyboard still showing");
-    check (browser.getCategory() == PresetBrowser::all && (int) browser.getListed().size() == Presets::numPresets
-               && browser.getCurrent() == Presets::numPresets - 1,
+    check (browser.getCatalog().getShown() == PresetBrowser::all && (int) browser.getCatalog().getListed().size() == Presets::numPresets
+               && browser.getCatalog().getCurrent() == Presets::numPresets - 1,
            "listing them all, the loaded one marked");
     pumpUntil ([&browser] { return browser.getAlpha() >= 1.0f; });
     snapshot (render (*editor), "9-presets");
 
     // By category.
     browser.mouseDown (mouseAt (browser, browser.categoryBounds ((int) Presets::Category::sfx).getCentre()));
-    check (browser.getCategory() == PresetBrowser::all, "a category with no presets in it can't be opened");
+    check (browser.getCatalog().getShown() == PresetBrowser::all, "a category with no presets in it can't be opened");
     browser.mouseDown (mouseAt (browser, browser.categoryBounds ((int) Presets::Category::bass).getCentre()));
-    bool justBass = browser.getListed().size() == 3;
-    for (const auto& item : browser.getListed())
+    bool justBass = browser.getCatalog().getListed().size() == 3;
+    for (const auto& item : browser.getCatalog().getListed())
         justBass = justBass && ! item.isUser() && Presets::factory[(size_t) item.factory].category == Presets::Category::bass;
-    check (browser.getCategory() == (int) Presets::Category::bass && justBass, "a click on a category lists just its presets");
+    check (browser.getCatalog().getShown() == (int) Presets::Category::bass && justBass, "a click on a category lists just its presets");
 
     // Searched: every word, in the name, the description or the category.
     browser.mouseDown (mouseAt (browser, browser.categoryBounds (PresetBrowser::all).getCentre()));
     browser.getSearch().setText ("squelchy bass");
-    check (pumpUntil ([&browser] { return browser.getListed().size() == 1; }) && browser.getListed().front().factory == names.indexOf ("Acid Bass"),
+    check (pumpUntil ([&browser] { return browser.getCatalog().getListed().size() == 1; }) && browser.getCatalog().getListed().front().factory == names.indexOf ("Acid Bass"),
            "the search narrows the list to the presets with every word");
     snapshot (render (*editor), "9b-presets-search");
     browser.mouseDown (mouseAt (browser, browser.rowBounds (0).getCentre()));
     check (browser.isOpen() && p.getCurrentProgram() == names.indexOf ("Acid Bass"), "a click loads a preset, the browser staying open");
     browser.keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
-    check (browser.isOpen() && browser.getSearch().isEmpty() && (int) browser.getListed().size() == Presets::numPresets,
+    check (browser.isOpen() && browser.getSearch().isEmpty() && (int) browser.getCatalog().getListed().size() == Presets::numPresets,
            "Escape clears the search");
 
     // The arrow keys step through the list as it reads, loading each.
@@ -2406,7 +2406,7 @@ void testPresets()
     browser.mouseDown (mouseAt (browser, browser.rowBounds (0).getCentre()));
     check (p.getCurrentProgram() == 2, "picking one loads it");
     browser.mouseDown (mouseAt (browser, browser.categoryBounds (PresetBrowser::all).getCentre()));
-    const auto& listed = browser.getListed();
+    const auto& listed = browser.getCatalog().getListed();
     const auto  at     = std::find (listed.begin(), listed.end(), PresetBrowser::Item { 2, -1 });
     browser.keyPressed (juce::KeyPress (juce::KeyPress::downKey));
     check (at != listed.end() && at + 1 != listed.end() && p.getCurrentProgram() == (at + 1)->factory, "the down arrow loads the next one listed");
@@ -2430,7 +2430,8 @@ void testUserPresets()
                             .getChildFile ("Synth2UserPresetTests-" + juce::String::toHexString (juce::Random::getSystemRandom().nextInt64()));
     Synth2AudioProcessor p;
     p.prepareToPlay (48000.0, 512);
-    auto& store = p.getUserPresets();
+    auto& presets = p.getPresetLoader();
+    auto& store   = presets.getUserPresets();
     store.setFolder (folder, false);
     check (store.all().empty() && ! folder.exists(), "none to begin with, and no folder until one is saved");
 
@@ -2442,24 +2443,24 @@ void testUserPresets()
     // Saved: the synth as it is, under the name given, in a file of its own.
     p.loadPreset (slideLead);
     setParam (p, ParamID::osc1Level, 0.3f);
-    const auto mine = p.saveUserPreset ("  My Lead ", "Brighter, louder", Presets::Category::lead);
+    const auto mine = presets.saveUserPreset ("  My Lead ", "Brighter, louder", Presets::Category::lead);
     check (mine.has_value() && mine->name == "My Lead" && mine->detail == "Brighter, louder" && mine->file.existsAsFile()
                && mine->file.getParentDirectory() == folder && mine->file.hasFileExtension (UserPresets::extension),
            "saving writes a file of its own, its name trimmed");
-    check (p.getPresetName() == "My Lead" && p.getUserPresetName() == "My Lead" && p.getCurrentProgram() == slideLead,
+    check (presets.getPresetName() == "My Lead" && presets.getUserPresetName() == "My Lead" && p.getCurrentProgram() == slideLead,
            "and it is the preset loaded, the host's program staying as it was");
     check (mine.has_value() && mine->sound.mono && approx (mine->sound.glideSeconds, 0.12f, 1e-4f)
                && mine->sound.oscillators[0].has_value() && approx (mine->sound.oscillators[0]->level, 0.3f, 1e-4f)
                && mine->sound.oscillators[0]->filter.has_value() && mine->sound.delay.has_value() && mine->sound.reverb.has_value()
                && ! mine->sound.oscillators[3].has_value(),
            "what it holds reads back for the browser: its oscillators, filters, effects, glide and mono");
-    check (! p.saveUserPreset ("   ", "", Presets::Category::lead).has_value() && store.all().size() == 1, "a preset needs a name");
+    check (! presets.saveUserPreset ("   ", "", Presets::Category::lead).has_value() && store.all().size() == 1, "a preset needs a name");
 
     // Loaded over something else: all of it comes back.
     p.loadPreset (0);
-    check (p.getPresetName() == "Empty Bench" && p.getUserPresetName().isEmpty(), "a factory preset loaded is the one named");
-    check (mine.has_value() && p.loadUserPreset (*mine) && approx (param (p, ParamID::osc1Level), 0.3f, 1e-4f) && param (p, ParamID::mono) >= 0.5f
-               && approx (param (p, ParamID::glide), 0.12f, 1e-4f) && ! Bench::Model (p.getState()).isEmpty() && p.getPresetName() == "My Lead",
+    check (presets.getPresetName() == "Empty Bench" && presets.getUserPresetName().isEmpty(), "a factory preset loaded is the one named");
+    check (mine.has_value() && presets.loadUserPreset (*mine) && approx (param (p, ParamID::osc1Level), 0.3f, 1e-4f) && param (p, ParamID::mono) >= 0.5f
+               && approx (param (p, ParamID::glide), 0.12f, 1e-4f) && ! Bench::Model (p.getState()).isEmpty() && presets.getPresetName() == "My Lead",
            "loading it brings back its sound and its bench");
 
     // A session remembers it was loaded.
@@ -2467,7 +2468,7 @@ void testUserPresets()
     p.getStateInformation (session);
     Synth2AudioProcessor q;
     q.setStateInformation (session.getData(), (int) session.getSize());
-    check (q.getPresetName() == "My Lead" && q.getCurrentProgram() == p.getCurrentProgram(), "a session restored remembers the user preset loaded");
+    check (q.getPresetLoader().getPresetName() == "My Lead" && q.getCurrentProgram() == p.getCurrentProgram(), "a session restored remembers the user preset loaded");
 
     // What a preset doesn't say goes back to its default, whatever was playing.
     auto noGlide = UserPresets::stateIn (mine->file);
@@ -2475,16 +2476,16 @@ void testUserPresets()
     store.save ("No Glide", "", Presets::Category::lead, noGlide);
     setParam (p, ParamID::glide, 1.0f);
     const auto* noGlideEntry = store.find ("no glide");
-    check (noGlideEntry != nullptr && p.loadUserPreset (*noGlideEntry) && approx (param (p, ParamID::glide), 0.0f, 1e-6f),
+    check (noGlideEntry != nullptr && presets.loadUserPreset (*noGlideEntry) && approx (param (p, ParamID::glide), 0.0f, 1e-6f),
            "a parameter a preset doesn't mention goes back to its default");
 
     // The same name, whatever its case, replaces it.
     setParam (p, ParamID::osc1Level, 0.6f);
-    const auto replaced = p.saveUserPreset ("my lead", "", Presets::Category::bass);
+    const auto replaced = presets.saveUserPreset ("my lead", "", Presets::Category::bass);
     check (replaced.has_value() && store.all().size() == 2 && replaced->file == mine->file && replaced->category == Presets::Category::bass
                && approx (replaced->sound.oscillators[0]->level, 0.6f, 1e-4f) && replaced->name == "my lead",
            "saving under a name already saved, whatever its case, replaces it, under the name as typed");
-    const auto oddName = p.saveUserPreset ("A/B: \"C\"", "", Presets::Category::sfx);
+    const auto oddName = presets.saveUserPreset ("A/B: \"C\"", "", Presets::Category::sfx);
     check (oddName.has_value() && oddName->name == "A/B: \"C\"" && oddName->file.existsAsFile() && store.all().size() == 3,
            "a name a file can't have still saves, under the name given");
 
@@ -2500,7 +2501,7 @@ void testUserPresets()
 
     // Deleted: its file gone.
     const auto oddFile = oddName->file;
-    check (p.deleteUserPreset (*oddName) && ! oddFile.exists() && store.find ("A/B: \"C\"") == nullptr && store.all().size() == 2,
+    check (presets.deleteUserPreset (*oddName) && ! oddFile.exists() && store.find ("A/B: \"C\"") == nullptr && store.all().size() == 2,
            "deleting one removes its file");
 
     // In the browser: USER, and each in its category among the factory's.
@@ -2510,20 +2511,20 @@ void testUserPresets()
         return;
     auto& browser = editor->getPresetBrowser();
     editor->mouseDown (mouseAt (*editor, editor->presetBounds().getCentre()));
-    check (browser.isOpen() && (int) browser.getListed().size() == Presets::numPresets + 2, "ALL lists the factory's and the user's");
+    check (browser.isOpen() && (int) browser.getCatalog().getListed().size() == Presets::numPresets + 2, "ALL lists the factory's and the user's");
     browser.mouseDown (mouseAt (browser, browser.categoryBounds (PresetBrowser::user).getCentre()));
-    const auto& listed = browser.getListed();
-    check (browser.getCategory() == PresetBrowser::user && listed.size() == 2 && listed[0].isUser() && listed[1].isUser(),
+    const auto& listed = browser.getCatalog().getListed();
+    check (browser.getCatalog().getShown() == PresetBrowser::user && listed.size() == 2 && listed[0].isUser() && listed[1].isUser(),
            "USER lists just the user's");
     browser.mouseDown (mouseAt (browser, browser.categoryBounds ((int) Presets::Category::bass).getCentre()));
-    check (browser.getListed().size() == 4 && browser.getListed().back().isUser(), "a category lists the user's of it after the factory's");
+    check (browser.getCatalog().getListed().size() == 4 && browser.getCatalog().getListed().back().isUser(), "a category lists the user's of it after the factory's");
     browser.mouseDown (mouseAt (browser, browser.rowBounds (3).getCentre()));
-    check (p.getPresetName() == "my lead" && approx (param (p, ParamID::osc1Level), 0.6f, 1e-4f) && browser.getCurrentUser() == "my lead",
+    check (presets.getPresetName() == "my lead" && approx (param (p, ParamID::osc1Level), 0.6f, 1e-4f) && browser.getCatalog().getCurrentUser() == "my lead",
            "a click on one of the user's loads it");
     browser.mouseDown (mouseAt (browser, browser.rowBounds (0).getCentre()));
-    check (p.getUserPresetName().isEmpty() && browser.getCurrentUser().isEmpty(), "and one of the factory's takes its place");
+    check (presets.getUserPresetName().isEmpty() && browser.getCatalog().getCurrentUser().isEmpty(), "and one of the factory's takes its place");
     browser.getSearch().setText ("user");
-    check (pumpUntil ([&browser] { return browser.getListed().size() == 1; }), "the search finds the user's by USER");
+    check (pumpUntil ([&browser] { return browser.getCatalog().getListed().size() == 1; }), "the search finds the user's by USER");
     browser.getSearch().clear();
     browser.mouseDown (mouseAt (browser, browser.categoryBounds (PresetBrowser::user).getCentre()));
     browser.mouseDown (mouseAt (browser, browser.rowBounds (0).getCentre()));
@@ -2544,7 +2545,7 @@ void testUserPresets()
     const auto* nightPad  = store.find ("Night Pad");
     const auto  nightFile = nightPad != nullptr ? nightPad->file : juce::File();
     check (! panel.isOpen() && nightPad != nullptr && nightPad->category == Presets::Category::pads && nightPad->detail == "Dark and wide"
-               && p.getPresetName() == "Night Pad" && browser.getCategory() == PresetBrowser::user && browser.getCurrentUser() == "Night Pad",
+               && presets.getPresetName() == "Night Pad" && browser.getCatalog().getShown() == PresetBrowser::user && browser.getCatalog().getCurrentUser() == "Night Pad",
            "saved, it is listed among the user's, loaded");
 
     browser.mouseDown (mouseAt (browser, browser.saveBounds().getCentre()));
@@ -2560,10 +2561,10 @@ void testUserPresets()
     browser.mouseDown (mouseAt (browser, removal->getCentre()));
     check (browser.isDeleteArmed() && nightFile.exists(), "a first click on DELETE only asks");
     browser.mouseDown (mouseAt (browser, removal->getCentre()));
-    check (! nightFile.exists() && store.find ("Night Pad") == nullptr && p.getUserPresetName().isEmpty() && browser.getListed().size() == 2,
+    check (! nightFile.exists() && store.find ("Night Pad") == nullptr && presets.getUserPresetName().isEmpty() && browser.getCatalog().getListed().size() == 2,
            "a second deletes it");
     browser.mouseDown (mouseAt (browser, browser.categoryBounds ((int) Presets::Category::sfx).getCentre()));
-    check (browser.getCategory() == PresetBrowser::user, "and a category with none of either still can't be opened");
+    check (browser.getCatalog().getShown() == PresetBrowser::user, "and a category with none of either still can't be opened");
 
     base.reset();
     folder.deleteRecursively();
@@ -2729,7 +2730,7 @@ void testPanel()
         }
         return shown;
     };
-    check (pumpUntil (sixShown) && bench.isShowingPanel(), "the panel's six sections show, and nothing of 3 and 4");
+    check (pumpUntil (sixShown) && bench.getModule (o1).isPanelShaped(), "the panel's six sections show, and nothing of 3 and 4");
     bool filled = true;
     for (const auto& id : panelSix)
         filled = filled && bench.getModule (id).getBounds() == bench.boundsFor (id)
@@ -2738,7 +2739,7 @@ void testPanel()
     check (filled, "each fills its section, inside the box, in the panel's shape");
     auto& osc1 = bench.getOscillator (0);
     auto& osc2 = bench.getOscillator (1);
-    check (osc1.isFixedInPlace() && osc1.closeBounds().isEmpty(), "fixed in their places, with no cross");
+    check (osc1.closeBounds().isEmpty(), "fixed in their places, with no cross");
     check (osc2.getY() > osc1.getBottom() && bench.getFilter (0).getX() > osc1.getRight() && bench.getFilter (0).getY() == osc1.getY()
                && bench.getEnvelope (0).getY() > osc2.getBottom() && bench.getEnvelope (1).getX() > bench.getEnvelope (0).getRight(),
            "the oscillators as rows on the left, the filters beside them, the envelopes along the bottom");
@@ -2786,7 +2787,7 @@ void testPanel()
     editor->mouseDown (mouseAt (*editor, editor->gearBounds().getCentre()));
     check (settings.getChoice (3).ticked, "the gear shows the panel ticked");
     settings.mouseDown (mouseAt (settings, settings.choiceBounds (2).getCentre()));
-    check (! model.isPanel() && pumpUntil ([&] { return ! osc1.isFixedInPlace() && ! osc1.closeBounds().isEmpty(); }),
+    check (! model.isPanel() && pumpUntil ([&] { return ! osc1.closeBounds().isEmpty(); }),
            "picking Patch cables lets the cards move again, with their crosses");
     check (pumpUntil ([&] { return ! osc1.isPanelShaped() && osc1.getBounds() == bench.boundsFor (o1) && bench.getEnvelope (2).isVisible(); })
                && bench.getZoomPill().isVisible(),

@@ -150,7 +150,7 @@ public:
         by one, so the result is the same to the bit; but each sample goes
         straight in, and the pair is read and written once for every few
         oscillators rather than once for each. */
-    static void renderPanned (BlepOscillator* const* oscillators, int count, Waveform wave, const float* levels,
+    static void renderPanned (BlepOscillator* const* oscillators, int count, Waveform wave, const float* levels,   // NOSONAR(cpp:S107): hot path, like SynthVoice::mix
                               const float* fades, const float* panLeft, const float* panRight,
                               float* left, float* right, int numSamples) noexcept
     {
@@ -178,7 +178,8 @@ private:
         const float y = -(float) (std::uint32_t) (0u - t) * perDt;   // before it, -1..0
         const float rise = x + x - x * x - 1.0f;
         const float fall = y * y + y + y + 1.0f;
-        return t < dt ? rise : (t > 0u - dt ? fall : 0.0f);
+        const float edge = t > 0u - dt ? fall : 0.0f;
+        return t < dt ? rise : edge;
     }
 
     // One sample of `wave` at `phase`. Shifting by half or a quarter of a
@@ -197,7 +198,7 @@ private:
             const auto a = (std::int32_t) phase;
             const auto mirrored = (std::int32_t) (half - phase);
             const std::int32_t r = a > (std::int32_t) quarter || a < -(std::int32_t) quarter ? mirrored : a;
-            constexpr float toRadians = (float) (Oscillator::twoPi / cycle);
+            constexpr auto toRadians = (float) (Oscillator::twoPi / cycle);
             const float x  = (float) r * toRadians;
             const float x2 = x * x;
             return x * (1.0f + x2 * (-1.0f / 6.0f + x2 * (1.0f / 120.0f + x2 * (-1.0f / 5040.0f
@@ -287,7 +288,7 @@ private:
     // Four at a time, then a pair, then the last one, each group added in
     // after the one before, as the rows would be.
     template <Waveform wave>
-    static void runPanned (BlepOscillator* const* oscillators, int count, const float* levels, const float* fades,
+    static void runPanned (BlepOscillator* const* oscillators, int count, const float* levels, const float* fades,   // NOSONAR(cpp:S107): hot path
                            const float* panLeft, const float* panRight, float* left, float* right, int numSamples) noexcept
     {
         int k = 0;
@@ -303,7 +304,7 @@ private:
     }
 
     template <Waveform wave, int lanes>
-    static void runPannedSideBySide (BlepOscillator* const* oscillators, const float* levels, const float* fades,
+    static void runPannedSideBySide (BlepOscillator* const* oscillators, const float* levels, const float* fades,   // NOSONAR(cpp:S107): hot path
                                      const float* panLeft, const float* panRight, float* left, float* right, int numSamples) noexcept
     {
         std::array<std::uint32_t, lanes> phases {};

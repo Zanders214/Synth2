@@ -50,9 +50,9 @@ public:
         filter goes on sounding for a while after its input stops. */
     bool isRinging() const noexcept
     {
-        for (const auto& stage : state)
-            if (std::abs (stage.ic1) > ringFloor || std::abs (stage.ic2) > ringFloor)
-                return true;
+        if (std::any_of (state.begin(), state.end(), [] (const auto& stage)
+                         { return std::abs (stage.ic1) > ringFloor || std::abs (stage.ic2) > ringFloor; }))
+            return true;
         return false;
     }
 
@@ -145,7 +145,10 @@ private:
 
     struct Coefficients
     {
-        double a1, a2, a3, k;
+        double a1;
+        double a2;
+        double a3;
+        double k;
 
         static Coefficients of (double g, double k) noexcept
         {
@@ -157,7 +160,9 @@ private:
     // The three outputs a stage gives for input `x`.
     struct Outputs
     {
-        double low, band, high;
+        double low;
+        double band;
+        double high;
     };
 
     static Outputs tick (const Coefficients& c, Stage& s, double x) noexcept

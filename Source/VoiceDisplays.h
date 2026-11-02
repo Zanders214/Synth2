@@ -276,9 +276,9 @@ struct AmpDisplayState
                 && same (x.sustain, y.sustain) && same (x.release, y.release) && same (x.attackCurve, y.attackCurve)
                 && same (x.decayCurve, y.decayCurve) && same (x.releaseCurve, y.releaseCurve);
         };
-        if (! (sameDials (a.dials, b.dials)
-               && same (a.attackSeconds, b.attackSeconds) && same (a.releaseSeconds, b.releaseSeconds)
-               && same (a.outputDb, b.outputDb)))
+        if (const bool sameSettings = sameDials (a.dials, b.dials) && same (a.attackSeconds, b.attackSeconds)
+                                      && same (a.releaseSeconds, b.releaseSeconds) && same (a.outputDb, b.outputDb);
+            ! sameSettings)
             return false;
 
         for (size_t i = 0; i < a.notes.size(); ++i)

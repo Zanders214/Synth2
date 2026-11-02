@@ -90,29 +90,44 @@ public:
         already loaded, so picking it again undoes any edits. Message thread. */
     void loadPreset (int index);
 
-    /** The presets saved by the user (see UserPresets.h). Message thread. */
-    UserPresets&       getUserPresets() noexcept       { return userPresets; }
-    const UserPresets& getUserPresets() const noexcept { return userPresets; }
+    /** The presets the user saves, from the synth's side: where they are
+        kept (see UserPresets.h), saving the synth as one, loading one,
+        deleting one, and which preset is loaded. Message thread. */
+    class PresetLoader
+    {
+    public:
+        explicit PresetLoader (Synth2AudioProcessor& processorToLoadInto) : owner (processorToLoadInto) {}
 
-    /** Loads the user preset `entry`: all of the synth as it was saved,
-        the bench and the effects with it; false if its file can't be read.
-        The host's program stays as it was. Message thread. */
-    bool loadUserPreset (const UserPresets::Entry& entry);
+        UserPresets& getUserPresets() noexcept { return store; }
 
-    /** Saves the synth as it is now as user preset `name`, replacing one
-        already saved under that name, and has it loaded; what was saved,
-        or nothing if it couldn't be. Message thread. */
-    std::optional<UserPresets::Entry> saveUserPreset (const juce::String& name, const juce::String& detail, Presets::Category category);
+        /** Loads the user preset `entry`: all of the synth as it was saved,
+            the bench and the effects with it; false if its file can't be
+            read. The host's program stays as it was. */
+        bool loadUserPreset (const UserPresets::Entry& entry);
 
-    /** Deletes the user preset `entry` (to the Trash). Message thread. */
-    bool deleteUserPreset (const UserPresets::Entry& entry);
+        /** Saves the synth as it is now as user preset `name`, replacing one
+            already saved under that name, and has it loaded; what was saved,
+            or nothing if it couldn't be. */
+        std::optional<UserPresets::Entry> saveUserPreset (const juce::String& name, const juce::String& detail, Presets::Category category);
 
-    /** The preset loaded: the user preset's name if one was loaded or saved
-        since the last factory preset, otherwise the factory preset's. */
-    juce::String getPresetName() const;
+        /** Deletes the user preset `entry` (to the Trash). */
+        bool deleteUserPreset (const UserPresets::Entry& entry);
 
-    /** The user preset loaded, or empty if the last was a factory one. */
-    juce::String getUserPresetName() const;
+        /** The preset loaded: the user preset's name if one was loaded or
+            saved since the last factory preset, otherwise the factory preset's. */
+        juce::String getPresetName() const;
+
+        /** The user preset loaded, or empty if the last was a factory one. */
+        juce::String getUserPresetName() const;
+
+    private:
+        Synth2AudioProcessor& owner;
+        UserPresets store;
+
+        JUCE_DECLARE_NON_COPYABLE (PresetLoader)
+    };
+
+    PresetLoader& getPresetLoader() noexcept { return presetLoader; }
 
 private:
     // Sets the synth to `restored` (a saved state), bringing an older one up
@@ -250,7 +265,7 @@ private:
 
     static std::array<NoteActivity, Synth2Engine::maxNotes> read (const PublishedNotes&) noexcept;
 
-    UserPresets  userPresets;
+    PresetLoader presetLoader { *this };
     OnScreenKeys keys;
     Follower     follower { *this };   // last: it reads and fills in the state above
 

@@ -127,6 +127,20 @@ private:
     float zoom    = 1.0f;
 };
 
+/** How the bench's canvas (design pixels) maps onto its view, zoomed and panned. */
+struct BenchMapping
+{
+    juce::Point<float> pan;   // the canvas point at the view's top left
+    float scale = 1.0f;       // view pixels to the design pixel
+
+    juce::Point<float> toView (juce::Point<float> design) const noexcept   { return (design - pan) * scale; }
+    juce::Point<float> toDesign (juce::Point<float> viewAt) const noexcept { return viewAt / scale + pan; }
+    juce::Rectangle<float> toView (juce::Rectangle<float> design) const noexcept
+    {
+        return { toView (design.getPosition()), toView (design.getBottomRight()) };
+    }
+};
+
 /**
     BenchView — the workbench: a dark box, faintly dotted, looking onto a
     canvas (Bench::areaWidth x areaHeight) where the modules sit wherever they
@@ -165,8 +179,8 @@ public:
         {
             auto& card = getModule (id);
             addChildComponent (card);
-            card.onRemove ([this, id] { remove (id); });
-            card.onMoved ([this, id] (juce::Point<int> topLeft) { land (id, topLeft); });
+            card.getHandlers().remove = [this, id] { remove (id); };
+            card.getHandlers().moved  = [this, id] (juce::Point<int> topLeft) { land (id, topLeft); };
         }
         pill.setZoom (viewport.zoom);
         pill.onPress ([this] (ZoomPill::Part part)
@@ -179,10 +193,15 @@ public:
         setRepaintsOnMouseActivity (false);
     }
 
-    /** A click on an empty spot: where, in design pixels on the canvas, and in this view. */
-    void onEmptyClick (std::function<void (juce::Point<float>, juce::Point<int>)> handler) { emptyClickHandler = std::move (handler); }
-    /** The box zoomed or panned (and so the cards moved). */
-    void onViewportChange (std::function<void()> handler) { viewportHandler = std::move (handler); }
+    struct Handlers
+    {
+        /** A click on an empty spot: where, in design pixels on the canvas, and in this view. */
+        std::function<void (juce::Point<float>, juce::Point<int>)> emptyClick;
+        /** The box zoomed or panned (and so the cards moved). */
+        std::function<void()> viewportChanged;
+    };
+
+    void setHandlers (Handlers newHandlers) { handlers = std::move (newHandlers); }
 
     BenchModule& getModule (const Bench::ModuleId& id)
     {
@@ -224,7 +243,7 @@ public:
     /** Zooms to `newZoom`, keeping the canvas point under `viewAt` (in this view) there. */
     void zoomAround (juce::Point<float> viewAt, float newZoom)
     {
-        const auto anchor = toDesign (viewAt);
+        const auto anchor = mapping().toDesign (viewAt);
         newZoom = juce::jlimit (Bench::fitZoom, Bench::maxZoom, newZoom);
         setViewport ({ newZoom, anchor - viewAt / (uiScale * newZoom) });
     }
@@ -252,13 +271,8 @@ public:
     /** Frames the modules on the bench, or shows the whole canvas when there are none. */
     void fit() { setViewport (Bench::framing (model.extent())); }
 
-    /** A point on the canvas (design pixels) in this view, and back. */
-    juce::Point<float> toView (juce::Point<float> design) const noexcept { return (design - viewport.pan) * scale(); }
-    juce::Point<float> toDesign (juce::Point<float> viewAt) const noexcept { return viewAt / scale() + viewport.pan; }
-    juce::Rectangle<float> toView (juce::Rectangle<float> design) const noexcept
-    {
-        return { toView (design.getPosition()), toView (design.getBottomRight()) };
-    }
+    /** How the canvas (design pixels) maps onto this view, as it is zoomed and panned now. */
+    BenchMapping mapping() const noexcept { return { viewport.pan, scale() }; }
 
     /** Where module `id` sits in this view, as tall as its card is drawn. */
     juce::Rectangle<int> boundsFor (const Bench::ModuleId& id)
@@ -269,7 +283,7 @@ public:
         // A hair's grace, so a card dropped at a pixel lands on that pixel
         // whatever the zoom made of it.
         const auto snap    = [] (float v) { return (int) std::floor (v + 0.01f); };
-        const auto topLeft = toView (model.positionOf (id));
+        const auto topLeft = mapping().toView (model.positionOf (id));
         return { snap (topLeft.x), snap (topLeft.y), juce::roundToInt (Bench::moduleWidth * scale()),
                  juce::roundToInt (getModule (id).cardHeight() * scale()) };
     }
@@ -313,7 +327,7 @@ public:
         if (const auto saved = model.viewport(); saved != viewport)
             lookAt (saved);
 
-        auto& animator = juce::Desktop::getInstance().getAnimator();
+        const auto& animator = juce::Desktop::getInstance().getAnimator();
         if (const bool panel = model.isPanel(); panel != wasPanel)
         {
             // Onto the panel or off it: every card takes its new shape and
@@ -352,9 +366,6 @@ public:
 
     bool isShowingHint() const { return model.isEmpty() && ! model.isPanel(); }
 
-    /** Whether the panel is showing (as of the last sync). */
-    bool isShowingPanel() const noexcept { return wasPanel; }
-
     /** Shows the ZoomPill along with the bench (it hides itself on the panel, which doesn't zoom). */
     void setPillWanted (bool wanted)
     {
@@ -368,7 +379,7 @@ public:
         const float s      = uiScale;
         const float z      = scale();
         const auto  box    = getLocalBounds().toFloat();
-        const auto  canvas = toView (juce::Rectangle<float> (Bench::areaWidth, Bench::areaHeight));
+        const auto  canvas = mapping().toView (juce::Rectangle<float> (Bench::areaWidth, Bench::areaHeight));
 
         g.setColour (Palette::well.withAlpha (0.55f));
         g.fillRoundedRectangle (box, 16.0f * s);
@@ -393,7 +404,7 @@ public:
             for (int row = first (seen.getY()); row <= last (seen.getBottom(), Bench::areaHeight); ++row)
                 for (int column = first (seen.getX()); column <= last (seen.getRight(), Bench::areaWidth); ++column)
                 {
-                    const auto at = toView (juce::Point<float> ((float) column * spacing, (float) row * spacing));
+                    const auto at = mapping().toView (juce::Point<float> ((float) column * spacing, (float) row * spacing));
                     g.fillEllipse (at.x - dot * 0.5f, at.y - dot * 0.5f, dot, dot);
                 }
         }
@@ -453,11 +464,11 @@ public:
     {
         const auto was = std::exchange (press, Press {});
         setMouseCursor (juce::MouseCursor::NormalCursor);
-        if (! was.down || was.panning || emptyClickHandler == nullptr || model.isPanel())
+        if (! was.down || was.panning || handlers.emptyClick == nullptr || model.isPanel())
             return;
-        const auto design  = toDesign (was.at);
+        const auto design  = mapping().toDesign (was.at);
         const auto topLeft = juce::Point<float> (design.x - Bench::moduleWidth * 0.5f, design.y - 15.0f);
-        emptyClickHandler (topLeft, was.at.roundToInt());
+        handlers.emptyClick (topLeft, was.at.roundToInt());
     }
 
     // Cmd / Ctrl + wheel zooms round the pointer; the wheel (or two fingers)
@@ -507,8 +518,8 @@ private:
         pill.setZoom (viewport.zoom);
         placeCards (rescale);
         repaint();
-        if (viewportHandler != nullptr)
-            viewportHandler();
+        if (handlers.viewportChanged != nullptr)
+            handlers.viewportChanged();
     }
 
     /** Puts every card where the zoom and pan show it (drawn at the zoom when
@@ -516,7 +527,7 @@ private:
         canvas in the box. */
     void placeCards (bool rescale)
     {
-        const auto canvas = toView (juce::Rectangle<float> (Bench::areaWidth, Bench::areaHeight)).getSmallestIntegerContainer();
+        const auto canvas = mapping().toView (juce::Rectangle<float> (Bench::areaWidth, Bench::areaHeight)).getSmallestIntegerContainer();
         for (const auto& id : Bench::allModules)
         {
             auto& card = getModule (id);
@@ -551,7 +562,7 @@ private:
 
     void land (const Bench::ModuleId& id, juce::Point<int> topLeft)
     {
-        const auto wanted = toDesign (topLeft.toFloat());
+        const auto wanted = mapping().toDesign (topLeft.toFloat());
         const auto landed = model.move (id, wanted);
         auto& card = getModule (id);
         if (const auto target = boundsFor (id); landed != wanted && card.getBounds() != target)
@@ -568,8 +579,7 @@ private:
     std::array<std::unique_ptr<FilterModule>, Bench::numFilters> filters;
     ZoomPill pill;
 
-    std::function<void (juce::Point<float>, juce::Point<int>)> emptyClickHandler;
-    std::function<void()> viewportHandler;
+    Handlers handlers;
     Bench::Viewport viewport;   // as on the bench (see Bench::Model::viewport)
     Press  press;
     float  uiScale  = 1.0f;
