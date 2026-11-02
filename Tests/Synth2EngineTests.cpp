@@ -1335,6 +1335,127 @@ void testDrive()
                + std::to_string (alias) + " against " + std::to_string (naiveAlias) + ")");
 }
 
+// How much (in dB) the EQ set up with `eq` passes a sine at `hz`, once it
+// has settled, run in the engine's 32-sample chunks.
+float eqGainDb (Effects::EqSettings eq, double hz)
+{
+    constexpr int length = 24000;
+    constexpr int from   = 12000;   // past the fade in and the filters' ring
+    eq.on = true;
+    Effects::Settings settings;
+    settings.eq = eq;
+    const auto out = throughEffects (settings, sine (hz, 0.1f, length))[0];
+    double sum = 0.0;
+    for (int n = from; n < length; ++n)
+        sum += (double) out[(size_t) n] * out[(size_t) n];
+    const double outRms = std::sqrt (sum / (length - from));
+    return (float) (20.0 * std::log10 (outRms / (0.1 / std::sqrt (2.0))));
+}
+
+void testEq()
+{
+    std::printf ("EQ:\n");
+
+    const auto in = sine (440.0, 0.25f, 9600);
+    Effects::Settings off;
+    off.eq.lowCutHz   = 1000.0f;
+    off.eq.midGainDb  = 18.0f;
+    off.eq.highGainDb = -18.0f;
+    check (throughEffects (off, in) == in, "switched off, the EQ leaves the sound untouched");
+
+    Effects::Settings flat;
+    flat.eq.on = true;
+    const auto passed = throughEffects (flat, in);
+    float worst = 0.0f;
+    for (size_t n = 0; n < in[0].size(); ++n)
+        worst = std::max (worst, std::abs (passed[0][n] - in[0][n]));
+    check (worst < 1.0e-6f, "on but flat (the cuts out, every gain 0 dB), it passes the sound as it was");
+    check (std::abs (Effects::eqResponseDb (flat.eq, 30.0, sampleRate)) < 1.0e-9
+               && std::abs (Effects::eqResponseDb (flat.eq, 15000.0, sampleRate)) < 1.0e-9,
+           "and its response is 0 dB all the way across");
+
+    // The cuts: Butterworth, 12 or 24 dB an octave.
+    Effects::EqSettings lowCut;
+    lowCut.lowCutHz = 400.0f;
+    const auto steepLowCut = [lowCut]
+    {
+        auto steep = lowCut;
+        steep.slope = (int) Effects::EqSlope::steep;
+        return steep;
+    }();
+    check (approx (eqGainDb (lowCut, 400.0), -3.0f, 0.3f) && approx (eqGainDb (lowCut, 200.0), -12.3f, 0.5f)
+               && approx (eqGainDb (lowCut, 4000.0), 0.0f, 0.1f),
+           "LOW CUT at 12 dB: -3 dB at its frequency, about -12 dB an octave under, untouched well above");
+    check (approx (eqGainDb (steepLowCut, 400.0), -3.0f, 0.3f) && approx (eqGainDb (steepLowCut, 200.0), -24.1f, 0.6f),
+           "at 24 dB, twice as steep");
+    Effects::EqSettings highCut;
+    highCut.highCutHz = 2000.0f;
+    check (approx (eqGainDb (highCut, 2000.0), -3.0f, 0.3f) && eqGainDb (highCut, 8000.0) < -20.0f
+               && approx (eqGainDb (highCut, 200.0), 0.0f, 0.1f),
+           "HIGH CUT takes the highs off, leaving the lows be");
+
+    // The shelves and the bell.
+    Effects::EqSettings bell;
+    bell.midGainDb = 12.0f;
+    bell.midHz     = 1000.0f;
+    bell.midQ      = 2.0f;
+    check (approx (eqGainDb (bell, 1000.0), 12.0f, 0.2f) && approx (eqGainDb (bell, 100.0), 0.0f, 0.3f)
+               && approx (eqGainDb (bell, 10000.0), 0.0f, 0.3f),
+           "MID lifts round its frequency and leaves the rest");
+    auto cut = bell;
+    cut.midGainDb = -12.0f;
+    check (approx (eqGainDb (cut, 1000.0), -12.0f, 0.2f), "and dips as far as it lifts");
+    Effects::EqSettings shelves;
+    shelves.lowGainDb  = -9.0f;
+    shelves.lowHz      = 150.0f;
+    shelves.highGainDb = 6.0f;
+    shelves.highHz     = 5000.0f;
+    check (approx (eqGainDb (shelves, 30.0), -9.0f, 0.4f) && approx (eqGainDb (shelves, 18000.0), 6.0f, 0.4f)
+               && approx (eqGainDb (shelves, 1000.0), 0.0f, 0.6f),
+           "LOW and HIGH shelve the ends, the middle all but untouched");
+
+    // The curve on screen comes from the same filters.
+    Effects::EqSettings everything;
+    everything.lowCutHz   = 60.0f;
+    everything.highCutHz  = 12000.0f;
+    everything.slope      = (int) Effects::EqSlope::steep;
+    everything.lowGainDb  = 4.0f;
+    everything.midGainDb  = -6.0f;
+    everything.midHz      = 700.0f;
+    everything.midQ       = 1.2f;
+    everything.highGainDb = 3.0f;
+    bool matches = true;
+    for (const double hz : { 40.0, 90.0, 300.0, 700.0, 2500.0, 9000.0, 15000.0 })
+        matches = matches && approx (eqGainDb (everything, hz), (float) Effects::eqResponseDb (everything, hz, sampleRate), 0.15f);
+    check (matches, "what plays matches the response the well draws");
+
+    // A setting turned glides there over 20 ms rather than stepping: MID
+    // straight up to +18 dB on a sine at its frequency has barely moved a
+    // millisecond on, and is all the way there in the end.
+    Effects::Chain chain;
+    Effects::Settings turned;
+    turned.eq.on    = true;
+    turned.eq.midHz = 1000.0f;
+    chain.set (turned);
+    chain.prepare (sampleRate);
+    auto signal = sine (1000.0, 0.1f, 19200);
+    for (int done = 0; done < 19200; done += 32)
+    {
+        if (done == 9600)
+        {
+            turned.eq.midGainDb = 18.0f;
+            chain.set (turned);
+        }
+        chain.process (signal[0].data() + done, signal[1].data() + done, 32);
+    }
+    const auto levelDb = [&signal] (int from, int to)
+    {
+        return 20.0f * std::log10 (std::sqrt (energy (signal[0], from, to) / (float) (to - from)) / (0.1f / std::sqrt (2.0f)));
+    };
+    check (levelDb (9600 + 32, 9600 + 96) < 3.0f && approx (levelDb (14400, 19200), 18.0f, 0.3f),
+           "turning MID up glides there rather than stepping");
+}
+
 void testEffectsChain()
 {
     std::printf ("Effects chain:\n");
@@ -1357,17 +1478,17 @@ void testEffectsChain()
     both.delay.mix = 1.0f;
     both.reverb.on = true;
     auto reversed = both;
-    reversed.order = { Effects::Kind::drive, Effects::Kind::reverb, Effects::Kind::delay };
+    reversed.order = { Effects::Kind::drive, Effects::Kind::eq, Effects::Kind::reverb, Effects::Kind::delay };
     check (throughEffects (both, impulse (24000), 4800) != throughEffects (reversed, impulse (24000), 4800),
            "the order matters");
     auto drivenLast = both;
     drivenLast.drive.on     = true;
     drivenLast.drive.amount = 1.0f;
     auto drivenFirst = drivenLast;
-    drivenLast.order = { Effects::Kind::delay, Effects::Kind::reverb, Effects::Kind::drive };
+    drivenLast.order = { Effects::Kind::eq, Effects::Kind::delay, Effects::Kind::reverb, Effects::Kind::drive };
     check (throughEffects (drivenFirst, impulse (24000), 4800) != throughEffects (drivenLast, impulse (24000), 4800),
            "the drive can go anywhere in the chain, not just first");
-    for (int code = 0; code < 27; ++code)
+    for (int code = 0; code < 256; ++code)
     {
         const auto order = Effects::decode (code);
         check (Effects::isOrder (order) && (Effects::encode (order) == code || order == Effects::defaultOrder),
@@ -1518,6 +1639,7 @@ int main()
     testFilter();
     testFilterInNotes();
     testDrive();
+    testEq();
     testEffectsChain();
     testEngineEffects();
     testGlideAndMono();

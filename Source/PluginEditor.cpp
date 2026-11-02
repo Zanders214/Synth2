@@ -413,6 +413,7 @@ void Synth2AudioProcessorEditor::Trays::openEffect (juce::Point<float> rackAt, j
     const Rack::Model rack (owner.processorRef.getState());
     std::vector<ChoiceTray::Choice> choices {
         { "Drive",  "Grit and warmth: WARM, TUBE or HARD" },
+        { "EQ",     "Cut the lows or highs, shape the tone" },
         { "Delay",  "Repeats, free or on the beat" },
         { "Reverb", "A room, from a small one to a hall" } };
     for (size_t i = 0; i < choices.size(); ++i)

@@ -133,7 +133,8 @@ int main()
             proc.setRoutedToOutput ((b / 24) % 4, (b / 24) % 3 != 0);
         }
 
-        // The effects switch on and off, swap order and change time mid-note.
+        // The effects switch on and off, swap order and change time (and the
+        // EQ its bands) mid-note.
         if (b % 24 == 12)
         {
             // A new order every 72 blocks: every card out, then back in, rotated.
@@ -159,6 +160,15 @@ int main()
             set (ParamID::reverbSize,    0.2f * (float) ((b / 24) % 6));
             set (ParamID::reverbPreDelay, 40.0f * (float) ((b / 24) % 7));
             set (ParamID::reverbDamping, 0.25f * (float) ((b / 24) % 5));
+            set (ParamID::eqOn,          (float) ((b / 24 + 1) % 4 != 0));
+            set (ParamID::eqLowCut,      (b / 24) % 3 == 0 ? Effects::minLowCutHz : 80.0f * (float) ((b / 24) % 5 + 1));
+            set (ParamID::eqHighCut,     (b / 24) % 4 == 0 ? Effects::maxHighCutHz : 2000.0f * (float) ((b / 24) % 5 + 1));
+            set (ParamID::eqSlope,       (float) ((b / 48) % 2));
+            set (ParamID::eqLowGain,     -12.0f + 6.0f * (float) ((b / 24) % 5));
+            set (ParamID::eqMidGain,     18.0f - 9.0f * (float) ((b / 24) % 5));
+            set (ParamID::eqMidFreq,     200.0f * (float) ((b / 24) % 7 + 1));
+            set (ParamID::eqMidQ,        0.5f + (float) ((b / 24) % 4));
+            set (ParamID::eqHighGain,    (float) ((b / 24) % 7) - 3.0f);
         }
 
         audioCallback (proc, buffer, midi);         // the full callback, under RTSan

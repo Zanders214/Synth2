@@ -122,6 +122,9 @@ namespace Presets
         float mix    = 1.0f;
     };
 
+    /** The EQ: as the engine has it (see Effects::EqSettings), its switch aside. */
+    using Eq = Effects::EqSettings;
+
     /** What kind of sound a preset is, in the order the preset tray lists them. */
     enum class Category { init, bass, lead, arp, pluck, keys, pads, strings, brass, sfx, drums };
     inline constexpr std::array<const char*, 11> categoryNames {
@@ -142,6 +145,7 @@ namespace Presets
         std::optional<Drive>  drive {};
         float glideSeconds = 0.0f;   // each note's slide from the one before
         bool  mono = false;          // one note at a time, legato
+        std::optional<Eq> eq {};     // empty: out of the chain
     };
 
     // Note lengths, by name (their place in Effects::divisions).
@@ -343,6 +347,18 @@ namespace Presets
             values.emplace_back (ParamID::reverbMix,     preset.reverb->mix);
             values.emplace_back (ParamID::reverbPreDelay, preset.reverb->preDelayMs);
         }
+        values.emplace_back (ParamID::eqInChain, preset.eq.has_value() ? 1.0f : 0.0f);
+        values.emplace_back (ParamID::eqOn, preset.eq.has_value() ? 1.0f : 0.0f);
+        if (preset.eq.has_value())
+        {
+            const auto& eq = *preset.eq;
+            for (const auto& [id, value] : { std::pair (ParamID::eqLowCut, eq.lowCutHz), std::pair (ParamID::eqHighCut, eq.highCutHz),
+                                             std::pair (ParamID::eqSlope, (float) eq.slope), std::pair (ParamID::eqLowGain, eq.lowGainDb),
+                                             std::pair (ParamID::eqLowFreq, eq.lowHz), std::pair (ParamID::eqMidGain, eq.midGainDb),
+                                             std::pair (ParamID::eqMidFreq, eq.midHz), std::pair (ParamID::eqMidQ, eq.midQ),
+                                             std::pair (ParamID::eqHighGain, eq.highGainDb), std::pair (ParamID::eqHighFreq, eq.highHz) })
+                values.emplace_back (id, value);
+        }
     }
 
     /** The parameter values `preset` sets, by ID: whether each oscillator,
@@ -427,6 +443,23 @@ namespace Presets
             preset.reverb = Reverb { value (ParamID::reverbSize, d.size), value (ParamID::reverbDamping, d.damping),
                                      value (ParamID::reverbWidth, d.width), value (ParamID::reverbMix, d.mix),
                                      value (ParamID::reverbPreDelay, d.preDelayMs) };
+        }
+        if (on (ParamID::eqInChain) && on (ParamID::eqOn))
+        {
+            const Eq d;
+            Eq eq;
+            eq.on         = true;
+            eq.lowCutHz   = value (ParamID::eqLowCut, d.lowCutHz);
+            eq.highCutHz  = value (ParamID::eqHighCut, d.highCutHz);
+            eq.slope      = juce::roundToInt (value (ParamID::eqSlope, (float) d.slope));
+            eq.lowGainDb  = value (ParamID::eqLowGain, d.lowGainDb);
+            eq.lowHz      = value (ParamID::eqLowFreq, d.lowHz);
+            eq.midGainDb  = value (ParamID::eqMidGain, d.midGainDb);
+            eq.midHz      = value (ParamID::eqMidFreq, d.midHz);
+            eq.midQ       = value (ParamID::eqMidQ, d.midQ);
+            eq.highGainDb = value (ParamID::eqHighGain, d.highGainDb);
+            eq.highHz     = value (ParamID::eqHighFreq, d.highHz);
+            preset.eq = eq;
         }
         preset.outputDb     = value (ParamID::output, 0.0f);
         preset.glideSeconds = value (ParamID::glide, 0.0f);

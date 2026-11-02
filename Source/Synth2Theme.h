@@ -154,7 +154,7 @@ namespace Synth2
         /** A frequency: "NNN Hz" below a kilohertz, "X.XX kHz" above. */
         inline juce::String hertz (float hz)
         {
-            if (hz < 1000.0f)
+            if (juce::roundToInt (hz) < 1000)
                 return juce::String (juce::roundToInt (hz)) + " Hz";
             return juce::String (hz / 1000.0f, hz < 10000.0f ? 2 : 1) + " kHz";
         }
