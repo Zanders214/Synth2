@@ -257,56 +257,62 @@ namespace Presets
 
     inline constexpr int numPresets = (int) std::tuple_size_v<decltype (factory)>;
 
-    /** The parameter values `preset` sets, by ID: whether each oscillator,
-        envelope and filter is on the bench and each effect in the chain, and the
-        settings of the ones that are. */
-    inline std::vector<std::pair<const char*, float>> valuesOf (const Preset& preset)
+    /** Parameter values, by ID. */
+    using Values = std::vector<std::pair<const char*, float>>;
+
+    /** The values of envelope `envelope`'s stages, as `stages` (an envelope's
+        or a filter's sweep). */
+    inline void addStages (Values& values, const ParamID::Envelope& stages, const Envelope& envelope)
     {
-        std::vector<std::pair<const char*, float>> values;
-        for (size_t k = 0; k < preset.oscillators.size(); ++k)
+        values.emplace_back (stages.delay,        envelope.delaySeconds);
+        values.emplace_back (stages.attack,       envelope.attackSeconds);
+        values.emplace_back (stages.hold,         envelope.holdSeconds);
+        values.emplace_back (stages.decay,        envelope.decaySeconds);
+        values.emplace_back (stages.sustain,      envelope.sustainLevel);
+        values.emplace_back (stages.release,      envelope.releaseSeconds);
+        values.emplace_back (stages.attackCurve,  envelope.attackCurve);
+        values.emplace_back (stages.decayCurve,   envelope.decayCurve);
+        values.emplace_back (stages.releaseCurve, envelope.releaseCurve);
+    }
+
+    /** The values oscillator `k` (`osc`, empty: off the bench) sets: whether
+        it, its envelope and its filter are on the bench, and how they're set. */
+    inline void addOscillatorValues (Values& values, size_t k, const std::optional<Oscillator>& osc)
+    {
+        const auto& ids = ParamID::oscillators[k];
+        const auto& env = ParamID::envelopes[k];
+        const auto& flt = ParamID::filters[k];
+        const bool  shaped   = osc.has_value() && osc->envelope.has_value();
+        const bool  filtered = osc.has_value() && osc->filter.has_value();
+        values.emplace_back (ids.on, osc.has_value() ? 1.0f : 0.0f);
+        values.emplace_back (env.on, shaped ? 1.0f : 0.0f);
+        values.emplace_back (flt.on, filtered ? 1.0f : 0.0f);
+        if (! osc.has_value())
+            return;
+
+        values.emplace_back (ids.wave,   (float) osc->wave);
+        values.emplace_back (ids.pitch,  (float) osc->semitones);
+        values.emplace_back (ids.fine,   osc->fineCents);
+        values.emplace_back (ids.level,  osc->level);
+        values.emplace_back (ids.voices, (float) osc->unison.voices);
+        values.emplace_back (ids.detune, osc->unison.detuneCents);
+        values.emplace_back (ids.width,  osc->unison.width);
+        if (shaped)
+            addStages (values, env, *osc->envelope);
+        if (filtered)
         {
-            const auto& ids = ParamID::oscillators[k];
-            const auto& env = ParamID::envelopes[k];
-            const auto& flt = ParamID::filters[k];
-            const auto& osc = preset.oscillators[k];
-            const bool  shaped   = osc.has_value() && osc->envelope.has_value();
-            const bool  filtered = osc.has_value() && osc->filter.has_value();
-            values.emplace_back (ids.on, osc.has_value() ? 1.0f : 0.0f);
-            values.emplace_back (env.on, shaped ? 1.0f : 0.0f);
-            values.emplace_back (flt.on, filtered ? 1.0f : 0.0f);
-            const auto addStages = [&values] (const ParamID::Envelope& stages, const Envelope& envelope)
-            {
-                values.emplace_back (stages.delay,        envelope.delaySeconds);
-                values.emplace_back (stages.attack,       envelope.attackSeconds);
-                values.emplace_back (stages.hold,         envelope.holdSeconds);
-                values.emplace_back (stages.decay,        envelope.decaySeconds);
-                values.emplace_back (stages.sustain,      envelope.sustainLevel);
-                values.emplace_back (stages.release,      envelope.releaseSeconds);
-                values.emplace_back (stages.attackCurve,  envelope.attackCurve);
-                values.emplace_back (stages.decayCurve,   envelope.decayCurve);
-                values.emplace_back (stages.releaseCurve, envelope.releaseCurve);
-            };
-            if (osc.has_value())
-            {
-                values.emplace_back (ids.wave,   (float) osc->wave);
-                values.emplace_back (ids.pitch,  (float) osc->semitones);
-                values.emplace_back (ids.fine,   osc->fineCents);
-                values.emplace_back (ids.level,  osc->level);
-                values.emplace_back (ids.voices, (float) osc->unison.voices);
-                values.emplace_back (ids.detune, osc->unison.detuneCents);
-                values.emplace_back (ids.width,  osc->unison.width);
-            }
-            if (shaped)
-                addStages (env, *osc->envelope);
-            if (filtered)
-            {
-                values.emplace_back (flt.type,      (float) osc->filter->type);
-                values.emplace_back (flt.cutoff,    osc->filter->cutoffHz);
-                values.emplace_back (flt.resonance, osc->filter->resonance);
-                values.emplace_back (flt.envAmount, osc->filter->envAmount);
-                addStages (flt.sweep, osc->filter->sweep);
-            }
+            values.emplace_back (flt.type,      (float) osc->filter->type);
+            values.emplace_back (flt.cutoff,    osc->filter->cutoffHz);
+            values.emplace_back (flt.resonance, osc->filter->resonance);
+            values.emplace_back (flt.envAmount, osc->filter->envAmount);
+            addStages (values, flt.sweep, osc->filter->sweep);
         }
+    }
+
+    /** The values `preset`'s effects set: whether each is in the chain, and
+        how the ones that are are set. */
+    inline void addEffectValues (Values& values, const Preset& preset)
+    {
         values.emplace_back (ParamID::driveInChain, preset.drive.has_value() ? 1.0f : 0.0f);
         values.emplace_back (ParamID::driveOn, preset.drive.has_value() ? 1.0f : 0.0f);
         if (preset.drive.has_value())
@@ -337,6 +343,17 @@ namespace Presets
             values.emplace_back (ParamID::reverbMix,     preset.reverb->mix);
             values.emplace_back (ParamID::reverbPreDelay, preset.reverb->preDelayMs);
         }
+    }
+
+    /** The parameter values `preset` sets, by ID: whether each oscillator,
+        envelope and filter is on the bench and each effect in the chain, and the
+        settings of the ones that are. */
+    inline Values valuesOf (const Preset& preset)
+    {
+        Values values;
+        for (size_t k = 0; k < preset.oscillators.size(); ++k)
+            addOscillatorValues (values, k, preset.oscillators[k]);
+        addEffectValues (values, preset);
         values.emplace_back (ParamID::output, preset.outputDb);
         values.emplace_back (ParamID::glide,  preset.glideSeconds);
         values.emplace_back (ParamID::mono,   preset.mono ? 1.0f : 0.0f);

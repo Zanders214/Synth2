@@ -372,7 +372,9 @@ private:
         if (allSettled (part, playing, numPlaying, count, relayout))
         {
             std::array<BlepOscillator*, Unison::maxVoices> bank {};
-            std::array<float, Unison::maxVoices> fades {}, panLeft {}, panRight {};
+            std::array<float, Unison::maxVoices> fades {};
+            std::array<float, Unison::maxVoices> panLeft {};
+            std::array<float, Unison::maxVoices> panRight {};
             for (size_t k = 0; k < (size_t) numPlaying; ++k)
             {
                 auto& copy  = part.copies[playing[k]];

@@ -88,7 +88,11 @@ namespace Bench
 
         juce::String toString() const
         {
-            const char* prefix = kind == Kind::envelope ? "env:" : kind == Kind::filter ? "flt:" : "osc:";
+            const char* prefix = "osc:";
+            if (kind == Kind::envelope)
+                prefix = "env:";
+            else if (kind == Kind::filter)
+                prefix = "flt:";
             return prefix + juce::String (slot);
         }
 
@@ -187,7 +191,7 @@ namespace Bench
         wanted = clamp (wanted);
         const auto isFree = [&others, size] (juce::Point<float> topLeft)
         {
-            const juce::Rectangle<float> bounds (topLeft.x, topLeft.y, size.x, size.y);
+            const juce::Rectangle<float> bounds (topLeft.x, topLeft.y, size.x, size.y);   // NOSONAR(cpp:S6012): MSVC can't deduce it in this lambda
             return std::none_of (others.begin(), others.end(), [&bounds] (const auto& other) { return bounds.intersects (other); });
         };
         if (isFree (wanted))
@@ -231,7 +235,7 @@ namespace Bench
         `others`, else the nearest spot that is free. If there is no free spot
         big enough, it stays where it was dropped. */
     inline juce::Point<float> resolveOverlap (juce::Point<float> wanted, Kind kind, const std::vector<juce::Rectangle<float>>& others,
-                                              juce::Point<float> area = { areaWidth, areaHeight })
+                                              juce::Point<float> area = { areaWidth, areaHeight })   // NOSONAR(cpp:S6012): a parameter's type can't be deduced
     {
         return resolveOverlapIn (wanted, { moduleWidth, heightOf (kind) }, area, others, gap);
     }
@@ -282,7 +286,7 @@ namespace Bench
     inline constexpr int panelSlots = 2;
 
     /** Whether module `id` is one of the panel's. */
-    inline constexpr bool onPanel (const ModuleId& id) noexcept { return id.slot < panelSlots; }
+    constexpr bool onPanel (const ModuleId& id) noexcept { return id.slot < panelSlots; }
 
     /** The panel's sections, in the bench's box (design pixels, viewWidth x
         viewHeight): the two oscillators as wide rows on the left, OSC 1 over
@@ -303,7 +307,7 @@ namespace Bench
     inline juce::Rectangle<float> panelBounds (const ModuleId& id) noexcept
     {
         using namespace PanelLayout;
-        const float row = (float) juce::jlimit (0, panelSlots - 1, id.slot);
+        const auto row = (float) juce::jlimit (0, panelSlots - 1, id.slot);
         switch (id.kind)
         {
             case Kind::filter:
@@ -463,13 +467,12 @@ namespace Bench
 
     class Migration;
 
-    /** The bench in `state`: its modules, where they sit and the cables
-        between them. Message thread only. */
-    class Model
+    /** The bench in `state` as it is kept: whether each module is on it,
+        and the cables between them. What the model is built on. Message
+        thread only. */
+    class Patchbay
     {
     public:
-        explicit Model (juce::AudioProcessorValueTreeState& stateToUse) : state (stateToUse) {}
-
         /** Makes sure the state has a bench to keep the layout in. */
         void ensureBench()
         {
@@ -482,6 +485,224 @@ namespace Bench
         {
             return state.getRawParameterValue (parameterFor (id))->load() >= 0.5f;
         }
+
+        // ---- Cables -------------------------------------------------------------
+
+        /** Where `from`'s cable goes, if it has one. */
+        std::optional<Destination> destinationOf (const ModuleId& from) const
+        {
+            const auto cable = findCableFrom (from);
+            if (! cable.isValid())
+                return std::nullopt;
+            return destinationFrom (cable[toProperty].toString());
+        }
+
+        bool isPatchedToOutput (const ModuleId& from) const
+        {
+            const auto to = destinationOf (from);
+            return to.has_value() && ! to->has_value();
+        }
+
+        /** The module patched into `into`'s IN (a filter's or an envelope's), if any. */
+        std::optional<ModuleId> inputOf (const ModuleId& into) const
+        {
+            for (const auto& child : bench())
+                if (child.hasType (cableType) && child[toProperty].toString() == into.toString())
+                    return ModuleId::fromString (child[fromProperty].toString());
+            return std::nullopt;
+        }
+
+        /** Patches `from` to `to` (the output, or a filter's or an
+            envelope's IN), replacing the cable `from` had and any other
+            cable into `to`. Any module patches to the output; into a filter
+            go an oscillator or an envelope, into an envelope an oscillator
+            or a filter; only modules on the bench, and never round in a
+            loop. Returns false for anything that can't be patched there. */
+        bool connect (const ModuleId& from, Destination to = std::nullopt)
+        {
+            if (! isPresent (from))
+                return false;
+            if (to.has_value() && (! takesInput (to->kind) || ! isPresent (*to) || ! chainsWithoutRepeats (from, *to)))
+                return false;
+
+            disconnect (from);
+            if (to.has_value())
+                disconnectInto (*to);
+            ensureBench();
+            juce::ValueTree cable (cableType);
+            cable.setProperty (fromProperty, from.toString(), nullptr);
+            cable.setProperty (toProperty, to.has_value() ? to->toString() : outputJack, nullptr);
+            bench().appendChild (cable, nullptr);
+            return true;
+        }
+
+        /** Unplugs `from`'s cable. */
+        void disconnect (const ModuleId& from)   // NOSONAR(cpp:S5817): it changes the bench, through a ValueTree handle
+        {
+            if (auto cable = findCableFrom (from); cable.isValid())
+                bench().removeChild (cable, nullptr);
+        }
+
+        /** Unplugs the cable into `module`'s IN. */
+        void disconnectInto (const ModuleId& module)   // NOSONAR(cpp:S5817): it changes the bench, through a ValueTree handle
+        {
+            for (auto child : bench())
+                if (child.hasType (cableType) && child[toProperty].toString() == module.toString())
+                {
+                    bench().removeChild (child, nullptr);
+                    return;
+                }
+        }
+
+        /** Every cable, in the order they were patched. */
+        std::vector<std::pair<ModuleId, Destination>> cables() const
+        {
+            std::vector<std::pair<ModuleId, Destination>> all;
+            for (const auto& child : bench())
+            {
+                if (! child.hasType (cableType))
+                    continue;
+                const auto from = ModuleId::fromString (child[fromProperty].toString());
+                const auto to   = destinationFrom (child[toProperty].toString());
+                if (from.has_value() && to.has_value())
+                    all.emplace_back (*from, *to);
+            }
+            return all;
+        }
+
+        /** Unplugs every cable, then patches each oscillator on the bench by
+            number: OSC n into FILTER n (if it is there), into ENV n (if it is
+            there), out. So the cables sound as the fixed order does. */
+        void patchChains()
+        {
+            for (const auto& [from, to] : cables())
+                disconnect (from);
+            for (int slot = 0; slot < numOscillators; ++slot)
+            {
+                ModuleId at { Kind::oscillator, slot };
+                if (! isPresent (at))
+                    continue;
+                for (const auto kind : { Kind::filter, Kind::envelope })
+                    if (const ModuleId next { kind, slot }; isPresent (next) && connect (at, next))
+                        at = next;
+                connect (at);
+            }
+        }
+
+        /** The modules patched to the output, in the order they were patched. */
+        std::vector<ModuleId> patchedToOutput() const
+        {
+            std::vector<ModuleId> ids;
+            for (const auto& [from, to] : cables())
+                if (! to.has_value())
+                    ids.push_back (from);
+            return ids;
+        }
+
+        // ---- Where sound runs ------------------------------------------------------
+
+        /** Where an oscillator's sound runs along the cables: the filter and
+            the envelope it goes through (-1 for none), and whether it gets
+            to the output. */
+        struct Chain
+        {
+            int  filter   = -1;
+            int  envelope = -1;
+            bool heard    = false;
+        };
+
+        /** Follows OSC `oscillator`'s cable, through at most one filter and
+            one envelope, either way round, to the output. */
+        Chain chainFrom (int oscillator) const
+        {
+            Chain chain;
+            ModuleId at { Kind::oscillator, oscillator };
+            if (! isPresent (at))
+                return chain;
+            for (int hop = 0; hop < 3; ++hop)
+            {
+                const auto to = destinationOf (at);
+                if (! to.has_value())
+                    return chain;
+                if (! to->has_value())
+                {
+                    chain.heard = true;
+                    return chain;
+                }
+                at = **to;
+                auto& slot = at.kind == Kind::filter ? chain.filter : chain.envelope;
+                if (at.kind == Kind::oscillator || slot >= 0 || ! isPresent (at))
+                    return chain;
+                slot = at.slot;
+            }
+            return chain;
+        }
+
+    protected:
+        explicit Patchbay (juce::AudioProcessorValueTreeState& stateToUse) : state (stateToUse) {}
+
+        juce::ValueTree bench() const { return state.state.getChildWithName (benchType); }
+
+        juce::ValueTree findModule (const ModuleId& id) const
+        {
+            return bench().getChildWithProperty (idProperty, id.toString());
+        }
+
+        juce::ValueTree findCableFrom (const ModuleId& from) const
+        {
+            for (const auto& child : bench())
+                if (child.hasType (cableType) && child[fromProperty].toString() == from.toString())
+                    return child;
+            return {};
+        }
+
+    private:
+        static std::optional<Destination> destinationFrom (const juce::String& text)
+        {
+            if (text == outputJack)
+                return Destination {};
+            if (const auto card = ModuleId::fromString (text); card.has_value() && takesInput (card->kind))
+                return Destination { *card };
+            return std::nullopt;
+        }
+
+        /** Whether patching `from` into `into` keeps every chain to one
+            module of each kind: walking back from `from` and on from `into`
+            meets no kind twice, which also rules out patching round in a
+            loop. */
+        bool chainsWithoutRepeats (const ModuleId& from, const ModuleId& into) const
+        {
+            std::array<bool, 3> seen {};
+            const auto meet = [&seen] (const ModuleId& id)
+            {
+                auto& met = seen[(size_t) id.kind];
+                return ! std::exchange (met, true);
+            };
+            std::optional<ModuleId> back = from;
+            for (int hop = 0; back.has_value() && hop < 3; ++hop, back = inputOf (*back))
+                if (! meet (*back))
+                    return false;
+            Destination on = into;
+            for (int hop = 0; hop < 3; ++hop)
+            {
+                if (! on.has_value())
+                    break;
+                if (! meet (*on))
+                    return false;
+                on = destinationOf (*on).value_or (Destination {});
+            }
+            return true;
+        }
+
+        juce::AudioProcessorValueTreeState& state;
+    };
+
+    /** The bench in `state`: its modules, where they sit and the cables
+        between them (see Patchbay). Message thread only. */
+    class Model : public Patchbay
+    {
+    public:
+        explicit Model (juce::AudioProcessorValueTreeState& stateToUse) : Patchbay (stateToUse), state (stateToUse) {}
 
         /** The modules on the bench, in allModules order. */
         std::vector<ModuleId> present() const
@@ -663,157 +884,7 @@ namespace Bench
             return ordered;
         }
 
-        // ---- Cables -------------------------------------------------------------
-
-        /** Where `from`'s cable goes, if it has one. */
-        std::optional<Destination> destinationOf (const ModuleId& from) const
-        {
-            const auto cable = findCableFrom (from);
-            if (! cable.isValid())
-                return std::nullopt;
-            return destinationFrom (cable[toProperty].toString());
-        }
-
-        bool isPatchedToOutput (const ModuleId& from) const
-        {
-            const auto to = destinationOf (from);
-            return to.has_value() && ! to->has_value();
-        }
-
-        /** The module patched into `module`'s IN (a filter's or an envelope's), if any. */
-        std::optional<ModuleId> inputOf (const ModuleId& module) const
-        {
-            for (const auto& child : bench())
-                if (child.hasType (cableType) && child[toProperty].toString() == module.toString())
-                    return ModuleId::fromString (child[fromProperty].toString());
-            return std::nullopt;
-        }
-
-        /** Patches `from` to `to` (the output, or a filter's or an
-            envelope's IN), replacing the cable `from` had and any other
-            cable into `to`. Any module patches to the output; into a filter
-            go an oscillator or an envelope, into an envelope an oscillator
-            or a filter; only modules on the bench, and never round in a
-            loop. Returns false for anything that can't be patched there. */
-        bool connect (const ModuleId& from, Destination to = std::nullopt)
-        {
-            if (! isPresent (from))
-                return false;
-            if (to.has_value() && (! takesInput (to->kind) || ! isPresent (*to) || ! chainsWithoutRepeats (from, *to)))
-                return false;
-
-            disconnect (from);
-            if (to.has_value())
-                disconnectInto (*to);
-            ensureBench();
-            juce::ValueTree cable (cableType);
-            cable.setProperty (fromProperty, from.toString(), nullptr);
-            cable.setProperty (toProperty, to.has_value() ? to->toString() : outputJack, nullptr);
-            bench().appendChild (cable, nullptr);
-            return true;
-        }
-
-        /** Unplugs `from`'s cable. */
-        void disconnect (const ModuleId& from)   // NOSONAR(cpp:S5817): it changes the bench, through a ValueTree handle
-        {
-            if (auto cable = findCableFrom (from); cable.isValid())
-                bench().removeChild (cable, nullptr);
-        }
-
-        /** Unplugs the cable into `module`'s IN. */
-        void disconnectInto (const ModuleId& module)   // NOSONAR(cpp:S5817): it changes the bench, through a ValueTree handle
-        {
-            for (auto child : bench())
-                if (child.hasType (cableType) && child[toProperty].toString() == module.toString())
-                {
-                    bench().removeChild (child, nullptr);
-                    return;
-                }
-        }
-
-        /** Every cable, in the order they were patched. */
-        std::vector<std::pair<ModuleId, Destination>> cables() const
-        {
-            std::vector<std::pair<ModuleId, Destination>> all;
-            for (const auto& child : bench())
-            {
-                if (! child.hasType (cableType))
-                    continue;
-                const auto from = ModuleId::fromString (child[fromProperty].toString());
-                const auto to   = destinationFrom (child[toProperty].toString());
-                if (from.has_value() && to.has_value())
-                    all.emplace_back (*from, *to);
-            }
-            return all;
-        }
-
-        /** Unplugs every cable, then patches each oscillator on the bench by
-            number: OSC n into FILTER n (if it is there), into ENV n (if it is
-            there), out. So the cables sound as the fixed order does. */
-        void patchChains()
-        {
-            for (const auto& [from, to] : cables())
-                disconnect (from);
-            for (int slot = 0; slot < numOscillators; ++slot)
-            {
-                ModuleId at { Kind::oscillator, slot };
-                if (! isPresent (at))
-                    continue;
-                for (const auto kind : { Kind::filter, Kind::envelope })
-                    if (const ModuleId next { kind, slot }; isPresent (next) && connect (at, next))
-                        at = next;
-                connect (at);
-            }
-        }
-
-        /** The modules patched to the output, in the order they were patched. */
-        std::vector<ModuleId> patchedToOutput() const
-        {
-            std::vector<ModuleId> ids;
-            for (const auto& [from, to] : cables())
-                if (! to.has_value())
-                    ids.push_back (from);
-            return ids;
-        }
-
         // ---- What sound does ------------------------------------------------------
-
-        /** Where an oscillator's sound runs along the cables: the filter and
-            the envelope it goes through (-1 for none), and whether it gets
-            to the output. */
-        struct Chain
-        {
-            int  filter   = -1;
-            int  envelope = -1;
-            bool heard    = false;
-        };
-
-        /** Follows OSC `oscillator`'s cable, through at most one filter and
-            one envelope, either way round, to the output. */
-        Chain chainFrom (int oscillator) const
-        {
-            Chain chain;
-            ModuleId at { Kind::oscillator, oscillator };
-            if (! isPresent (at))
-                return chain;
-            for (int hop = 0; hop < 3; ++hop)
-            {
-                const auto to = destinationOf (at);
-                if (! to.has_value())
-                    return chain;
-                if (! to->has_value())
-                {
-                    chain.heard = true;
-                    return chain;
-                }
-                at = **to;
-                auto& slot = at.kind == Kind::filter ? chain.filter : chain.envelope;
-                if (at.kind == Kind::oscillator || slot >= 0 || ! isPresent (at))
-                    return chain;
-                slot = at.slot;
-            }
-            return chain;
-        }
 
         /** Which envelope (0..3, or -1 for none) shapes each oscillator when
             sound flows by `flow`:
@@ -891,44 +962,6 @@ namespace Bench
         }
 
     private:
-        juce::ValueTree bench() const { return state.state.getChildWithName (benchType); }
-
-        static std::optional<Destination> destinationFrom (const juce::String& text)
-        {
-            if (text == outputJack)
-                return Destination {};
-            if (const auto module = ModuleId::fromString (text); module.has_value() && takesInput (module->kind))
-                return Destination { *module };
-            return std::nullopt;
-        }
-
-        /** Whether patching `from` into `into` keeps every chain to one
-            module of each kind: walking back from `from` and on from `into`
-            meets no kind twice, which also rules out patching round in a
-            loop. */
-        bool chainsWithoutRepeats (const ModuleId& from, const ModuleId& into) const
-        {
-            std::array<bool, 3> seen {};
-            const auto meet = [&seen] (const ModuleId& id)
-            {
-                auto& met = seen[(size_t) id.kind];
-                return ! std::exchange (met, true);
-            };
-            std::optional<ModuleId> back = from;
-            for (int hop = 0; back.has_value() && hop < 3; ++hop, back = inputOf (*back))
-                if (! meet (*back))
-                    return false;
-            Destination on = into;
-            for (int hop = 0; on.has_value() && hop < 3; ++hop)
-            {
-                if (! meet (*on))
-                    return false;
-                const auto next = destinationOf (*on);
-                on = next.has_value() ? *next : Destination {};
-            }
-            return true;
-        }
-
         std::array<int, numOscillators> assignment (Kind kind, Flow flow) const
         {
             std::array<int, numOscillators> takenBy { -1, -1, -1, -1 };
@@ -961,19 +994,6 @@ namespace Bench
                 }
             }
             return takenBy;
-        }
-
-        juce::ValueTree findModule (const ModuleId& id) const
-        {
-            return bench().getChildWithProperty (idProperty, id.toString());
-        }
-
-        juce::ValueTree findCableFrom (const ModuleId& from) const
-        {
-            for (const auto& child : bench())
-                if (child.hasType (cableType) && child[fromProperty].toString() == from.toString())
-                    return child;
-            return {};
         }
 
         void setPosition (const ModuleId& id, juce::Point<float> topLeft)
@@ -1132,7 +1152,7 @@ namespace Bench
     private:
         // Older sets are set out on the bench as it was then, as big as its
         // box, so they open as they did, every card in sight at 100%.
-        static constexpr juce::Point<float> oldArea { viewWidth, viewHeight };
+        static constexpr juce::Point oldArea { viewWidth, viewHeight };
 
         void setValue (const char* id, float value)   // NOSONAR(cpp:S5817): it changes a parameter
         {

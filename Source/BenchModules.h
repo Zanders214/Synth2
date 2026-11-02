@@ -34,16 +34,17 @@ namespace BenchStyle
         g.setColour (Palette::gridLine.withMultipliedAlpha (1.6f));
         const float spacing = 24.0f * s;
         const float dot     = juce::jmax (1.5f, 2.0f * s);
-        const int   rows    = (int) std::ceil ((area.getHeight() - spacing * 1.5f) / spacing);
-        const int   columns = (int) std::ceil ((area.getWidth()  - spacing * 1.5f) / spacing);
+        const auto  rows    = (int) std::ceil ((area.getHeight() - spacing * 1.5f) / spacing);
+        const auto  columns = (int) std::ceil ((area.getWidth()  - spacing * 1.5f) / spacing);
         for (int row = 0; row < rows; ++row)
             for (int column = 0; column < columns; ++column)
                 g.fillEllipse (area.getX() + spacing * (float) (column + 1) - dot * 0.5f,
                                area.getY() + spacing * (float) (row + 1) - dot * 0.5f, dot, dot);
     }
 
-    /** A dial's value as it reads under the dial. */
-    inline juce::String dialText (const juce::String& id, float value)
+    /** A module's dial's value as it reads under the dial, if `id` is one
+        that doesn't read as a percentage. */
+    inline std::optional<juce::String> moduleDialText (const juce::String& id, float value)
     {
         using namespace Synth2;
         for (const auto& osc : ParamID::oscillators)
@@ -61,6 +62,15 @@ namespace BenchStyle
             if (id == filter.cutoff)    return Format::hertz (value);
             if (id == filter.envAmount) return Format::semitones (juce::roundToInt (value));
         }
+        return std::nullopt;
+    }
+
+    /** A dial's value as it reads under the dial. */
+    inline juce::String dialText (const juce::String& id, float value)
+    {
+        using namespace Synth2;
+        if (auto text = moduleDialText (id, value))
+            return *text;
         if (id == ParamID::output)
             return Format::decibels (value);
         if (id == ParamID::glide)
@@ -454,6 +464,66 @@ public:
         bool isPlugged (Jack which) const noexcept  { return which == Jack::out ? jacks.outPlugged : jacks.inPlugged; }
         juce::Colour getJackColour() const noexcept { return jacks.colour; }
 
+        // Paints the header of `card`: the order (following the layout),
+        // the name, what it shapes, the jacks, the cross.
+        void paint (juce::Graphics& g, const BenchModule& card) const
+        {
+            using namespace Synth2;
+            const float s     = card.uiScale;
+            const auto  mouse = card.getMouseXYRelative().toFloat();
+            const bool  over  = card.isMouseOver (true);
+
+            auto header = card.headerBounds().reduced (12.0f * s, 0.0f);
+            header.removeFromLeft (26.0f * s);   // the power switch
+            if (order > 0)
+            {
+                const auto badge = header.removeFromLeft (18.0f * s).withSizeKeepingCentre (18.0f * s, 18.0f * s);
+                g.setColour (Palette::accentSoft);
+                g.fillEllipse (badge);
+                g.setColour (Palette::accent);
+                g.setFont (Fonts::mono (10.0f * s));
+                g.drawText (juce::String (order), badge, juce::Justification::centred, false);
+                header.removeFromLeft (6.0f * s);
+            }
+            g.setFont (Fonts::sans (10.0f * s, true, 0.22f));
+            g.setColour (card.dim.shown ? Palette::textFaint : Palette::textMid);
+            g.drawText (card.title, header, juce::Justification::centredLeft, false);
+
+            if (tag.isNotEmpty())
+            {
+                g.setFont (Fonts::sans (9.0f * s, true, 0.14f));
+                g.setColour (card.dim.shown ? Palette::textFaint : Palette::accent);
+                g.drawText (tag, card.fixedInPlace ? header : header.withRight (card.closeBounds().getX() - 8.0f * s), juce::Justification::centredRight, false);
+            }
+
+            const auto jack = [&] (Jack which, const char* label)
+            {
+                const auto area = card.jackBounds (which);
+                g.setFont (Fonts::sans (8.0f * s, true, 0.22f));
+                g.setColour (Palette::textFaint);
+                g.drawText (label, area.withX (area.getX() - 28.0f * s).withWidth (24.0f * s), juce::Justification::centredRight, false);
+                BenchStyle::paintJack (g, area, getJackColour(), isPlugged (which), over && area.contains (mouse), s);
+            };
+            if (isJackShown (Jack::in))
+                jack (Jack::in, "IN");
+            if (isJackShown (Jack::out))
+                jack (Jack::out, "OUT");
+
+            if (card.fixedInPlace)
+                return;
+            const auto cross = card.closeBounds();
+            const bool crossHot = over && cross.contains (mouse);
+            if (crossHot)
+            {
+                g.setColour (Palette::idleFill.withMultipliedAlpha (2.0f));
+                g.fillEllipse (cross);
+            }
+            g.setColour (crossHot ? Palette::textStrong : Palette::textDim);
+            const auto x = cross.reduced (6.5f * s);
+            g.drawLine ({ x.getTopLeft(), x.getBottomRight() }, juce::jmax (1.0f, 1.4f * s));
+            g.drawLine ({ x.getTopRight(), x.getBottomLeft() }, juce::jmax (1.0f, 1.4f * s));
+        }
+
     private:
         struct Jacks
         {
@@ -470,12 +540,18 @@ public:
         int              order = 0;
     };
 
-    /** The cross was clicked. */
-    void onRemove (std::function<void()> handler) { removeHandler = std::move (handler); }
-    /** The header was dragged and let go, the module's top left now here (in its parent). */
-    void onMoved (std::function<void (juce::Point<int>)> handler) { movedHandler = std::move (handler); }
-    /** A jack was pressed, dragged or let go (the event is the module's). */
-    void onJack (std::function<void (Jack, const juce::MouseEvent&, JackPhase)> handler) { jackHandler = std::move (handler); }
+    struct Handlers
+    {
+        /** The cross was clicked. */
+        std::function<void()> remove;
+        /** The header was dragged and let go, the module's top left now here (in its parent). */
+        std::function<void (juce::Point<int>)> moved;
+        /** A jack was pressed, dragged or let go (the event is the module's). */
+        std::function<void (Jack, const juce::MouseEvent&, JackPhase)> jack;
+    };
+
+    /** What the module's cross, header and jacks do, set by whoever looks after them. */
+    Handlers& getHandlers() noexcept { return handlers; }
     /** Where in its parent a drag can take the module (all of the parent when empty). */
     void setDragArea (juce::Rectangle<int> area) noexcept { dragArea = area; }
 
@@ -488,7 +564,6 @@ public:
         dragging     = false;
         repaint();
     }
-    bool isFixedInPlace() const noexcept { return fixedInPlace; }
 
     /** Lays the module out as a section of the panel (its display across
         the top, its dials in one row under it), or as a card on the bench. */
@@ -497,7 +572,6 @@ public:
         if (panelShape == shouldBePanelShaped)
             return;
         panelShape = shouldBePanelShaped;
-        showDials();
         resized();
         repaint();
     }
@@ -517,7 +591,6 @@ public:
         if (newView == view)
             return;
         view = newView;
-        showDials();
         resized();
         repaint();
     }
@@ -597,18 +670,29 @@ public:
             g.drawRoundedRectangle (card, radius, juce::jmax (1.0f, s));
         }
 
-        paintHeader (g);
+        headerState.paint (g, *this);
 
         g.setColour (Palette::hairline);
         g.fillRect (headerBounds().withTop (headerBounds().getBottom() - juce::jmax (1.0f, s)).reduced (12.0f * s, 0.0f));
 
-        paintDialLabels (g);
+        // Dial convention: name + mono value stacked beneath the arc, the
+        // name in grey, the value in the dial's own colour.
+        for (const auto& dial : dials)
+            if (dial->slider.isVisible())
+                BenchStyle::paintDialLabel (g, dial->column.toFloat().withTop (dial->slider.getBounds().toFloat().getBottom()), dial->name,
+                                            BenchStyle::dialText (dial->paramId, state.getRawParameterValue (dial->paramId)->load()),
+                                            dial->colour, dim.shown ? 0.4f : 1.0f, uiScale);
     }
 
     void resized() override
     {
         const float s = uiScale;
         const auto px = [s] (float v) { return juce::roundToInt (v * s); };
+
+        // The dials show unless the gear menu's view hides them, and always on the panel.
+        const bool withDials = panelShape || Bench::showsDials (id.kind, view);
+        for (const auto& dial : dials)
+            dial->slider.setVisible (withDials);
 
         power.setBounds (px (10.0f), px (6.0f), px (18.0f), px (18.0f));
 
@@ -660,14 +744,14 @@ public:
             if (jackBounds (which).contains (e.position))
             {
                 heldJack = which;
-                if (jackHandler != nullptr)
-                    jackHandler (which, e, JackPhase::down);
+                if (handlers.jack != nullptr)
+                    handlers.jack (which, e, JackPhase::down);
                 return;
             }
         if (closeBounds().contains (e.position))
         {
-            if (removeHandler != nullptr)
-                removeHandler();
+            if (handlers.remove != nullptr)
+                handlers.remove();
             return;
         }
         if (! fixedInPlace && headerBounds().contains (e.position))
@@ -683,8 +767,8 @@ public:
     {
         if (heldJack.has_value())
         {
-            if (jackHandler != nullptr)
-                jackHandler (*heldJack, e, JackPhase::drag);
+            if (handlers.jack != nullptr)
+                handlers.jack (*heldJack, e, JackPhase::drag);
             return;
         }
         if (! dragging)
@@ -704,16 +788,16 @@ public:
         {
             const auto which = *heldJack;
             heldJack.reset();
-            if (jackHandler != nullptr)
-                jackHandler (which, e, JackPhase::up);
+            if (handlers.jack != nullptr)
+                handlers.jack (which, e, JackPhase::up);
             return;
         }
         if (! dragging)
             return;
         dragging = false;
         repaint();
-        if (movedHandler != nullptr)
-            movedHandler (getPosition());
+        if (handlers.moved != nullptr)
+            handlers.moved (getPosition());
     }
 
     juce::MouseCursor getMouseCursor() override
@@ -769,86 +853,13 @@ private:
         juce::Rectangle<int> column;
     };
 
-    // Header: the order (following the layout), the name, what it shapes,
-    // the jacks, the cross.
-    void paintHeader (juce::Graphics& g) const
-    {
-        using namespace Synth2;
-        const float s     = uiScale;
-        const auto  mouse = getMouseXYRelative().toFloat();
-        const bool  over  = isMouseOver (true);
-
-        auto header = headerBounds().reduced (12.0f * s, 0.0f);
-        header.removeFromLeft (26.0f * s);   // the power switch
-        if (const int order = headerState.getOrder(); order > 0)
-        {
-            const auto badge = header.removeFromLeft (18.0f * s).withSizeKeepingCentre (18.0f * s, 18.0f * s);
-            g.setColour (Palette::accentSoft);
-            g.fillEllipse (badge);
-            g.setColour (Palette::accent);
-            g.setFont (Fonts::mono (10.0f * s));
-            g.drawText (juce::String (order), badge, juce::Justification::centred, false);
-            header.removeFromLeft (6.0f * s);
-        }
-        g.setFont (Fonts::sans (10.0f * s, true, 0.22f));
-        g.setColour (dim.shown ? Palette::textFaint : Palette::textMid);
-        g.drawText (title, header, juce::Justification::centredLeft, false);
-
-        if (const auto& tag = headerState.getTag(); tag.isNotEmpty())
-        {
-            g.setFont (Fonts::sans (9.0f * s, true, 0.14f));
-            g.setColour (dim.shown ? Palette::textFaint : Palette::accent);
-            g.drawText (tag, fixedInPlace ? header : header.withRight (closeBounds().getX() - 8.0f * s), juce::Justification::centredRight, false);
-        }
-
-        const auto jack = [&] (Jack which, const char* label)
-        {
-            const auto area = jackBounds (which);
-            g.setFont (Fonts::sans (8.0f * s, true, 0.22f));
-            g.setColour (Palette::textFaint);
-            g.drawText (label, area.withX (area.getX() - 28.0f * s).withWidth (24.0f * s), juce::Justification::centredRight, false);
-            BenchStyle::paintJack (g, area, headerState.getJackColour(), headerState.isPlugged (which), over && area.contains (mouse), s);
-        };
-        if (headerState.isJackShown (Jack::in))
-            jack (Jack::in, "IN");
-        if (headerState.isJackShown (Jack::out))
-            jack (Jack::out, "OUT");
-
-        if (fixedInPlace)
-            return;
-        const auto cross = closeBounds();
-        const bool crossHot = over && cross.contains (mouse);
-        if (crossHot)
-        {
-            g.setColour (Palette::idleFill.withMultipliedAlpha (2.0f));
-            g.fillEllipse (cross);
-        }
-        g.setColour (crossHot ? Palette::textStrong : Palette::textDim);
-        const auto x = cross.reduced (6.5f * s);
-        g.drawLine ({ x.getTopLeft(), x.getBottomRight() }, juce::jmax (1.0f, 1.4f * s));
-        g.drawLine ({ x.getTopRight(), x.getBottomLeft() }, juce::jmax (1.0f, 1.4f * s));
-    }
-
-    // Dial convention: name + mono value stacked beneath the arc, the name in
-    // grey, the value in the dial's own colour.
-    void paintDialLabels (juce::Graphics& g) const
-    {
-        for (const auto& dial : dials)
-            if (dial->slider.isVisible())
-                BenchStyle::paintDialLabel (g, dial->column.toFloat().withTop (dial->slider.getBounds().toFloat().getBottom()), dial->name,
-                                            BenchStyle::dialText (dial->paramId, state.getRawParameterValue (dial->paramId)->load()),
-                                            dial->colour, dim.shown ? 0.4f : 1.0f, uiScale);
-    }
-
     Bench::ModuleId id;
     juce::String    title;
     Synth2LookAndFeel& looks;
     juce::AudioProcessorValueTreeState& state;
     std::vector<std::unique_ptr<Dial>> dials;
 
-    std::function<void()> removeHandler;
-    std::function<void (juce::Point<int>)> movedHandler;
-    std::function<void (Jack, const juce::MouseEvent&, JackPhase)> jackHandler;
+    Handlers handlers;
 
     // Why the module is greyed out: switched off, or left out of the flow.
     struct Dim
@@ -859,14 +870,6 @@ private:
         juce::String offWhy;
         juce::String shownWhy;
     };
-
-    // The dials show unless the gear menu's view hides them, and always on the panel.
-    void showDials()
-    {
-        const bool withDials = panelShape || Bench::showsDials (id.kind, view);
-        for (const auto& dial : dials)
-            dial->slider.setVisible (withDials);
-    }
 
     // Greys the insides out (all but the power switch) when the module is
     // switched off or out of the flow; being off is the reason given.

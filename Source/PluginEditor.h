@@ -162,6 +162,9 @@ public:
         void stepPreset (int delta);
 
     private:
+        // A pick from the gear's tray: a signal flow, or how the cards show.
+        void chooseSetting (int choice);
+
         Synth2AudioProcessorEditor& owner;
         ChoiceTray addTray;
         ChoiceTray effectTray;
@@ -192,10 +195,8 @@ private:
     void toggleMono();
     void togglePresets();
 
-    Synth2AudioProcessor::SignalFlow signalFlow() const;
     void showView();   // shows the cards as the bench's view says (gear menu, or a restored set)
     void showFlow();
-    AmpDisplayState ampState (const ParamID::Envelope& ids, const Synth2Engine::EnvelopeSettings& times, float outputDb) const;
 
     Synth2AudioProcessor& processorRef;
     Synth2LookAndFeel looks;
