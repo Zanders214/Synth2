@@ -1833,6 +1833,48 @@ void testArp()
                "jumped back to the start of the bar, the pattern starts there again");
     }
 
+    // A host's pre-roll, before the song's start: the steps before it count back from the pattern's end.
+    {
+        ArpRig rig;
+        rig.settings.pattern = Arp::defaultPattern();
+        rig.transport = { 120.0, true, -0.5 };   // two sixteenths before the bar
+        std::vector<int> steps;
+        juce::MidiBuffer in, out;
+        in.ensureSize ((size_t) Arp::midiRoom);
+        out.ensureSize ((size_t) Arp::midiRoom);
+        in.addEvent (arpOn (60), 0);
+        for (int b = 0; b < 3 * step / blockSize; ++b)
+        {
+            rig.player.process (in, out, blockSize, rig.settings, rig.transport);
+            in.clear();
+            rig.transport.ppq += (double) blockSize / sampleRate * 2.0;
+            if (steps.empty() || steps.back() != rig.player.playingStep())
+                steps.push_back (rig.player.playingStep());
+        }
+        check (steps == std::vector<int> { 6, 7, 0 }, "in a pre-roll, the two steps before the bar are the pattern's last two, then its first");
+    }
+
+    // A panic with the arp off lets go of the keys it knew of, too.
+    {
+        ArpRig rig;
+        rig.settings.on = false;
+        rig.settings.pattern = Arp::defaultPattern();
+        rig.play (blockSize, { { 0, arpOn (60) }, { 10, juce::MidiMessage::allNotesOff (1) } });
+        rig.settings.on = true;
+        const auto notes = rig.play (step * 2);
+        check (notes.empty() && rig.player.playingStep() == -1, "switched on after All Notes Off, it plays nothing from the keys that were let go");
+    }
+
+    // A key played twice is still one key: let go, the next chord latches afresh.
+    {
+        ArpRig rig;
+        rig.settings.pattern = Arp::defaultPattern();
+        rig.settings.latch = true;
+        rig.play (step, { { 0, arpOn (60) }, { 10, arpOn (60) }, { 20, arpOff (60) } });
+        const auto notes = rig.play (step * 2, { { 0, arpOn (62) }, { 10, arpOff (62) } });
+        check (onsOf (notes) == std::vector<int> { 74, 86 }, "after a key played twice and let go once, a new key latches a chord of its own");
+    }
+
     // All Notes Off stops it, and passes on.
     {
         ArpRig rig;

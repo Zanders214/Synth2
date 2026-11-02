@@ -260,7 +260,6 @@ namespace Arp
             running = false;
             wasOn = false;
             wasLatched = false;
-            physicallyDown = 0;
             publish (-1);
         }
 
@@ -381,21 +380,22 @@ namespace Arp
                 if (on)
                     return;
             }
-            else if (status == 0xb0 && (first == 120 || first == 123) && on)
+            else if (status == 0xb0 && (first == 120 || first == 123))
             {
-                stop (when);
+                // The engine lets go of every note, so the keys are let go
+                // here too, on or off, or switching on later would play them.
+                if (on)
+                    stop (when);
                 held = {};
                 latched = {};
-                physicallyDown = 0;
             }
             add (data, numBytes, when);
         }
 
         void press (int channel, int note, float velocity, int when) noexcept
         {
-            if (current->on && current->latch && physicallyDown == 0)
+            if (current->on && current->latch && keysDown() == 0)
                 latched = {};   // a new chord to latch
-            ++physicallyDown;
             put (held, { note, channel, velocity, false });
             if (current->on && current->latch)
                 put (latched, { note, channel, velocity, false });
@@ -408,7 +408,6 @@ namespace Arp
             for (auto& key : held)
                 if (key.note == note && key.channel == channel && ! key.sustained)
                 {
-                    physicallyDown = juce::jmax (0, physicallyDown - 1);
                     if (pedalDown (channel))
                         key.sustained = true;
                     else
@@ -430,6 +429,12 @@ namespace Arp
         }
 
         bool pedalDown (int channel) const noexcept { return (pedals & (1u << (channel - 1))) != 0; }
+
+        // The keys down now, the pedal aside (a key played twice is one key).
+        int keysDown() const noexcept
+        {
+            return (int) std::count_if (held.begin(), held.end(), [] (const Key& key) { return key.note >= 0 && ! key.sustained; });
+        }
 
         static void put (Keys& keys, const Key& key) noexcept
         {
@@ -630,7 +635,8 @@ namespace Arp
             const auto& pattern = current->pattern;
             const int   length  = juce::jlimit (1, maxSteps, pattern.length);
             const auto  k       = nextStep++;
-            const auto& step    = pattern[(int) (k % length)];
+            const int   index   = (int) (((k % length) + length) % length);   // k is negative in a host's pre-roll
+            const auto& step    = pattern[index];
             const auto  heard   = chord();
             const double from   = startOf (k);
             const bool   tied   = step.length == Length::tie;
@@ -672,7 +678,7 @@ namespace Arp
                         break;
                     }
             }
-            publish ((int) (k % length), heard);
+            publish (index, heard);
         }
 
         bool isSounding (int pitch) const noexcept
@@ -714,7 +720,6 @@ namespace Arp
         bool   hostPlaying = false;    // following the host's beats
         bool   wasOn       = false;
         bool   wasLatched  = false;
-        int    physicallyDown = 0;     // keys down now, the pedal aside
         std::uint32_t pedals = 0;      // bit c: channel c + 1's sustain pedal is down
         Keys   held {};
         Keys   latched {};
