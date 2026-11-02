@@ -192,7 +192,7 @@ namespace Bench
         const auto isFree = [&others, size] (juce::Point<float> topLeft)
         {
             const juce::Rectangle bounds (topLeft.x, topLeft.y, size.x, size.y);
-            return std::none_of (others.begin(), others.end(), [&bounds] (const auto& other) { return bounds.intersects (other); });
+            return std::none_of (others.begin(), others.end(), [&bounds] (const juce::Rectangle<float>& other) { return bounds.intersects (other); });
         };
         if (isFree (wanted))
             return wanted;
