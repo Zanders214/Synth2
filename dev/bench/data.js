@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793558021665,
+  "lastUpdate": 1793578818385,
   "repoUrl": "https://github.com/Zanders214/Synth2",
   "entries": {
     "ZandersSynth2 DSP": [
@@ -2015,6 +2015,90 @@ window.BENCHMARK_DATA = {
           {
             "name": "DSP load 16x16 4-osc + filters @48k/512",
             "value": 8.59,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "152227414+Zanders214@users.noreply.github.com",
+            "name": "Dennis Zanders",
+            "username": "Zanders214"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "be361955ebaaa9b66686f9a82b04f5d4ec677c61",
+          "message": "Merge pull request #30 from Zanders214/claude/synth-panel\n\nAdd GLIDE and MONO, a sliding EDM lead, and a full-window preset browser",
+          "timestamp": "2026-11-02T01:18:12+01:00",
+          "tree_id": "9acab91f26a0b9612cc42602683e45c167bfab6b",
+          "url": "https://github.com/Zanders214/Synth2/commit/be361955ebaaa9b66686f9a82b04f5d4ec677c61"
+        },
+        "date": 1793578817562,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "processBlock 8x7",
+            "value": 56485.884,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 8x7 @48k/512",
+            "value": 0.53,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16",
+            "value": 209177.971,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 @48k/512",
+            "value": 1.961,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 2-osc",
+            "value": 463410.079,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 2-osc @48k/512",
+            "value": 4.344,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 4-osc",
+            "value": 760192.193,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 4-osc @48k/512",
+            "value": 7.127,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 4-osc + effects",
+            "value": 908350.465,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 4-osc + effects @48k/512",
+            "value": 8.516,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 4-osc + filters",
+            "value": 1211080.182,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 4-osc + filters @48k/512",
+            "value": 11.354,
             "unit": "%"
           }
         ]
