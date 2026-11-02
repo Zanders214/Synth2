@@ -2163,6 +2163,8 @@ void testPresets()
     std::printf ("Presets:\n");
 
     Synth2AudioProcessor p;
+    const juce::TemporaryFile noUserPresets;   // so the browser lists only the factory's
+    p.getUserPresets().setFolder (noUserPresets.getFile(), false);
     check (p.getNumPrograms() == Presets::numPresets && Presets::numPresets > 10, "the host sees the factory presets as programs");
     check (p.getCurrentProgram() == 0 && p.getProgramName (0) == "Empty Bench" && Bench::Model (p.getState()).isEmpty(),
            "a new instance is on the first, the empty bench");
@@ -2383,14 +2385,14 @@ void testPresets()
     check (browser.getCategory() == PresetBrowser::all, "a category with no presets in it can't be opened");
     browser.mouseDown (mouseAt (browser, browser.categoryBounds ((int) Presets::Category::bass).getCentre()));
     bool justBass = browser.getListed().size() == 3;
-    for (const int index : browser.getListed())
-        justBass = justBass && Presets::factory[(size_t) index].category == Presets::Category::bass;
+    for (const auto& item : browser.getListed())
+        justBass = justBass && ! item.isUser() && Presets::factory[(size_t) item.factory].category == Presets::Category::bass;
     check (browser.getCategory() == (int) Presets::Category::bass && justBass, "a click on a category lists just its presets");
 
     // Searched: every word, in the name, the description or the category.
     browser.mouseDown (mouseAt (browser, browser.categoryBounds (PresetBrowser::all).getCentre()));
     browser.getSearch().setText ("squelchy bass");
-    check (pumpUntil ([&browser] { return browser.getListed().size() == 1; }) && browser.getListed().front() == names.indexOf ("Acid Bass"),
+    check (pumpUntil ([&browser] { return browser.getListed().size() == 1; }) && browser.getListed().front().factory == names.indexOf ("Acid Bass"),
            "the search narrows the list to the presets with every word");
     snapshot (render (*editor), "9b-presets-search");
     browser.mouseDown (mouseAt (browser, browser.rowBounds (0).getCentre()));
@@ -2405,9 +2407,9 @@ void testPresets()
     check (p.getCurrentProgram() == 2, "picking one loads it");
     browser.mouseDown (mouseAt (browser, browser.categoryBounds (PresetBrowser::all).getCentre()));
     const auto& listed = browser.getListed();
-    const auto  at     = std::find (listed.begin(), listed.end(), 2);
+    const auto  at     = std::find (listed.begin(), listed.end(), PresetBrowser::Item { 2, -1 });
     browser.keyPressed (juce::KeyPress (juce::KeyPress::downKey));
-    check (at != listed.end() && at + 1 != listed.end() && p.getCurrentProgram() == *(at + 1), "the down arrow loads the next one listed");
+    check (at != listed.end() && at + 1 != listed.end() && p.getCurrentProgram() == (at + 1)->factory, "the down arrow loads the next one listed");
     browser.keyPressed (juce::KeyPress (juce::KeyPress::upKey));
     check (p.getCurrentProgram() == 2, "and up the one before");
     browser.keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
@@ -2415,6 +2417,146 @@ void testPresets()
     auto& osc3 = editor->getBench().getModule ({ Bench::Kind::oscillator, 2 });
     check (pumpUntil ([&] { return osc3.isVisible() && osc3.getAlpha() >= 1.0f; }), "and its modules appear on the bench");
     snapshot (render (*editor), "10-preset-loaded");
+}
+
+// The presets the user saves: each in a file of its own, all of the synth as
+// it was; in the browser under USER and their own categories, saved from its
+// SAVE panel and deleted from it.
+void testUserPresets()
+{
+    std::printf ("User presets:\n");
+
+    const auto folder = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                            .getChildFile ("Synth2UserPresetTests-" + juce::String::toHexString (juce::Random::getSystemRandom().nextInt64()));
+    Synth2AudioProcessor p;
+    p.prepareToPlay (48000.0, 512);
+    auto& store = p.getUserPresets();
+    store.setFolder (folder, false);
+    check (store.all().empty() && ! folder.exists(), "none to begin with, and no folder until one is saved");
+
+    int slideLead = -1;
+    for (int i = 0; i < Presets::numPresets; ++i)
+        if (juce::String (Presets::factory[(size_t) i].name) == "Slide Lead")
+            slideLead = i;
+
+    // Saved: the synth as it is, under the name given, in a file of its own.
+    p.loadPreset (slideLead);
+    setParam (p, ParamID::osc1Level, 0.3f);
+    const auto mine = p.saveUserPreset ("  My Lead ", "Brighter, louder", Presets::Category::lead);
+    check (mine.has_value() && mine->name == "My Lead" && mine->detail == "Brighter, louder" && mine->file.existsAsFile()
+               && mine->file.getParentDirectory() == folder && mine->file.hasFileExtension (UserPresets::extension),
+           "saving writes a file of its own, its name trimmed");
+    check (p.getPresetName() == "My Lead" && p.getUserPresetName() == "My Lead" && p.getCurrentProgram() == slideLead,
+           "and it is the preset loaded, the host's program staying as it was");
+    check (mine.has_value() && mine->sound.mono && approx (mine->sound.glideSeconds, 0.12f, 1e-4f)
+               && mine->sound.oscillators[0].has_value() && approx (mine->sound.oscillators[0]->level, 0.3f, 1e-4f)
+               && mine->sound.oscillators[0]->filter.has_value() && mine->sound.delay.has_value() && mine->sound.reverb.has_value()
+               && ! mine->sound.oscillators[3].has_value(),
+           "what it holds reads back for the browser: its oscillators, filters, effects, glide and mono");
+    check (! p.saveUserPreset ("   ", "", Presets::Category::lead).has_value() && store.all().size() == 1, "a preset needs a name");
+
+    // Loaded over something else: all of it comes back.
+    p.loadPreset (0);
+    check (p.getPresetName() == "Empty Bench" && p.getUserPresetName().isEmpty(), "a factory preset loaded is the one named");
+    check (mine.has_value() && p.loadUserPreset (*mine) && approx (param (p, ParamID::osc1Level), 0.3f, 1e-4f) && param (p, ParamID::mono) >= 0.5f
+               && approx (param (p, ParamID::glide), 0.12f, 1e-4f) && ! Bench::Model (p.getState()).isEmpty() && p.getPresetName() == "My Lead",
+           "loading it brings back its sound and its bench");
+
+    // A session remembers it was loaded.
+    juce::MemoryBlock session;
+    p.getStateInformation (session);
+    Synth2AudioProcessor q;
+    q.setStateInformation (session.getData(), (int) session.getSize());
+    check (q.getPresetName() == "My Lead" && q.getCurrentProgram() == p.getCurrentProgram(), "a session restored remembers the user preset loaded");
+
+    // What a preset doesn't say goes back to its default, whatever was playing.
+    auto noGlide = UserPresets::stateIn (mine->file);
+    noGlide.removeChild (noGlide.getChildWithProperty ("id", juce::String (ParamID::glide)), nullptr);
+    store.save ("No Glide", "", Presets::Category::lead, noGlide);
+    setParam (p, ParamID::glide, 1.0f);
+    const auto* noGlideEntry = store.find ("no glide");
+    check (noGlideEntry != nullptr && p.loadUserPreset (*noGlideEntry) && approx (param (p, ParamID::glide), 0.0f, 1e-6f),
+           "a parameter a preset doesn't mention goes back to its default");
+
+    // The same name, whatever its case, replaces it.
+    setParam (p, ParamID::osc1Level, 0.6f);
+    const auto replaced = p.saveUserPreset ("my lead", "", Presets::Category::bass);
+    check (replaced.has_value() && store.all().size() == 2 && replaced->file == mine->file && replaced->category == Presets::Category::bass
+               && approx (replaced->sound.oscillators[0]->level, 0.6f, 1e-4f) && replaced->name == "my lead",
+           "saving under a name already saved, whatever its case, replaces it, under the name as typed");
+    const auto oddName = p.saveUserPreset ("A/B: \"C\"", "", Presets::Category::sfx);
+    check (oddName.has_value() && oddName->name == "A/B: \"C\"" && oddName->file.existsAsFile() && store.all().size() == 3,
+           "a name a file can't have still saves, under the name given");
+
+    // Deleted: its file gone.
+    const auto oddFile = oddName->file;
+    check (p.deleteUserPreset (*oddName) && ! oddFile.exists() && store.find ("A/B: \"C\"") == nullptr && store.all().size() == 2,
+           "deleting one removes its file");
+
+    // In the browser: USER, and each in its category among the factory's.
+    std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
+    auto* editor = dynamic_cast<Synth2AudioProcessorEditor*> (base.get());
+    if (editor == nullptr)
+        return;
+    auto& browser = editor->getPresetBrowser();
+    editor->mouseDown (mouseAt (*editor, editor->presetBounds().getCentre()));
+    check (browser.isOpen() && (int) browser.getListed().size() == Presets::numPresets + 2, "ALL lists the factory's and the user's");
+    browser.mouseDown (mouseAt (browser, browser.categoryBounds (PresetBrowser::user).getCentre()));
+    const auto& listed = browser.getListed();
+    check (browser.getCategory() == PresetBrowser::user && listed.size() == 2 && listed[0].isUser() && listed[1].isUser(),
+           "USER lists just the user's");
+    browser.mouseDown (mouseAt (browser, browser.categoryBounds ((int) Presets::Category::bass).getCentre()));
+    check (browser.getListed().size() == 4 && browser.getListed().back().isUser(), "a category lists the user's of it after the factory's");
+    browser.mouseDown (mouseAt (browser, browser.rowBounds (3).getCentre()));
+    check (p.getPresetName() == "my lead" && approx (param (p, ParamID::osc1Level), 0.6f, 1e-4f) && browser.getCurrentUser() == "my lead",
+           "a click on one of the user's loads it");
+    browser.mouseDown (mouseAt (browser, browser.rowBounds (0).getCentre()));
+    check (p.getUserPresetName().isEmpty() && browser.getCurrentUser().isEmpty(), "and one of the factory's takes its place");
+    browser.getSearch().setText ("user");
+    check (pumpUntil ([&browser] { return browser.getListed().size() == 1; }), "the search finds the user's by USER");
+    browser.getSearch().clear();
+    browser.mouseDown (mouseAt (browser, browser.categoryBounds (PresetBrowser::user).getCentre()));
+    browser.mouseDown (mouseAt (browser, browser.rowBounds (0).getCentre()));
+    pumpUntil ([&browser] { return browser.getAlpha() >= 1.0f; });
+    snapshot (render (*editor), "9c-presets-user");
+
+    // SAVE opens the save panel; saved, the preset shows among the user's, loaded.
+    auto& panel = browser.getSavePanel();
+    browser.mouseDown (mouseAt (browser, browser.saveBounds().getCentre()));
+    check (panel.isOpen() && panel.getNameBox().getText() == "my lead" && panel.getCategory() == Presets::Category::bass && panel.replaces(),
+           "SAVE opens the save panel, on the user's preset loaded, saying it will replace it");
+    panel.getNameBox().setText ("Night Pad");
+    panel.getDetailBox().setText ("Dark and wide");
+    panel.mouseDown (mouseAt (panel, panel.chipBounds (Presets::Category::pads).getCentre()));
+    check (! panel.replaces() && panel.getCategory() == Presets::Category::pads, "a new name saves afresh, in the category picked");
+    snapshot (render (*editor), "9d-presets-save");
+    panel.mouseDown (mouseAt (panel, panel.saveBounds().getCentre()));
+    const auto* nightPad  = store.find ("Night Pad");
+    const auto  nightFile = nightPad != nullptr ? nightPad->file : juce::File();
+    check (! panel.isOpen() && nightPad != nullptr && nightPad->category == Presets::Category::pads && nightPad->detail == "Dark and wide"
+               && p.getPresetName() == "Night Pad" && browser.getCategory() == PresetBrowser::user && browser.getCurrentUser() == "Night Pad",
+           "saved, it is listed among the user's, loaded");
+
+    browser.mouseDown (mouseAt (browser, browser.saveBounds().getCentre()));
+    panel.getNameBox().clear();
+    panel.handleKey (juce::KeyPress (juce::KeyPress::returnKey));
+    check (panel.isOpen() && store.all().size() == 3, "with no name, Return saves nothing");
+    browser.handleKey (juce::KeyPress (juce::KeyPress::escapeKey));
+    check (! panel.isOpen() && browser.isOpen(), "and Escape cancels, the browser staying open");
+
+    // DELETE asks, then deletes.
+    const auto removal   = browser.deleteBounds();
+    check (removal.has_value(), "one of the user's can be deleted");
+    browser.mouseDown (mouseAt (browser, removal->getCentre()));
+    check (browser.isDeleteArmed() && nightFile.exists(), "a first click on DELETE only asks");
+    browser.mouseDown (mouseAt (browser, removal->getCentre()));
+    check (! nightFile.exists() && store.find ("Night Pad") == nullptr && p.getUserPresetName().isEmpty() && browser.getListed().size() == 2,
+           "a second deletes it");
+    browser.mouseDown (mouseAt (browser, browser.categoryBounds ((int) Presets::Category::sfx).getCentre()));
+    check (browser.getCategory() == PresetBrowser::user, "and a category with none of either still can't be opened");
+
+    base.reset();
+    folder.deleteRecursively();
 }
 
 // The cables by default, and the panel: a fixed two-oscillator synth, its
@@ -2742,6 +2884,7 @@ int main()
     testPlaying();
     testStateRoundTrip();
     testPresets();
+    testUserPresets();
     testPanel();
     testEditor();
     testBypass();

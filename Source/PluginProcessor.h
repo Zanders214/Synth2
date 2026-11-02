@@ -9,6 +9,7 @@
 
 #include "Bench.h"
 #include "Synth2Engine.h"
+#include "UserPresets.h"
 
 /**
     Synth2AudioProcessor
@@ -89,7 +90,36 @@ public:
         already loaded, so picking it again undoes any edits. Message thread. */
     void loadPreset (int index);
 
+    /** The presets saved by the user (see UserPresets.h). Message thread. */
+    UserPresets&       getUserPresets() noexcept       { return userPresets; }
+    const UserPresets& getUserPresets() const noexcept { return userPresets; }
+
+    /** Loads the user preset `entry`: all of the synth as it was saved,
+        the bench and the effects with it; false if its file can't be read.
+        The host's program stays as it was. Message thread. */
+    bool loadUserPreset (const UserPresets::Entry& entry);
+
+    /** Saves the synth as it is now as user preset `name`, replacing one
+        already saved under that name, and has it loaded; what was saved,
+        or nothing if it couldn't be. Message thread. */
+    std::optional<UserPresets::Entry> saveUserPreset (const juce::String& name, const juce::String& detail, Presets::Category category);
+
+    /** Deletes the user preset `entry` (to the Trash). Message thread. */
+    bool deleteUserPreset (const UserPresets::Entry& entry);
+
+    /** The preset loaded: the user preset's name if one was loaded or saved
+        since the last factory preset, otherwise the factory preset's. */
+    juce::String getPresetName() const;
+
+    /** The user preset loaded, or empty if the last was a factory one. */
+    juce::String getUserPresetName() const;
+
 private:
+    // Sets the synth to `restored` (a saved state), bringing an older one up
+    // to date; with `missingToDefaults`, the parameters it doesn't mention go
+    // back to their defaults, otherwise they mostly stay as they are.
+    void restoreState (const juce::ValueTree& restored, bool missingToDefaults);
+
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
     // The on-screen keyboard. Key presses go to the audio thread through a
@@ -220,6 +250,7 @@ private:
 
     static std::array<NoteActivity, Synth2Engine::maxNotes> read (const PublishedNotes&) noexcept;
 
+    UserPresets  userPresets;
     OnScreenKeys keys;
     Follower     follower { *this };   // last: it reads and fills in the state above
 

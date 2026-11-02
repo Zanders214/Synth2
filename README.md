@@ -129,20 +129,37 @@ out. Its tail is levelled, so a long room is longer rather than louder.
 
 ### Presets
 
-The pill in the middle of the header holds the factory presets: its arrows step to the
-previous and next one, and a click on its name opens the **preset browser** over the
+The pill in the middle of the header holds the presets: its arrows step to the
+previous and next factory one, and a click on its name opens the **preset browser** over the
 bench (another click, its cross or Escape closes it). The keyboard stays playable under
 it, so each preset can be heard as you go:
 
-- **Categories** down the left: All, then **Init**, **Bass**, **Lead**, **Arp**, **Pluck**,
-  **Keys**, **Pads**, **Strings**, **Brass**, **SFX** and **Drums**, each with how many
-  presets it holds (one with none yet is greyed out).
+- **Categories** down the left: All, **User** (the presets you saved), then **Init**,
+  **Bass**, **Lead**, **Arp**, **Pluck**, **Keys**, **Pads**, **Strings**, **Brass**,
+  **SFX** and **Drums**, each with how many presets it holds (one with none yet is
+  greyed out). Your own presets show in their category too, after the factory's, marked
+  USER.
 - **The list** in the middle, narrowed by the **search** box over it, which matches every
-  word you type against the names, descriptions and categories. A click loads a preset
-  and keeps the browser open; a double-click loads it and closes. The up and down arrow
-  keys load the previous and next one in the list.
+  word you type against the names, descriptions and categories ("user" finds yours). A
+  click loads a preset and keeps the browser open; a double-click loads it and closes.
+  The up and down arrow keys load the previous and next one in the list.
 - **The loaded preset** on the right: its name and description, each oscillator's shape,
-  pitch, stack and filter or envelope, POLY or MONO with its GLIDE, and its effects.
+  pitch, stack and filter or envelope, POLY or MONO with its GLIDE, and its effects. One
+  of yours has **DELETE** under it, which asks again before it deletes (to the Trash).
+
+**Your own presets.** **SAVE**, at the top of the browser, keeps the synth as it is now:
+give it a name, a line about it if you like and a category, and Save (Return) or Cancel
+(Escape). A name you've saved under before (in any case) is replaced, and the panel says
+so. A preset of yours holds everything: every setting, the bench as you laid it out and
+patched it, and the effects. Each is a file of its own (`.zs2preset`) in
+`~/Music/ZandersSynth2/Presets`, shared by the app and the plugins in every DAW, so you
+can back them up or pass them on; files copied in show up the next time the browser
+opens. Loading one leaves your DAW's program where it was (its programs are the factory
+presets), and which one you loaded is saved with your set.
+
+The standalone app's Options menu (**Save current state** / **Load a saved state**) is
+JUCE's own: it saves the whole app to a file you pick and has nothing to do with the
+browser, and your DAW has none of it.
 
 Your DAW lists
 the same presets as the plugin's programs. Loading one puts its modules on the bench
@@ -409,7 +426,8 @@ ctest --test-dir build --output-on-failure
 
 Set `SYNTH2_SNAPSHOTS` to a folder to have the editor tests save PNGs of the faces they
 render (the empty bench, the trays, a full bench of four oscillators and four envelopes,
-the flow modes, the cables, the bench zoomed in and out, the effects, a FILTER card) for a look by eye.
+the flow modes, the cables, the bench zoomed in and out, the effects, a FILTER card, the preset
+browser and its save panel) for a look by eye.
 
 ## Layout
 
@@ -418,7 +436,8 @@ Source/
   PluginProcessor.{h,cpp}    thin host wrapper + parameters (APVTS); the on-screen keyboard's lock-free hand-over; cables -> routing
   ParamIDs.h                 the parameter IDs
   Presets.h                  the factory presets, and loading one onto the bench
-  PresetBrowser.h            the preset browser: categories, search and the loaded preset, over the bench
+  PresetBrowser.h            the preset browser: categories, search, the loaded preset and the save panel, over the bench
+  UserPresets.h              the presets you save: one file each in ~/Music/ZandersSynth2/Presets
   Synth2Engine.h             host-agnostic DSP core: 16 voices, up to four oscillators, MIDI, smoothing, effects, output
   Effects.h                  the drive, the delay and the reverb (in any order), after the mix
   Room.h                     the reverb's room: pre-delay, diffusion and an eight-line feedback delay network

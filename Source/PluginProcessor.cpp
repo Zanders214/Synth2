@@ -12,8 +12,10 @@ namespace
     // The MIDI channel the on-screen keyboard plays on.
     constexpr int keyboardChannel = 1;
 
-    // Which factory preset is loaded, kept on the state tree.
-    const juce::Identifier presetProperty { "preset" };
+    // Which factory preset is loaded, kept on the state tree, and the name
+    // of the user preset loaded since, if one was.
+    const juce::Identifier presetProperty     { "preset" };
+    const juce::Identifier userPresetProperty { "userPreset" };
 }
 
 Synth2AudioProcessor::Synth2AudioProcessor()
@@ -648,6 +650,7 @@ void Synth2AudioProcessor::loadPreset (int index)
     Presets::apply (apvts, Presets::factory[(size_t) index]);
     currentPreset.store (index);
     apvts.state.setProperty (presetProperty, index, nullptr);
+    apvts.state.removeProperty (userPresetProperty, nullptr);
     follower.followBench();
     follower.followRack();
     updateHostDisplay (ChangeDetails().withProgramChanged (true));
@@ -670,28 +673,93 @@ void Synth2AudioProcessor::setStateInformation (const void* data, int sizeInByte
     // over it once the message thread gets to it.
     pendingPreset.store (-1);
 
+    restoreState (juce::ValueTree::fromXml (*xml), false);
+    currentPreset.store (juce::jlimit (0, Presets::numPresets - 1, (int) apvts.state.getProperty (presetProperty, 0)));
+}
+
+void Synth2AudioProcessor::restoreState (const juce::ValueTree& restored, bool missingToDefaults)
+{
     // An older session is brought up to date (see Bench::Migration::migrate and
     // Rack::Model::migrate).
     // (replaceState shares the tree and fills in the parameters it lacks,
     // so what was saved is read from a copy.)
-    const auto restored = juce::ValueTree::fromXml (*xml);
-    const auto saved    = restored.createCopy();
+    const auto saved = restored.createCopy();
     apvts.replaceState (restored);
 
     // A session from before GLIDE and MONO played without them, whatever
-    // this instance was playing before it.
-    for (const auto* id : { ParamID::glide, ParamID::mono })
-        if (! saved.getChildWithProperty ("id", juce::String (id)).isValid())
-        {
-            auto* parameter = apvts.getParameter (id);
-            parameter->setValueNotifyingHost (parameter->getDefaultValue());
-        }
+    // this instance was playing before it; and a preset sounds the same
+    // whatever was playing before it, so all it doesn't say goes back to
+    // its default.
+    const auto toDefault = [&saved] (juce::RangedAudioParameter& parameter)
+    {
+        if (saved.getChildWithProperty ("id", parameter.getParameterID()).isValid())
+            return;
+        parameter.beginChangeGesture();
+        parameter.setValueNotifyingHost (parameter.getDefaultValue());
+        parameter.endChangeGesture();
+    };
+    if (missingToDefaults)
+    {
+        for (auto* p : getParameters())
+            if (auto* parameter = dynamic_cast<juce::RangedAudioParameter*> (p))
+                toDefault (*parameter);
+    }
+    else
+    {
+        for (const auto* id : { ParamID::glide, ParamID::mono })
+            toDefault (*apvts.getParameter (id));
+    }
 
     Bench::Migration (apvts).migrate (saved);
     Rack::Model (apvts).migrate (saved);
-    currentPreset.store (juce::jlimit (0, Presets::numPresets - 1, (int) saved.getProperty (presetProperty, 0)));
     follower.followBench();
     follower.followRack();
+}
+
+// ---- User presets ---------------------------------------------------------------------------
+
+juce::String Synth2AudioProcessor::getPresetName() const
+{
+    if (const auto user = apvts.state.getProperty (userPresetProperty).toString(); user.isNotEmpty())
+        return user;
+    return Presets::factory[(size_t) juce::jlimit (0, Presets::numPresets - 1, currentPreset.load())].name;
+}
+
+juce::String Synth2AudioProcessor::getUserPresetName() const
+{
+    return apvts.state.getProperty (userPresetProperty).toString();
+}
+
+bool Synth2AudioProcessor::loadUserPreset (const UserPresets::Entry& entry)
+{
+    auto state = UserPresets::stateIn (entry.file);
+    if (! state.hasType (apvts.state.getType()))
+        return false;
+
+    // The host's program stays the factory preset it was.
+    restoreState (state, true);
+    apvts.state.setProperty (presetProperty, currentPreset.load(), nullptr);
+    apvts.state.setProperty (userPresetProperty, entry.name, nullptr);
+    return true;
+}
+
+std::optional<UserPresets::Entry> Synth2AudioProcessor::saveUserPreset (const juce::String& name, const juce::String& detail,
+                                                                        Presets::Category category)
+{
+    auto state = apvts.copyState();
+    state.removeProperty (presetProperty, nullptr);
+    state.removeProperty (userPresetProperty, nullptr);
+    auto saved = userPresets.save (name, detail, category, state);
+    if (saved.has_value())
+        apvts.state.setProperty (userPresetProperty, saved->name, nullptr);
+    return saved;
+}
+
+bool Synth2AudioProcessor::deleteUserPreset (const UserPresets::Entry& entry)
+{
+    if (entry.name == getUserPresetName())
+        apvts.state.removeProperty (userPresetProperty, nullptr);
+    return userPresets.remove (entry);
 }
 
 void Synth2AudioProcessor::handleAsyncUpdate()

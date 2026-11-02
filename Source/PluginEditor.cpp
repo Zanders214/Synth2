@@ -68,7 +68,14 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
 
     // Picking a preset in the browser loads it, the browser staying open to
     // try the next; closed, the bench's zoom pill and cables come back.
+    presetBrowser.setUserPresets (processorRef.getUserPresets());
     presetBrowser.onChoose ([this] (int index) { processorRef.loadPreset (index); });
+    presetBrowser.onChooseUser ([this] (const UserPresets::Entry& entry) { processorRef.loadUserPreset (entry); });
+    presetBrowser.onSave ([this] (const juce::String& name, const juce::String& detail, Presets::Category category)
+    {
+        return processorRef.saveUserPreset (name, detail, category).has_value();
+    });
+    presetBrowser.onDelete ([this] (const UserPresets::Entry& entry) { processorRef.deleteUserPreset (entry); });
     presetBrowser.onClose ([this]
     {
         benchView.setPillWanted (tab == Tab::bench);
@@ -281,10 +288,11 @@ void Synth2AudioProcessorEditor::timerCallback()
         cables.repaint();
         repaint (layout.outputColumn);
     }
-    if (const int preset = processorRef.getCurrentProgram(); preset != shown.preset)
+    if (const int preset = processorRef.getCurrentProgram(); preset != shown.preset || processorRef.getUserPresetName() != shown.userPreset)
     {
-        shown.preset = preset;
-        presetBrowser.setCurrent (preset);
+        shown.preset     = preset;
+        shown.userPreset = processorRef.getUserPresetName();
+        presetBrowser.setCurrent (preset, shown.userPreset);
         repaint (layout.preset);
     }
     if (! juce::exactlyEqual (settings.outputDb, shown.output))
@@ -699,7 +707,7 @@ void Synth2AudioProcessorEditor::togglePresets()
     }
     // Over the bench, the zoom pill and the cables would only get in the way.
     benchView.setPillWanted (false);
-    presetBrowser.open (processorRef.getCurrentProgram());
+    presetBrowser.open (processorRef.getCurrentProgram(), processorRef.getUserPresetName());
     cables.repaint();
     repaint (layout.preset);
 }
@@ -827,7 +835,7 @@ void Synth2AudioProcessorEditor::paintHeader (juce::Graphics& g, float s) const
     arrow (picker.withTrimmedLeft (picker.getWidth() - arrowWidth), -1.0f);
     g.setFont (Fonts::sans (12.0f * s, true));
     g.setColour (Palette::textStrong);
-    g.drawText (processorRef.getProgramName (processorRef.getCurrentProgram()), picker.reduced (arrowWidth, 0.0f),
+    g.drawText (processorRef.getPresetName(), picker.reduced (arrowWidth, 0.0f),
                 juce::Justification::centred, true);
 
     // The mode badge: a small accent pill, POLY or MONO, a click switching it.
