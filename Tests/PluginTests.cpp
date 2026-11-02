@@ -617,6 +617,21 @@ void testStateRoundTrip()
     d.setStateInformation (saved.getData(), (int) saved.getSize());
     check (Bench::Model (d.getState()).isEmpty(), "an empty bench comes back empty");
 
+    // One from before GLIDE and MONO plays without them, whatever was loaded before it.
+    auto beforeGlide = d.getState().copyState().createCopy();
+    for (const auto* id : { ParamID::glide, ParamID::mono })
+        beforeGlide.removeChild (beforeGlide.getChildWithProperty ("id", juce::String (id)), nullptr);
+    juce::MemoryBlock glideless;
+    juce::AudioProcessor::copyXmlToBinary (*beforeGlide.createXml(), glideless);
+    Synth2AudioProcessor sliding;
+    for (int i = 0; i < Presets::numPresets; ++i)
+        if (juce::String (Presets::factory[(size_t) i].name) == "Slide Lead")
+            sliding.loadPreset (i);
+    const bool wasSliding = param (sliding, ParamID::mono) >= 0.5f && param (sliding, ParamID::glide) > 0.0f;
+    sliding.setStateInformation (glideless.getData(), (int) glideless.getSize());
+    check (wasSliding && param (sliding, ParamID::mono) < 0.5f && approx (param (sliding, ParamID::glide), 0.0f, 1e-4f),
+           "a session from before GLIDE and MONO comes back POLY, without GLIDE, over a preset that had both");
+
     // Older sessions, made from this one: without the bench's tree and the
     // parameters that came after them, and with any they had that are gone.
     const auto olderSession = [&a] (const juce::ValueTree& bench, std::initializer_list<std::pair<const char*, float>> values)

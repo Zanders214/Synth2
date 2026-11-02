@@ -677,6 +677,16 @@ void Synth2AudioProcessor::setStateInformation (const void* data, int sizeInByte
     const auto restored = juce::ValueTree::fromXml (*xml);
     const auto saved    = restored.createCopy();
     apvts.replaceState (restored);
+
+    // A session from before GLIDE and MONO played without them, whatever
+    // this instance was playing before it.
+    for (const auto* id : { ParamID::glide, ParamID::mono })
+        if (! saved.getChildWithProperty ("id", juce::String (id)).isValid())
+        {
+            auto* parameter = apvts.getParameter (id);
+            parameter->setValueNotifyingHost (parameter->getDefaultValue());
+        }
+
     Bench::Migration (apvts).migrate (saved);
     Rack::Model (apvts).migrate (saved);
     currentPreset.store (juce::jlimit (0, Presets::numPresets - 1, (int) saved.getProperty (presetProperty, 0)));
