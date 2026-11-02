@@ -284,6 +284,10 @@ namespace ParamID
     inline constexpr const char* reverbInChain = "reverbInChain";
     inline constexpr const char* eqInChain     = "eqInChain";
 
+    // Every one of the EQ's (version 13), for a session saved before it.
+    inline constexpr std::array<const char*, 12> eqParameters { eqOn, eqLowCut, eqHighCut, eqSlope, eqLowGain, eqLowFreq,
+                                                                eqMidGain, eqMidFreq, eqMidQ, eqHighGain, eqHighFreq, eqInChain };
+
     // Retired with the first bench's shared unison and envelope modules; only
     // read from sessions saved with them, to carry them over.
     inline constexpr const char* unisonOn   = "unisonOn";

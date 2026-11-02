@@ -2204,11 +2204,24 @@ void testEq()
             olderRack.add (oldOrder[i], { oldX[i], 100.0f });
         auto saved = older.getState().copyState();
         saved.getChildWithName (Rack::rackType).setProperty (Rack::versionProperty, 1, nullptr);
+        for (const auto* id : ParamID::eqParameters)   // saved before there was an EQ
+            saved.removeChild (saved.getChildWithProperty ("id", juce::String (id)), nullptr);
         juce::MemoryBlock block;
         juce::AudioProcessor::copyXmlToBinary (*saved.createXml(), block);
 
+        // Restored into an instance already playing an EQ, the session
+        // plays without one, as it did.
         Synth2AudioProcessor restored;
+        for (const auto& [id, value] : { std::pair (ParamID::eqInChain, 1.0f), std::pair (ParamID::eqOn, 1.0f),
+                                         std::pair (ParamID::eqMidGain, 9.0f), std::pair (ParamID::eqLowCut, 300.0f) })
+            setParam (restored, id, value);
+        Rack::Model (restored.getState()).move (Kind::eq, Rack::defaultPosition (0));
         restored.setStateInformation (block.getData(), (int) block.getSize());
+        const auto eqAfter = restored.currentSettings().effects.eq;
+        check (! eqAfter.on && param (restored, ParamID::eqInChain) < 0.5f && param (restored, ParamID::eqOn) < 0.5f
+                   && approx (eqAfter.midGainDb, 0.0f, 1e-4f) && Effects::lowCutIsOut (eqAfter.lowCutHz),
+               reverbFirst ? "restored over an instance with its EQ on, the older set plays without it"
+                           : "restored over an instance with its EQ on, it plays without it, the EQ out and flat");
         const Rack::Model rack (restored.getState());
         bool setOut = true;
         for (size_t i = 0; i < oldOrder.size(); ++i)

@@ -773,10 +773,10 @@ void Synth2AudioProcessor::restoreState (const juce::ValueTree& restored, bool m
     const auto saved = restored.createCopy();
     apvts.replaceState (restored);
 
-    // A session from before GLIDE and MONO played without them, whatever
-    // this instance was playing before it; and a preset sounds the same
-    // whatever was playing before it, so all it doesn't say goes back to
-    // its default.
+    // A session from before GLIDE and MONO, or the EQ, played without them,
+    // whatever this instance was playing before it; and a preset sounds the
+    // same whatever was playing before it, so all it doesn't say goes back
+    // to its default.
     const auto toDefault = [&saved] (juce::RangedAudioParameter& parameter)
     {
         if (saved.getChildWithProperty ("id", parameter.getParameterID()).isValid())
@@ -794,6 +794,8 @@ void Synth2AudioProcessor::restoreState (const juce::ValueTree& restored, bool m
     else
     {
         for (const auto* id : { ParamID::glide, ParamID::mono })
+            toDefault (*apvts.getParameter (id));
+        for (const auto* id : ParamID::eqParameters)
             toDefault (*apvts.getParameter (id));
     }
 
