@@ -260,6 +260,8 @@ namespace PresetBrowserLook
             chipAtRight ("USER", Palette::cyan, 6.0f * s);
         if (preset.mono)
             chipAtRight ("MONO", Palette::violet, 6.0f * s);
+        if (preset.arp.has_value() && preset.category != Presets::Category::arp)   // (an arp preset says so already)
+            chipAtRight ("ARP", Palette::amber, 6.0f * s);
         for (int slot = Bench::numOscillators - 1; slot >= 0; --slot)
             if (const auto& osc = preset.oscillators[(size_t) slot]; osc.has_value())
             {
@@ -380,6 +382,8 @@ namespace PresetBrowserLook
         juce::String playing = preset.mono ? "MONO" : "POLY";
         if (preset.glideSeconds > 0.0f)
             playing += "  GLIDE " + Format::seconds (preset.glideSeconds);
+        if (preset.arp.has_value())
+            playing += "  ARP " + juce::String (Arp::rates[(size_t) juce::jlimit (0, (int) Arp::rates.size() - 1, preset.arp->rate)].name);
         playing += "  OUTPUT " + Format::decibels (preset.outputDb);
         g.drawText (playing, area.removeFromTop (22.0f * s), juce::Justification::centredLeft, true);
 

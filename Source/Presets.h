@@ -6,6 +6,7 @@
 #include <optional>
 #include <vector>
 
+#include "ArpModel.h"
 #include "Bench.h"
 #include "EffectSettings.h"
 #include "ParamIDs.h"
@@ -24,7 +25,9 @@
     that (FILTER n and ENV n take OSC n), in a fixed order with no cables; and
     the EFFECTS tab too: just its effects, side by side, the drive, then the
     delay, then the reverb. A preset also says how its notes play: its
-    GLIDE, and whether it is MONO.
+    GLIDE, whether it is MONO, and whether the arp plays them, and how. One
+    without an arp switches it off but leaves its pattern as it was drawn,
+    to try with the next sound.
 
     Each preset belongs to a category, which the preset tray groups them by;
     their program numbers stay in the order they were added, whatever their
@@ -146,7 +149,35 @@ namespace Presets
         float glideSeconds = 0.0f;   // each note's slide from the one before
         bool  mono = false;          // one note at a time, legato
         std::optional<Eq> eq {};     // empty: out of the chain
+        std::optional<Arp::Settings> arp {};   // empty: the arp off (its own switch aside)
     };
+
+    /** An arp in sixteenths, its pattern written a step to a word: the rows
+        it plays ("0" the lowest key held, "02" two at once), or "." for a
+        rest, then "!" for an accent, "," short, "-" long or "_" tied. */
+    inline Arp::Settings arpOf (const char* steps, int rate = Arp::sixteenth, float swing = 0.0f)
+    {
+        Arp::Settings arp;
+        arp.on    = true;
+        arp.rate  = rate;
+        arp.swing = swing;
+        const auto words = juce::StringArray::fromTokens (steps, false);
+        arp.pattern.length = juce::jlimit (1, Arp::maxSteps, words.size());
+        for (int i = 0; i < arp.pattern.length; ++i)
+        {
+            Arp::Step step { 0, 0.7f, Arp::Length::half };
+            for (const auto c : words[i])
+            {
+                if (c >= '0' && c < '0' + Arp::numRows) step.rows = (std::uint8_t) (step.rows | (1u << (c - '0')));
+                else if (c == '!') step.velocity = 1.0f;
+                else if (c == ',') step.length = Arp::Length::shortNote;
+                else if (c == '-') step.length = Arp::Length::longNote;
+                else if (c == '_') step.length = Arp::Length::tie;
+            }
+            arp.pattern[i] = step;
+        }
+        return arp;
+    }
 
     // Note lengths, by name (their place in Effects::divisions).
     inline constexpr int sixteenth    = 2;
@@ -164,7 +195,7 @@ namespace Presets
     // The filter types, by name (their place in Filter::Type).
     inline constexpr int low24 = (int) ::Filter::Type::low24;
 
-    inline const std::array<Preset, 19> factory {{
+    inline const std::array<Preset, 22> factory {{
         { Category::init, "Empty Bench", "Nothing on it yet: build your own", {}, 0.0f },
 
         { Category::pads, "Supersaw Pad", "Nine wide saws, an octave blooming on top",
@@ -257,6 +288,25 @@ namespace Presets
             Oscillator { square, -12, 0.0f, 0.35f, {},                adsr (0.002f, 0.5f, 0.9f, 0.18f) } },
           -8.0f, Delay { dottedEighth, 0.35f, 0.55f, 0.2f, true }, Reverb { 0.6f, 0.45f, 1.0f, 0.2f, 20.0f },
           Drive { 0.2f, 0, 0.7f, 1.0f }, 0.12f, true },
+
+        // The arp's, after them.
+        { Category::arp, "Neon Arp", "Hold a chord: it climbs and turns in sixteenths",
+          { Oscillator { saw, 0, 0.0f, 1.0f,    { 3, 9.0f, 0.7f }, adsr (0.001f, 0.22f, 0.15f, 0.12f),
+                         Filter { low24, 900.0f, 0.3f, 30.0f, Envelope { 0.0f, 0.001f, 0.0f, 0.2f, 0.0f, 0.15f } } },
+            Oscillator { square, 12, 0.0f, 0.3f, {},                adsr (0.001f, 0.1f, 0.0f, 0.08f) } },
+          -6.0f, Delay { dottedEighth, 0.38f, 0.55f, 0.22f, true }, Reverb { 0.55f, 0.45f, 1.0f, 0.2f, 15.0f },
+          std::nullopt, 0.0f, false, std::nullopt, arpOf ("0! 1 2 3 4! 3 2 1 0! 2 1 3 2! 4 3 5") },
+        { Category::bass, "Rolling Bass", "Hold a note: it rolls in octaves, the off-beats lifting",
+          { Oscillator { saw, -12, 0.0f, 1.0f,  { 2, 8.0f, 0.2f }, adsr (0.002f, 0.18f, 0.4f, 0.06f),
+                         Filter { low24, 320.0f, 0.4f, 24.0f, Envelope { 0.0f, 0.001f, 0.0f, 0.16f, 0.1f, 0.08f } } },
+            Oscillator { sine, -24, 0.0f, 0.6f, {},                ar (0.002f, 0.06f) } },
+          -4.5f, std::nullopt, std::nullopt, Drive { 0.25f, 0, 0.6f, 1.0f }, 0.0f, false, std::nullopt,
+          arpOf ("0! 0, 1 0, 0! 0, 1- 0,") },
+        { Category::keys, "Swing Stabs", "Hold a chord: house stabs on a swung off-beat rhythm",
+          { Oscillator { saw, 0, 0.0f, 1.0f,     { 5, 14.0f, 0.8f }, adsr (0.002f, 0.2f, 0.3f, 0.12f) },
+            Oscillator { square, -12, 0.0f, 0.35f, {},                adsr (0.002f, 0.2f, 0.3f, 0.12f) } },
+          -8.0f, Delay { eighth, 0.25f, 0.5f, 0.15f, true }, Reverb { 0.45f, 0.5f, 1.0f, 0.18f, 10.0f }, std::nullopt, 0.0f, false,
+          std::nullopt, arpOf ("012! . . 012, . . 012 . . . 012! . 012, . . .", Arp::sixteenth, 0.35f) },
     }};
 
     inline constexpr int numPresets = (int) std::tuple_size_v<decltype (factory)>;
@@ -373,6 +423,13 @@ namespace Presets
         values.emplace_back (ParamID::output, preset.outputDb);
         values.emplace_back (ParamID::glide,  preset.glideSeconds);
         values.emplace_back (ParamID::mono,   preset.mono ? 1.0f : 0.0f);
+        values.emplace_back (ParamID::arpOn,  preset.arp.has_value() ? 1.0f : 0.0f);
+        if (preset.arp.has_value())
+        {
+            values.emplace_back (ParamID::arpRate,  (float) preset.arp->rate);
+            values.emplace_back (ParamID::arpSwing, preset.arp->swing);
+            values.emplace_back (ParamID::arpLatch, preset.arp->latch ? 1.0f : 0.0f);
+        }
         return values;
     }
 
@@ -464,13 +521,23 @@ namespace Presets
         preset.outputDb     = value (ParamID::output, 0.0f);
         preset.glideSeconds = value (ParamID::glide, 0.0f);
         preset.mono         = on (ParamID::mono);
+        if (on (ParamID::arpOn))
+        {
+            Arp::Settings arp;
+            arp.on      = true;
+            arp.rate    = juce::roundToInt (value (ParamID::arpRate, (float) arp.rate));
+            arp.swing   = value (ParamID::arpSwing, arp.swing);
+            arp.latch   = on (ParamID::arpLatch);
+            arp.pattern = Arp::patternIn (state.getChildWithName (Arp::arpType));
+            preset.arp  = arp;
+        }
         return preset;
     }
 
     /** Loads `preset` into `state`: every parameter back to its default
         (but how sound flows, which stays as it was picked), then the
-        preset's own values, and the bench and the effects set out afresh.
-        Message thread. */
+        preset's own values and its arp's pattern, if it has one, and the
+        bench and the effects set out afresh. Message thread. */
     inline void apply (juce::AudioProcessorValueTreeState& state, const Preset& preset)
     {
         const auto set = [] (juce::RangedAudioParameter& parameter, float normalised)
@@ -492,6 +559,8 @@ namespace Presets
                 set (*parameter, given != values.end() ? parameter->convertTo0to1 (given->second) : parameter->getDefaultValue());
             }
 
+        if (preset.arp.has_value())
+            Arp::Model (state).setPattern (preset.arp->pattern);
         Bench::Model (state).layOut();
         Rack::Model (state).layOut();
     }

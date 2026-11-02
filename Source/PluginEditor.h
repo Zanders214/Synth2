@@ -5,6 +5,7 @@
 #include <optional>
 
 #include "PluginProcessor.h"
+#include "ArpView.h"
 #include "Bench.h"
 #include "BenchModules.h"
 #include "BenchView.h"
@@ -17,12 +18,13 @@
 /**
     Synth2AudioProcessorEditor — the Neon Plugins face for Synth2: a workbench.
 
-    A dark panel, top to bottom: the wordmark, the BENCH / EFFECTS tabs, the
+    A dark panel, top to bottom: the wordmark, the BENCH / EFFECTS / ARP tabs, the
     preset picker, the POLY / MONO badge and the gear (the signal-flow
     settings); the bench, which starts empty and holds whatever modules are
     put on it, wherever they are put (see BenchView), or on the EFFECTS tab
     the effects every note goes through, put there and arranged the same way
-    (see EffectsView); and along the bottom, on both tabs, the keyboard that
+    (see EffectsView), or on the ARP tab the arpeggiator's pattern, drawn on
+    a grid (see ArpView); and along the bottom, on every tab, the keyboard that
     plays it and the GLIDE and OUTPUT dials. A click on the badge switches
     between playing chords (POLY) and one note at a time, legato (MONO).
 
@@ -84,13 +86,14 @@ public:
     static constexpr float designHeight = 916.0f;
 
     /** What fills the space over the keyboard. */
-    enum class Tab { bench, effects };
+    enum class Tab { bench, effects, arp };
+    static constexpr std::array<Tab, 3> allTabs { Tab::bench, Tab::effects, Tab::arp };
 
     void showTab (Tab tab);
     Tab  getTab() const noexcept { return tab; }
     juce::Rectangle<float> tabBounds (Tab which) const noexcept
     {
-        return (which == Tab::bench ? layout.benchTab : layout.effectsTab).toFloat();
+        return layout.benchTab.translated (layout.benchTab.getWidth() * (int) which, 0).toFloat();
     }
 
     /** The patch cables, drawn over the bench and the bottom strip without
@@ -177,6 +180,7 @@ public:
     // keyboard, and where the gear and the preset picker sit (in the editor).
     BenchView&    getBench() noexcept                  { return benchView; }
     EffectsView&  getEffects() noexcept                { return effectsView; }
+    ArpView&      getArp() noexcept                    { return arpView; }
     CableLayer&   getCables() noexcept                 { return cables; }
     Trays&        getTrays() noexcept                  { return trays; }
     PresetBrowser& getPresetBrowser() noexcept         { return presetBrowser; }
@@ -204,6 +208,7 @@ private:
 
     BenchView    benchView;
     EffectsView  effectsView;
+    ArpView      arpView;
     NeonKeyboard keyboard;
     juce::Slider outputDial;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment;
@@ -218,8 +223,7 @@ private:
     struct Layout
     {
         juce::Rectangle<int> header;
-        juce::Rectangle<int> benchTab;
-        juce::Rectangle<int> effectsTab;
+        juce::Rectangle<int> benchTab;   // the first tab; the others follow it
         juce::Rectangle<int> preset;
         juce::Rectangle<int> badge;
         juce::Rectangle<int> gear;

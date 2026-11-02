@@ -44,11 +44,13 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
       model (p.getState()),
       benchView (p.getState(), looks),
       effectsView (p.getState(), looks),
+      arpView (p.getState(), looks),
       keyboard (p.getKeyboardState())
 {
     addAndMakeVisible (benchView);
     addAndMakeVisible (benchView.getZoomPill());
     addChildComponent (effectsView);
+    addChildComponent (arpView);
     addAndMakeVisible (keyboard);
     setWantsKeyboardFocus (playsTypedKeys());
     keyboard.setShowsTypingKeys (playsTypedKeys());
@@ -243,6 +245,7 @@ void Synth2AudioProcessorEditor::timerCallback()
     // play; each display repaints only when its state moved.
     benchView.sync();
     effectsView.sync();
+    arpView.refresh (processorRef.getArp());
     const auto settings = processorRef.currentSettings();
     effectsView.refresh (settings.effects);
     std::array<AmpDisplayState, Bench::numEnvelopes> envelopes;
@@ -339,8 +342,8 @@ bool Synth2AudioProcessorEditor::keyStateChanged (bool)
 
 // ---- Tabs ----------------------------------------------------------------------------
 
-// The bench and the effects take turns over the keyboard; the cables and the
-// output's IN jack belong to the bench.
+// The bench, the effects and the arp take turns over the keyboard; the
+// cables and the output's IN jack belong to the bench.
 void Synth2AudioProcessorEditor::showTab (Tab which)
 {
     if (which == tab)
@@ -349,6 +352,7 @@ void Synth2AudioProcessorEditor::showTab (Tab which)
     benchView.setVisible (tab == Tab::bench);
     benchView.setPillWanted (tab == Tab::bench);
     effectsView.setVisible (tab == Tab::effects);
+    arpView.setVisible (tab == Tab::arp);
     cables.repaint();
     repaint();
 }
@@ -669,7 +673,7 @@ void Synth2AudioProcessorEditor::CableLayer::letGo (juce::Point<float> at)
 
 void Synth2AudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
 {
-    for (const auto which : { Tab::bench, Tab::effects })
+    for (const auto which : allTabs)
         if (tabBounds (which).contains (e.position))
         {
             presetBrowser.close();
@@ -791,13 +795,13 @@ void Synth2AudioProcessorEditor::paintHeader (juce::Graphics& g, float s) const
     g.drawText ("Synth2", area.withTrimmedLeft (Fonts::width (wordmarkFont, house)),
                 juce::Justification::centredLeft, false);
 
-    // The tabs: two halves of a pill, the one showing lit.
-    const auto tabs = layout.benchTab.getUnion (layout.effectsTab).toFloat();
+    // The tabs: thirds of a pill, the one showing lit.
+    const auto tabs = tabBounds (Tab::bench).getUnion (tabBounds (Tab::arp));
     g.setColour (Palette::idleFill);
     g.fillRoundedRectangle (tabs, tabs.getHeight() * 0.5f);
     g.setColour (Palette::hairline);
     g.drawRoundedRectangle (tabs, tabs.getHeight() * 0.5f, juce::jmax (1.0f, s));
-    for (const auto which : { Tab::bench, Tab::effects })
+    for (const auto which : allTabs)
     {
         const auto half    = tabBounds (which);
         const bool showing = which == tab;
@@ -808,8 +812,8 @@ void Synth2AudioProcessorEditor::paintHeader (juce::Graphics& g, float s) const
         }
         g.setFont (Fonts::sans (10.0f * s, true, 0.14f));
         g.setColour (showing ? Palette::accent : Palette::textDim);
-        const char* benchName = model.isPanel() ? "PANEL" : "BENCH";
-        g.drawText (which == Tab::bench ? benchName : "EFFECTS", half, juce::Justification::centred, false);
+        const char* names[] = { model.isPanel() ? "PANEL" : "BENCH", "EFFECTS", "ARP" };
+        g.drawText (names[(int) which], half, juce::Justification::centred, false);
     }
 
     // The preset picker: the loaded preset's name in a pill, with arrows to
@@ -929,15 +933,16 @@ void Synth2AudioProcessorEditor::resized()
     layout.badge  = layout.header.withTrimmedLeft (layout.header.getWidth() - px (22.0f + 12.0f + 54.0f))
                                  .withWidth (px (54.0f)).withSizeKeepingCentre (px (54.0f), px (20.0f));
     layout.preset = layout.header.withSizeKeepingCentre (px (240.0f), px (26.0f));
-    layout.benchTab   = layout.header.withX (layout.header.getX() + px (148.0f)).withWidth (px (84.0f))
-                                     .withSizeKeepingCentre (px (84.0f), px (26.0f));
-    layout.effectsTab = layout.benchTab.translated (px (84.0f), 0);
+    layout.benchTab = layout.header.withX (layout.header.getX() + px (148.0f)).withWidth (px (72.0f))
+                                   .withSizeKeepingCentre (px (72.0f), px (26.0f));
 
     // The bench, and in the same place the effects.
     benchView.setUiScale (s);
     benchView.setBounds (px (kPanelPad), px (kBenchTop), px (Bench::viewWidth), px (Bench::viewHeight));
     effectsView.setUiScale (s);
     effectsView.setBounds (benchView.getBounds());
+    arpView.setUiScale (s);
+    arpView.setBounds (benchView.getBounds());
     presetBrowser.setUiScale (s);
     presetBrowser.setBounds (benchView.getBounds());
     // The zoom pill on the bench's bottom edge, at its right, over the gap above the keyboard.
