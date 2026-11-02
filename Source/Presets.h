@@ -343,6 +343,80 @@ namespace Presets
         return values;
     }
 
+    /** What a saved state (the processor's, as getStateInformation writes it)
+        holds, as a preset: its oscillators on the bench, with their envelopes
+        and filters, the effects in its chain, its glide, mono and output. It
+        has no name or category of its own; the browser shows user presets
+        with it. Whatever the state doesn't say reads as the preset's default. */
+    inline Preset summaryOf (const juce::ValueTree& state)
+    {
+        const auto value = [&state] (const char* id, float fallback)
+        {
+            const auto param = state.getChildWithProperty ("id", juce::String (id));
+            return param.isValid() ? (float) param.getProperty ("value", fallback) : fallback;
+        };
+        const auto on = [&value] (const char* id) { return value (id, 0.0f) > 0.5f; };
+        const auto stagesOf = [&value] (const ParamID::Envelope& stages)
+        {
+            const Envelope d;
+            return Envelope { value (stages.delay, d.delaySeconds),     value (stages.attack, d.attackSeconds),
+                              value (stages.hold, d.holdSeconds),       value (stages.decay, d.decaySeconds),
+                              value (stages.sustain, d.sustainLevel),   value (stages.release, d.releaseSeconds),
+                              value (stages.attackCurve, d.attackCurve), value (stages.decayCurve, d.decayCurve),
+                              value (stages.releaseCurve, d.releaseCurve) };
+        };
+
+        Preset preset { Category::lead, "", "", {} };
+        for (size_t k = 0; k < preset.oscillators.size(); ++k)
+        {
+            const auto& ids = ParamID::oscillators[k];
+            if (! on (ids.on))
+                continue;
+
+            const Oscillator d;
+            Oscillator osc;
+            osc.wave      = juce::roundToInt (value (ids.wave, (float) d.wave));
+            osc.semitones = juce::roundToInt (value (ids.pitch, (float) d.semitones));
+            osc.fineCents = value (ids.fine, d.fineCents);
+            osc.level     = value (ids.level, d.level);
+            osc.unison    = { juce::roundToInt (value (ids.voices, (float) d.unison.voices)),
+                              value (ids.detune, d.unison.detuneCents), value (ids.width, d.unison.width) };
+            if (on (ParamID::envelopes[k].on))
+                osc.envelope = stagesOf (ParamID::envelopes[k]);
+            if (const auto& flt = ParamID::filters[k]; on (flt.on))
+            {
+                const Filter f;
+                osc.filter = Filter { juce::roundToInt (value (flt.type, (float) f.type)), value (flt.cutoff, f.cutoffHz),
+                                      value (flt.resonance, f.resonance), value (flt.envAmount, f.envAmount), stagesOf (flt.sweep) };
+            }
+            preset.oscillators[k] = osc;
+        }
+
+        if (on (ParamID::driveInChain) && on (ParamID::driveOn))
+        {
+            const Drive d;
+            preset.drive = Drive { value (ParamID::driveAmount, d.amount), juce::roundToInt (value (ParamID::driveShape, (float) d.shape)),
+                                   value (ParamID::driveTone, d.tone), value (ParamID::driveMix, d.mix) };
+        }
+        if (on (ParamID::delayInChain) && on (ParamID::delayOn))
+        {
+            const Delay d;
+            preset.delay = Delay { juce::roundToInt (value (ParamID::delayNote, (float) d.division)), value (ParamID::delayFeedback, d.feedback),
+                                   value (ParamID::delayTone, d.tone), value (ParamID::delayMix, d.mix), on (ParamID::delayPingPong) };
+        }
+        if (on (ParamID::reverbInChain) && on (ParamID::reverbOn))
+        {
+            const Reverb d;
+            preset.reverb = Reverb { value (ParamID::reverbSize, d.size), value (ParamID::reverbDamping, d.damping),
+                                     value (ParamID::reverbWidth, d.width), value (ParamID::reverbMix, d.mix),
+                                     value (ParamID::reverbPreDelay, d.preDelayMs) };
+        }
+        preset.outputDb     = value (ParamID::output, 0.0f);
+        preset.glideSeconds = value (ParamID::glide, 0.0f);
+        preset.mono         = on (ParamID::mono);
+        return preset;
+    }
+
     /** Loads `preset` into `state`: every parameter back to its default
         (but how sound flows, which stays as it was picked), then the
         preset's own values, and the bench and the effects set out afresh.

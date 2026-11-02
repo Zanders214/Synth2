@@ -237,6 +237,7 @@ private:
         int   mono   = -1;
         int   flow   = -1;
         int   preset = -1;
+        juce::String userPreset;
         Bench::View view;
     };
     Shown shown;
