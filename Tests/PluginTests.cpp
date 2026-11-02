@@ -15,6 +15,7 @@
 
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "ArpModel.h"
 #include "Bench.h"
 #include "ParamIDs.h"
 #include "Presets.h"
@@ -2071,8 +2072,9 @@ void testEq()
             if (firstEq < 0 && parameter->getParameterID().startsWith ("eq"))
                 firstEq = i;
         }
-    check (outputAt >= 0 && firstEq == outputAt + 1 && parameters.size() == firstEq + 12,
-           "the EQ's twelve parameters come last, after OUTPUT");
+    check (outputAt >= 0 && firstEq == outputAt + 1 && parameters.size() >= firstEq + 12
+               && parameters[firstEq + 11] == state.getParameter (ParamID::eqInChain),
+           "the EQ's twelve parameters come after OUTPUT, in a row");
     const auto text = [&state] (const char* id, float value)
     {
         auto* parameter = state.getParameter (id);
@@ -2575,7 +2577,9 @@ void testPresets()
     browser.mouseDown (mouseAt (browser, browser.categoryBounds ((int) Presets::Category::sfx).getCentre()));
     check (browser.getCatalog().getShown() == PresetBrowser::all, "a category with no presets in it can't be opened");
     browser.mouseDown (mouseAt (browser, browser.categoryBounds ((int) Presets::Category::bass).getCentre()));
-    bool justBass = browser.getCatalog().getListed().size() == 3;
+    const auto numBass = (size_t) std::count_if (Presets::factory.begin(), Presets::factory.end(),
+                                                 [] (const Presets::Preset& preset) { return preset.category == Presets::Category::bass; });
+    bool justBass = numBass >= 3 && browser.getCatalog().getListed().size() == numBass;
     for (const auto& item : browser.getCatalog().getListed())
         justBass = justBass && ! item.isUser() && Presets::factory[(size_t) item.factory].category == Presets::Category::bass;
     check (browser.getCatalog().getShown() == (int) Presets::Category::bass && justBass, "a click on a category lists just its presets");
@@ -2708,8 +2712,11 @@ void testUserPresets()
     check (browser.getCatalog().getShown() == PresetBrowser::user && listed.size() == 2 && listed[0].isUser() && listed[1].isUser(),
            "USER lists just the user's");
     browser.mouseDown (mouseAt (browser, browser.categoryBounds ((int) Presets::Category::bass).getCentre()));
-    check (browser.getCatalog().getListed().size() == 4 && browser.getCatalog().getListed().back().isUser(), "a category lists the user's of it after the factory's");
-    browser.mouseDown (mouseAt (browser, browser.rowBounds (3).getCentre()));
+    const auto numBass = (int) std::count_if (Presets::factory.begin(), Presets::factory.end(),
+                                              [] (const Presets::Preset& preset) { return preset.category == Presets::Category::bass; });
+    check ((int) browser.getCatalog().getListed().size() == numBass + 1 && browser.getCatalog().getListed().back().isUser(),
+           "a category lists the user's of it after the factory's");
+    browser.mouseDown (mouseAt (browser, browser.rowBounds (numBass).getCentre()));
     check (presets.getPresetName() == "my lead" && approx (param (p, ParamID::osc1Level), 0.6f, 1e-4f) && browser.getCatalog().getCurrentUser() == "my lead",
            "a click on one of the user's loads it");
     browser.mouseDown (mouseAt (browser, browser.rowBounds (0).getCentre()));
@@ -2989,6 +2996,189 @@ void testPanel()
 
 
 // ---- The computer's keys (standalone) ---------------------------------------------
+// ---- The arp -------------------------------------------------------------------------
+
+// Holds `notes` for `blocks` blocks and counts the note starts the engine
+// heard (as notes sounding going up).
+int arpStarts (Synth2AudioProcessor& p, const std::vector<int>& notes, int blocks)
+{
+    juce::AudioBuffer<float> buffer (2, 512);
+    int starts = 0;
+    int before = p.getNumActiveNotes();
+    for (int b = 0; b < blocks; ++b)
+    {
+        juce::MidiBuffer midi;
+        if (b == 0)
+            for (const int note : notes)
+                midi.addEvent (juce::MidiMessage::noteOn (1, note, 0.9f), 0);
+        p.processBlock (buffer, midi);
+        starts += std::max (0, p.getNumActiveNotes() - before);
+        before = p.getNumActiveNotes();
+    }
+    return starts;
+}
+
+void testArp()
+{
+    std::printf ("Arp:\n");
+
+    Synth2AudioProcessor p;
+    auto& state = p.getState();
+    p.prepareToPlay (48000.0, 512);
+    for (const auto* id : ParamID::arpParameters)
+        check (state.getParameter (id) != nullptr, std::string ("the arp has its parameter ") + id);
+    check (! p.arpSettings().on && p.arpSettings().rate == Arp::sixteenth && juce::exactlyEqual (p.arpSettings().swing, 0.0f) && ! p.arpSettings().latch,
+           "off to start with: sixteenths, straight, not latched");
+    check (p.arpSettings().pattern == Arp::defaultPattern() && state.state.getChildWithName (Arp::arpType).isValid(),
+           "and the pattern to start with is in the state");
+    check (state.getParameter (ParamID::arpRate)->getCurrentValueAsText() == "1/16", "RATE reads as a note length");
+
+    // The pattern drawn reaches the audio thread.
+    Arp::Model model (state);
+    Arp::Pattern drawn;
+    drawn.length = 3;
+    drawn[0] = { 0b001, 1.0f, Arp::Length::shortNote };
+    drawn[1] = { 0b110, 0.5f, Arp::Length::tie };
+    drawn[2] = {};
+    model.setPattern (drawn);
+    check (p.arpSettings().pattern == drawn, "a pattern set in the state is the one the arp plays");
+    model.setStep (2, { 0b1000, 0.75f, Arp::Length::longNote });
+    model.setLength (4);
+    check (p.arpSettings().pattern[2].rows == 0b1000 && p.arpSettings().pattern.length == 4, "and so is a step or its length changed");
+
+    // Playing: a held chord plays one note a step instead of all at once.
+    fillBench (p);
+    setParam (p, ParamID::arpOn, 1.0f);
+    model.setPattern (Arp::defaultPattern());
+    const int starts = arpStarts (p, { 60, 64, 67 }, 94);   // a second: eight sixteenths at 120 BPM
+    check (starts >= 7 && starts <= 9 && p.getNumActiveNotes() <= 2, "on, a chord held plays its notes a sixteenth at a time");
+    releaseAll (p);
+    setParam (p, ParamID::arpOn, 0.0f);
+    check (arpStarts (p, { 60, 64, 67 }, 4) == 3, "off, the chord sounds all at once again");
+    releaseAll (p);
+
+    // The on-screen keyboard plays through it too.
+    setParam (p, ParamID::arpOn, 1.0f);
+    p.getKeyboardState().noteOn (1, 57, 0.8f);
+    check (arpStarts (p, {}, 47) >= 3, "and so does the on-screen keyboard");
+    p.getKeyboardState().noteOff (1, 57, 0.0f);
+    releaseAll (p);
+
+    // Saved and restored with the session; a session from before it opens without it.
+    drawn[3] = { 0b10000000, 0.25f, Arp::Length::half };
+    model.setPattern (drawn);
+    setParam (p, ParamID::arpRate, 2.0f);
+    setParam (p, ParamID::arpLatch, 1.0f);
+    juce::MemoryBlock saved;
+    p.getStateInformation (saved);
+    Synth2AudioProcessor restored;
+    restored.setStateInformation (saved.getData(), (int) saved.getSize());
+    check (restored.arpSettings().pattern == drawn && restored.arpSettings().on && restored.arpSettings().rate == 2 && restored.arpSettings().latch,
+           "the pattern, the switch, RATE and LATCH come back with the session");
+
+    auto old = state.copyState();
+    old.removeChild (old.getChildWithName (Arp::arpType), nullptr);
+    for (const auto* id : ParamID::arpParameters)
+        old.removeChild (old.getChildWithProperty ("id", juce::String (id)), nullptr);
+    auto xml = old.createXml();
+    juce::MemoryBlock oldSaved;
+    juce::AudioProcessor::copyXmlToBinary (*xml, oldSaved);
+    restored.setStateInformation (oldSaved.getData(), (int) oldSaved.getSize());
+    check (! restored.arpSettings().on && ! restored.arpSettings().latch && restored.arpSettings().pattern == Arp::defaultPattern(),
+           "a session saved before the arp opens with it off, on the pattern to start with");
+
+    // Presets: an arp preset brings its pattern; one without switches it
+    // off and leaves the pattern drawn.
+    int neon = -1;
+    for (int i = 0; i < Presets::numPresets; ++i)
+        if (juce::String (Presets::factory[(size_t) i].name) == "Neon Arp")
+            neon = i;
+    check (neon >= 0 && Presets::factory[(size_t) neon].arp.has_value(), "Neon Arp is a factory preset with an arp");
+    p.loadPreset (neon);
+    check (p.arpSettings().on && p.arpSettings().pattern == Presets::factory[(size_t) neon].arp->pattern && p.arpSettings().pattern.length == 16,
+           "loading it switches the arp on with its own sixteen steps");
+    check (Presets::summaryOf (state.copyState()).arp.has_value(), "and a summary of the state says it has an arp");
+    model.setPattern (drawn);
+    p.loadPreset (1);
+    check (! p.arpSettings().on && p.arpSettings().pattern == drawn, "a preset without one switches it off, the pattern kept");
+
+    // A user preset keeps its pattern.
+    juce::TemporaryFile folder;
+    p.getPresetLoader().getUserPresets().setFolder (folder.getFile(), false);
+    setParam (p, ParamID::arpOn, 1.0f);
+    const auto entry = p.getPresetLoader().saveUserPreset ("Arp Test", "", Presets::Category::arp);
+    model.setPattern (Arp::defaultPattern());
+    setParam (p, ParamID::arpOn, 0.0f);
+    check (entry.has_value() && p.getPresetLoader().loadUserPreset (*entry) && p.arpSettings().on && p.arpSettings().pattern == drawn,
+           "a user preset brings back its arp and pattern");
+    folder.getFile().deleteRecursively();
+
+    // The ARP tab.
+    std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
+    auto* editor = dynamic_cast<Synth2AudioProcessorEditor*> (base.get());
+    if (editor == nullptr)
+        return;
+    using Tab = Synth2AudioProcessorEditor::Tab;
+    check (! editor->tabBounds (Tab::arp).intersects (editor->tabBounds (Tab::effects)) && ! editor->tabBounds (Tab::arp).intersects (editor->presetBounds()),
+           "the ARP tab sits after EFFECTS, clear of the preset picker");
+    editor->mouseDown (mouseAt (*editor, editor->tabBounds (Tab::arp).getCentre()));
+    auto& arp = editor->getArp();
+    check (editor->getTab() == Tab::arp && arp.isVisible() && ! editor->getBench().isVisible() && ! editor->getEffects().isVisible()
+               && arp.getBounds() == editor->getBench().getBounds(),
+           "a click on it shows the arp where the bench was");
+
+    auto& grid = arp.getGrid();
+    model.setPattern (drawn);
+    check (pumpUntil ([&] { return grid.getPattern() == drawn; }), "the grid shows the pattern in the state");
+    const auto cell = grid.cellBounds (5, 2).getCentre();
+    grid.mouseDown (mouseAt (grid, cell));
+    grid.mouseUp (mouseAt (grid, cell));
+    check (model.pattern()[5].plays (2) && grid.getPattern()[5].plays (2), "a click on a cell puts a note there");
+    const auto along = grid.cellBounds (8, 2).getCentre();
+    grid.mouseDown (mouseAt (grid, cell));
+    grid.mouseDrag (mouseAt (grid, grid.cellBounds (6, 2).getCentre(), cell));
+    grid.mouseDrag (mouseAt (grid, along, cell));
+    grid.mouseUp (mouseAt (grid, along, cell));
+    check (! model.pattern()[5].plays (2) && ! model.pattern()[6].plays (2) && ! model.pattern()[8].plays (2),
+           "a click on a note takes it out, and dragging on takes out the ones passed over");
+    grid.mouseDown (mouseAt (grid, grid.cellBounds (6, 0).getCentre()));
+    grid.mouseDrag (mouseAt (grid, grid.cellBounds (9, 0).getCentre(), grid.cellBounds (6, 0).getCentre()));
+    grid.mouseUp (mouseAt (grid, grid.cellBounds (9, 0).getCentre()));
+    check (model.pattern()[6].plays (0) && model.pattern()[9].plays (0), "and dragging from an empty cell paints notes in");
+
+    const auto bar = grid.velocityBounds (6);
+    grid.mouseDown (mouseAt (grid, { bar.getCentreX(), bar.getY() + bar.getHeight() * 0.75f }));
+    grid.mouseUp (mouseAt (grid, { bar.getCentreX(), bar.getY() + bar.getHeight() * 0.75f }));
+    check (approx (model.pattern()[6].velocity, 0.25f, 0.03f), "a click on a velocity bar sets it");
+    const auto before = model.pattern()[6].length;
+    grid.mouseDown (mouseAt (grid, grid.lengthBounds (6).getCentre()));
+    grid.mouseUp (mouseAt (grid, grid.lengthBounds (6).getCentre()));
+    check (model.pattern()[6].length == (Arp::Length) (((int) before + 1) % Arp::numLengths), "a click on a length moves it on");
+    grid.mouseDown (mouseAt (grid, grid.numberBounds (11).getCentre()));
+    check (model.pattern().length == 12, "a click on a step's number ends the pattern there");
+
+    arp.getShape (Arp::Shape::down).triggerClick();
+    check (pumpUntil ([&] { return model.pattern()[0].plays (3) && model.pattern().length == 12; }), "Down fills the grid, keeping its length");
+    const auto shaped = model.pattern();
+    arp.getVary().triggerClick();
+    check (pumpUntil ([&] { return model.pattern() != shaped; }), "Vary changes it");
+    arp.getClear().triggerClick();
+    check (pumpUntil ([&] { return model.pattern()[0].isRest() && model.pattern()[11].isRest() && model.pattern().length == 12; }),
+           "Clear empties it, keeping its length");
+
+    // Playing, the step lights up and the rows read as the notes held.
+    model.setPattern (Presets::factory[(size_t) neon].arp->pattern);
+    setParam (p, ParamID::arpOn, 1.0f);
+    arpStarts (p, { 60, 63, 67 }, 20);
+    check (pumpUntil ([&] { return arp.getPower().getToggleState(); }), "its power switch shows it on");
+    editor->setSize (juce::roundToInt (Synth2AudioProcessorEditor::designWidth), juce::roundToInt (Synth2AudioProcessorEditor::designHeight));
+    pump (100);
+    snapshot (render (*editor), "17-arp");
+    releaseAll (p);
+    editor->mouseDown (mouseAt (*editor, editor->tabBounds (Tab::bench).getCentre()));
+    check (editor->getTab() == Tab::bench && ! arp.isVisible(), "and the BENCH tab takes the place back");
+}
+
 void testTypedKeys()
 {
     std::printf ("Computer keys:\n");
@@ -3096,6 +3286,7 @@ int main()
     testEffectsTab();
     testEffectsRack();
     testEq();
+    testArp();
     testTypedKeys();
 
     std::printf ("\n%s\n", failures == 0 ? "ALL TESTS PASSED" : "SOME TESTS FAILED");

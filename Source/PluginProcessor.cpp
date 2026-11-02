@@ -2,6 +2,7 @@
 #include "PluginEditor.h"
 #include "ParamIDs.h"
 #include "Bench.h"
+#include "ArpModel.h"
 #include "Presets.h"
 #include "Rack.h"
 
@@ -26,6 +27,8 @@ Synth2AudioProcessor::Synth2AudioProcessor()
     // The on-screen keyboard and the follower (the bench's layout and the
     // effects' rack in the state, and listening for changes to them) set
     // themselves up as members.
+    played.ensureSize ((size_t) Arp::midiRoom);
+    arpMidi.ensureSize ((size_t) Arp::midiRoom);
     for (size_t f = 0; f < filterValues.size(); ++f)
     {
         const auto& ids   = ParamID::filters[f];
@@ -297,6 +300,19 @@ namespace ParameterParts
             })));
     }
 
+    // The arp (version 14): off, in sixteenths, straight, not latched.
+    void addArp (Layout& layout)
+    {
+        const Arp::Settings arp;
+        StringArray rates;
+        for (const auto& rate : Arp::rates)
+            rates.add (rate.name);
+        layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::arpOn, 14 }, "Arp On", arp.on));
+        layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamID::arpRate, 14 }, "Arp Rate", rates, arp.rate));
+        addPercent (layout, ParameterID { ParamID::arpSwing, 14 }, "Arp Swing", 1.0f, arp.swing);
+        layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::arpLatch, 14 }, "Arp Latch", arp.latch));
+    }
+
     // The EQ (version 13), off and flat to start with.
     void addEq (Layout& layout, const Effects::Settings& effects)
     {
@@ -392,6 +408,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
     // effects. Last, so every parameter before it keeps its place.
     addEq (layout, effects);
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::eqInChain, 13 }, "EQ In Chain", false, onOff (false)));
+
+    // The arp (version 14), off to start with.
+    addArp (layout);
 
     return layout;
 }
@@ -529,10 +548,25 @@ Synth2Engine::Settings Synth2AudioProcessor::currentSettings() const noexcept
     return settings;
 }
 
+Arp::Settings Synth2AudioProcessor::arpSettings() const noexcept
+{
+    const auto param = [this] (const char* id) { return apvts.getRawParameterValue (id)->load(); };
+    Arp::Settings settings;
+    settings.on    = param (ParamID::arpOn) >= 0.5f;
+    settings.rate  = juce::roundToInt (param (ParamID::arpRate));
+    settings.swing = param (ParamID::arpSwing);
+    settings.latch = param (ParamID::arpLatch) >= 0.5f;
+    settings.pattern.length = arpLength.load (std::memory_order_relaxed);
+    for (int i = 0; i < Arp::maxSteps; ++i)
+        settings.pattern[i] = Arp::decode (arpSteps[(size_t) i].load (std::memory_order_relaxed));
+    return settings;
+}
+
 void Synth2AudioProcessor::prepareToPlay (double sampleRate, int)
 {
     engine.setSettings (currentSettings());
     engine.prepare (sampleRate);
+    arp.prepare (sampleRate);
 }
 
 void Synth2AudioProcessor::releaseResources()
@@ -552,15 +586,29 @@ void Synth2AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
 {
     juce::ScopedNoDenormals noDenormals;
 
-    // A synced delay follows the host's tempo (or keeps the last one it had).
+    // A synced delay and the arp follow the host's tempo (or keep the last
+    // one it had), and the arp its beats while it plays.
+    Arp::Transport transport;
     if (const auto* host = getPlayHead())
         if (const auto position = host->getPosition())
+        {
             if (const auto bpm = position->getBpm(); bpm.hasValue() && *bpm > 0.0)
                 hostBpm.store (*bpm);
+            if (const auto ppq = position->getPpqPosition(); ppq.hasValue() && position->getIsPlaying())
+            {
+                transport.playing = true;
+                transport.ppq     = *ppq;
+            }
+        }
+    transport.bpm = hostBpm.load();
 
     engine.setSettings (currentSettings());
-    keys.playOn (engine);
-    engine.process (buffer, midi);
+    played.clear();
+    keys.addTo (played);
+    for (const auto event : midi)
+        Arp::addIfRoom (played, event.data, event.numBytes, event.samplePosition);
+    arp.process (played, arpMidi, buffer.getNumSamples(), arpSettings(), transport);
+    engine.process (buffer, arpMidi);
     activeNotes.store (engine.getNumActiveNotes());
 
     for (size_t k = 0; k < noteActivity.size(); ++k)
@@ -602,18 +650,17 @@ void Synth2AudioProcessor::OnScreenKeys::handleNoteOff (juce::MidiKeyboardState*
         keyEvents[(size_t) scope.startIndex1] = { midiNoteNumber, 0.0f };
 }
 
-void Synth2AudioProcessor::OnScreenKeys::playOn (Synth2Engine& synth) noexcept
+void Synth2AudioProcessor::OnScreenKeys::addTo (juce::MidiBuffer& midi) noexcept
 {
     const auto scope = keyFifo.read (keyFifo.getNumReady());
-    const auto play  = [this, &synth] (int start, int size)
+    const auto play  = [this, &midi] (int start, int size)
     {
         for (int i = start; i < start + size; ++i)
         {
             const auto& key = keyEvents[(size_t) i];
-            if (key.velocity > 0.0f)
-                synth.noteOn (keyboardChannel, key.note, key.velocity);
-            else
-                synth.noteOff (keyboardChannel, key.note);
+            const auto message = key.velocity > 0.0f ? juce::MidiMessage::noteOn (keyboardChannel, key.note, key.velocity)
+                                                      : juce::MidiMessage::noteOff (keyboardChannel, key.note);
+            Arp::addIfRoom (midi, message.getRawData(), message.getRawDataSize(), 0);
         }
     };
     play (scope.startIndex1, scope.blockSize1);
@@ -771,6 +818,7 @@ void Synth2AudioProcessor::restoreState (const juce::ValueTree& restored, bool m
     // (replaceState shares the tree and fills in the parameters it lacks,
     // so what was saved is read from a copy.)
     const auto saved = restored.createCopy();
+    const auto arpBefore = apvts.state.getChildWithName (Arp::arpType).createCopy();
     apvts.replaceState (restored);
 
     // A session from before GLIDE and MONO, or the EQ, played without them,
@@ -797,12 +845,21 @@ void Synth2AudioProcessor::restoreState (const juce::ValueTree& restored, bool m
             toDefault (*apvts.getParameter (id));
         for (const auto* id : ParamID::eqParameters)
             toDefault (*apvts.getParameter (id));
+        for (const auto* id : ParamID::arpParameters)
+            toDefault (*apvts.getParameter (id));
     }
+
+    // One saved before the arp starts with its pattern; a preset saved
+    // before it (its arp off) leaves the pattern drawn as it was.
+    if (! saved.getChildWithName (Arp::arpType).isValid() && missingToDefaults && arpBefore.isValid())
+        apvts.state.appendChild (arpBefore, nullptr);
+    Arp::Model (apvts).ensureArp();
 
     Bench::Migration (apvts).migrate (saved);
     Rack::Model (apvts).migrate (saved);
     follower.followBench();
     follower.followRack();
+    follower.followArp();
 }
 
 // ---- User presets ---------------------------------------------------------------------------
@@ -866,6 +923,7 @@ Synth2AudioProcessor::Follower::Follower (Synth2AudioProcessor& processorToFollo
     auto& state = owner.apvts;
     Bench::Model (state).ensureBench();
     Rack::Model (state).ensureRack();
+    Arp::Model (state).ensureArp();
     state.state.addListener (this);
     for (const auto& id : Bench::allModules)
         state.addParameterListener (Bench::parameterFor (id), this);
@@ -873,6 +931,7 @@ Synth2AudioProcessor::Follower::Follower (Synth2AudioProcessor& processorToFollo
         state.addParameterListener (Rack::inChainParameter (kind), this);
     followBench();
     followRack();
+    followArp();
 }
 
 Synth2AudioProcessor::Follower::~Follower()
@@ -908,12 +967,22 @@ void Synth2AudioProcessor::Follower::followRack()
     owner.effectsChain.store (Effects::encode (Rack::Model (owner.apvts).chain()));
 }
 
-void Synth2AudioProcessor::Follower::valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTree&)
+void Synth2AudioProcessor::Follower::followArp()
+{
+    const auto pattern = Arp::Model (owner.apvts).pattern();
+    for (int i = 0; i < Arp::maxSteps; ++i)
+        owner.arpSteps[(size_t) i].store (Arp::encode (pattern[i]), std::memory_order_relaxed);
+    owner.arpLength.store (pattern.length, std::memory_order_relaxed);
+}
+
+void Synth2AudioProcessor::Follower::valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTree& child)
 {
     if (parent.hasType (Bench::benchType))
         followBench();
     else if (parent.hasType (Rack::rackType))
         followRack();
+    else if (parent.hasType (Arp::arpType) || child.hasType (Arp::arpType))
+        followArp();
 }
 
 void Synth2AudioProcessor::Follower::valueTreeChildRemoved (juce::ValueTree& parent, juce::ValueTree&, int)
@@ -930,12 +999,15 @@ void Synth2AudioProcessor::Follower::valueTreePropertyChanged (juce::ValueTree& 
         followBench();
     else if (tree.hasType (Rack::effectType))
         followRack();
+    else if (tree.hasType (Arp::arpType) || tree.hasType (Arp::stepType))
+        followArp();
 }
 
 void Synth2AudioProcessor::Follower::valueTreeRedirected (juce::ValueTree&)
 {
     followBench();
     followRack();
+    followArp();
 }
 
 // A module came onto the bench or left it, or an effect into the chain or

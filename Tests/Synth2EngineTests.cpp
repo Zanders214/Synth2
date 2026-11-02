@@ -6,9 +6,11 @@
     plugs straight into CTest. Notes go in as real MIDI through process(), the
     way a host plays them, and the tests listen to what comes out: pitch, level,
     the unison stack's spread, the envelope, polyphony and the sustain pedal.
+    The arp (Arp.h) is played the same way, its MIDI in and its notes out.
 */
 
 #include "Synth2Engine.h"
+#include "Arp.h"
 #include "Filter.h"
 
 #include <algorithm>
@@ -1615,7 +1617,250 @@ void testGlideAndMono()
     run (*pedalled, at (0.5), { { 0, off (64) }, { 10, pedal (false) } });
     check (pedalled->getNumActiveNotes() == 0, "which ends when the pedal lifts");
 }
+// ---- The arp ----------------------------------------------------------------------
+
+// The arp's notes out, each at its sample in the whole run.
+struct ArpNote
+{
+    int  sample;
+    int  note;
+    bool on;
+    int  velocity;
+};
+
+struct ArpRig
+{
+    Arp::Player player;
+    Arp::Settings settings;
+    Arp::Transport transport;
+    int done = 0;   // samples played so far
+
+    ArpRig()
+    {
+        player.prepare (sampleRate);
+        settings.on = true;
+    }
+
+    // Plays `numSamples` more, `events` at their samples from now; the
+    // transport's beat moves on with them while it plays. Returns the
+    // note-ons and offs that came out, and anything else in `others`.
+    std::vector<ArpNote> play (int numSamples, const std::vector<std::pair<int, juce::MidiMessage>>& events = {},
+                               std::vector<juce::MidiMessage>* others = nullptr)
+    {
+        std::vector<ArpNote> notes;
+        juce::MidiBuffer in, out;
+        in.ensureSize ((size_t) Arp::midiRoom);
+        out.ensureSize ((size_t) Arp::midiRoom);
+        for (int start = 0; start < numSamples; start += blockSize)
+        {
+            const int length = std::min (blockSize, numSamples - start);
+            in.clear();
+            for (const auto& [at, message] : events)
+                if (at >= start && at < start + length)
+                    in.addEvent (message, at - start);
+            player.process (in, out, length, settings, transport);
+            for (const auto event : out)
+            {
+                const auto message = event.getMessage();
+                if (message.isNoteOnOrOff())
+                    notes.push_back ({ done + event.samplePosition, message.getNoteNumber(), message.isNoteOn(), (int) message.getVelocity() });
+                else if (others != nullptr)
+                    others->push_back (message);
+            }
+            done += length;
+            if (transport.playing)
+                transport.ppq += (double) length / sampleRate * transport.bpm / 60.0;
+        }
+        return notes;
+    }
+};
+
+juce::MidiMessage arpOn (int note, float velocity = 1.0f) { return juce::MidiMessage::noteOn (1, note, velocity); }
+juce::MidiMessage arpOff (int note) { return juce::MidiMessage::noteOff (1, note); }
+
+std::vector<int> onsOf (const std::vector<ArpNote>& notes)
+{
+    std::vector<int> ons;
+    for (const auto& n : notes)
+        if (n.on)
+            ons.push_back (n.note);
+    return ons;
+}
+
+bool near (int sample, int expected) { return std::abs (sample - expected) <= 1; }
+
+void testArp()
+{
+    std::printf ("Arp:\n");
+    constexpr int step = 6000;   // a sixteenth at 120 BPM, 48 kHz
+
+    // Steps survive the trip to the audio thread.
+    const Arp::Step sample { 0b10100101, 0.5f, Arp::Length::tie };
+    check (Arp::decode (Arp::encode (sample)) == sample, "a step comes back from its 32 bits as it was");
+
+    // Off, everything goes through as it is.
+    {
+        ArpRig rig;
+        rig.settings.on = false;
+        std::vector<juce::MidiMessage> others;
+        const auto notes = rig.play (blockSize * 2, { { 10, arpOn (60) }, { 20, juce::MidiMessage::controllerEvent (1, 1, 64) }, { 600, arpOff (60) } }, &others);
+        check (notes.size() == 2 && notes[0].sample == 10 && notes[0].on && notes[1].sample == 600 && ! notes[1].on && others.size() == 1,
+               "switched off, the keys and the rest pass through where they were");
+    }
+
+    // On: the default pattern climbs the chord held, in sixteenths.
+    {
+        ArpRig rig;
+        rig.settings.pattern = Arp::defaultPattern();
+        const auto notes = rig.play (step * 8, { { 100, arpOn (64, 0.5f) }, { 100, arpOn (60, 0.5f) }, { 100, arpOn (67, 0.5f) } });
+        check (onsOf (notes) == std::vector<int> { 60, 64, 67, 72, 60, 64, 67, 72 },
+               "holding C E G, Up plays C E G and C an octave up, round again");
+        check (! notes.empty() && notes[0].sample == 100 && notes[2].sample == 100 + step && notes[1].sample == 100 + step / 2,
+               "the first step at the key, each a sixteenth after the last, half a step long");
+        check (! notes.empty() && notes[0].velocity == juce::roundToInt (127.0f * 0.5f) && notes[2].velocity < notes[0].velocity,
+               "its velocity the step's times the key's, the first of each four accented");
+        check (rig.player.playingStep() == 7 && rig.player.rowNotes()[0] == 60 && rig.player.rowNotes()[3] == 72 && rig.player.rowNotes()[5] == 79,
+               "it shows the step playing, and the note each row plays");
+
+        const auto released = rig.play (step * 2, { { 10, arpOff (60) }, { 10, arpOff (64) }, { 10, arpOff (67) } });
+        check (onsOf (released).empty() && rig.player.playingStep() == -1 && rig.player.rowNotes()[0] == -1,
+               "letting the chord go stops it, with nothing left sounding");
+    }
+
+    // A chord changing under it plays on, from the new notes.
+    {
+        ArpRig rig;
+        rig.settings.pattern = Arp::make (Arp::Shape::up, 4, *std::make_unique<juce::Random> (1));
+        const auto notes = rig.play (step * 4, { { 0, arpOn (60) }, { step + 10, arpOn (62) } });
+        check (onsOf (notes) == std::vector<int> { 60, 72, 72, 74 }, "one key climbs in octaves; a second joins the chord at the next step");
+    }
+
+    // Rests, chords, ties and lengths.
+    {
+        ArpRig rig;
+        Arp::Pattern pattern;
+        pattern.length = 4;
+        pattern[0] = { 0b011, 1.0f, Arp::Length::shortNote };
+        pattern[1] = {};
+        pattern[2] = { 0b001, 1.0f, Arp::Length::tie };
+        pattern[3] = { 0b001, 1.0f, Arp::Length::longNote };
+        rig.settings.pattern = pattern;
+        const auto notes = rig.play (step * 4, { { 0, arpOn (60) }, { 0, arpOn (67) } });
+        const auto ons = onsOf (notes);
+        check (ons == std::vector<int> { 60, 67, 60 }, "a step plays its rows together, a rest none, and a tie runs on into the same note");
+        const auto offAt = [&notes] (int note, int after)
+        {
+            for (const auto& n : notes)
+                if (! n.on && n.note == note && n.sample >= after)
+                    return n.sample;
+            return -1;
+        };
+        check (near (offAt (60, 0), step / 4) && near (offAt (67, 0), step / 4), "short is a quarter of a step");
+        check (near (offAt (60, step), 3 * step + (int) (0.9 * step)), "tied, the note lasts on to the end of the next step's own length");
+    }
+
+    // SWING puts every second step late.
+    {
+        ArpRig rig;
+        rig.settings.pattern = Arp::defaultPattern();
+        rig.settings.swing = 0.5f;
+        const auto notes = rig.play (step * 3, { { 0, arpOn (60) } });
+        std::vector<int> starts;
+        for (const auto& n : notes)
+            if (n.on)
+                starts.push_back (n.sample);
+        check (starts.size() == 3 && near (starts[1], step + step / 4) && near (starts[2], 2 * step),
+               "half SWING: the second step a quarter of a step late, the third on time");
+    }
+
+    // LATCH keeps the chord after the keys go up, and the next chord takes over.
+    {
+        ArpRig rig;
+        rig.settings.pattern = Arp::defaultPattern();
+        rig.settings.latch = true;
+        auto notes = rig.play (step * 3, { { 0, arpOn (60) }, { 0, arpOn (64) }, { 100, arpOff (60) }, { 100, arpOff (64) } });
+        check (onsOf (notes) == std::vector<int> { 60, 64, 72 }, "latched, the chord plays on after its keys are let go");
+        notes = rig.play (step * 2, { { 10, arpOn (62) }, { 20, arpOff (62) } });
+        check (onsOf (notes) == std::vector<int> { 76, 62 }, "a new key, none held, latches a chord of its own from the next step");
+        rig.settings.latch = false;
+        notes = rig.play (step * 2);
+        check (onsOf (notes).empty() && rig.player.playingStep() == -1, "LATCH off with no keys held: it stops");
+    }
+
+    // The sustain pedal holds the keys let go.
+    {
+        ArpRig rig;
+        rig.settings.pattern = Arp::defaultPattern();
+        std::vector<juce::MidiMessage> others;
+        auto notes = rig.play (step * 2, { { 0, juce::MidiMessage::controllerEvent (1, 64, 127) }, { 0, arpOn (60) }, { 10, arpOff (60) } }, &others);
+        check (onsOf (notes).size() == 2 && others.empty(), "a key let go with the pedal down plays on (the arp keeps the pedal to itself)");
+        notes = rig.play (step * 2, { { 0, juce::MidiMessage::controllerEvent (1, 64, 0) } });
+        check (onsOf (notes).empty() && rig.player.playingStep() == -1, "and the pedal let up stops it");
+    }
+
+    // Switched on and off with a key held.
+    {
+        ArpRig rig;
+        rig.settings.on = false;
+        rig.settings.pattern = Arp::defaultPattern();
+        rig.play (blockSize, { { 0, arpOn (60, 0.8f) } });
+        rig.settings.on = true;
+        auto notes = rig.play (blockSize);
+        check (notes.size() == 2 && ! notes[0].on && notes[0].note == 60 && notes[1].on && notes[1].note == 60,
+               "switched on, the key sounding by itself stops and the pattern takes over");
+        rig.settings.on = false;
+        notes = rig.play (blockSize);
+        check (notes.size() == 2 && ! notes[0].on && notes[1].on && notes[1].note == 60 && notes[1].velocity == juce::roundToInt (0.8f * 127.0f),
+               "switched off, the pattern stops and the key held sounds again");
+    }
+
+    // Following the host: the steps fall on its beats.
+    {
+        ArpRig rig;
+        rig.settings.pattern = Arp::defaultPattern();
+        rig.transport = { 120.0, true, 0.1 };   // 0.4 of a sixteenth in
+        const auto notes = rig.play (step * 2, { { 0, arpOn (60) } });
+        std::vector<int> starts;
+        for (const auto& n : notes)
+            if (n.on)
+                starts.push_back (n.sample);
+        check (starts.size() == 3 && starts[0] == 0 && near (starts[1], (int) (0.6 * step)) && near (starts[2], (int) (1.6 * step)),
+               "with the host playing, the step under the playhead plays at once, the next on the host's sixteenths");
+
+        rig.transport.ppq = 0.0;   // the host loops back to the bar's start
+        const auto looped = rig.play (step);
+        check (! looped.empty() && looped[0].on && looped[0].sample == step * 2 && looped[0].note == 60,
+               "jumped back to the start of the bar, the pattern starts there again");
+    }
+
+    // All Notes Off stops it, and passes on.
+    {
+        ArpRig rig;
+        rig.settings.pattern = Arp::defaultPattern();
+        rig.settings.latch = true;
+        std::vector<juce::MidiMessage> others;
+        rig.play (step, { { 0, arpOn (60) } });
+        const auto notes = rig.play (step * 2, { { 0, juce::MidiMessage::allNotesOff (1) } }, &others);
+        check (onsOf (notes).empty() && others.size() == 1 && rig.player.playingStep() == -1, "All Notes Off stops even a latched chord");
+    }
+
+    // The patterns to start from, and Vary.
+    juce::Random random (42);
+    const auto up = Arp::make (Arp::Shape::up, 8, random);
+    const auto down = Arp::make (Arp::Shape::down, 8, random);
+    const auto chord = Arp::make (Arp::Shape::chord, 16, random);
+    check (up.length == 8 && up[0].plays (0) && up[3].plays (3) && up[4].plays (0) && down[0].plays (3) && down[3].plays (0),
+           "Up climbs four rows and Down falls them");
+    check (chord[0].rows == 0b111 && chord[1].isRest() && chord[3].rows == 0b111, "Chord stabs the three lowest rows together");
+    bool alwaysChanged = true;
+    for (int i = 0; i < 50; ++i)
+        alwaysChanged = alwaysChanged && Arp::vary (up, random) != up;
+    check (alwaysChanged, "Vary always changes something");
+}
+
 } // namespace
+
+
 
 int main()
 {
@@ -1643,6 +1888,7 @@ int main()
     testEffectsChain();
     testEngineEffects();
     testGlideAndMono();
+    testArp();
 
     std::printf ("\n%s\n", failures == 0 ? "ALL TESTS PASSED" : "SOME TESTS FAILED");
     return failures == 0 ? 0 : 1;

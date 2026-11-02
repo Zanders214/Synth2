@@ -7,6 +7,7 @@
 #include <bitset>
 #include <cstdint>
 
+#include "Arp.h"
 #include "Bench.h"
 #include "Synth2Engine.h"
 #include "UserPresets.h"
@@ -21,6 +22,10 @@
     The editor's on-screen keyboard plays through keyboardState. Its notes reach
     the audio thread through a lock-free FIFO (JUCE's own hand-over locks), and
     the keys the host is playing are lit on it from the editor's timer.
+
+    Both go through the arp (see Arp.h) on their way to the engine: switched
+    off, it lets them through as they are; on, it plays its pattern from the
+    keys held instead, in time with the host.
 */
 class Synth2AudioProcessor : public juce::AudioProcessor,
                              private juce::AsyncUpdater
@@ -81,6 +86,13 @@ public:
 
     /** The engine's settings, from the parameters. */
     Synth2Engine::Settings currentSettings() const noexcept;
+
+    /** The arp's, from its parameters and the pattern in the state. Any thread. */
+    Arp::Settings arpSettings() const noexcept;
+
+    /** The arp, for the ARP tab to show the step it plays and the notes
+        its rows are playing. */
+    const Arp::Player& getArp() const noexcept { return arp; }
 
     /** Whether oscillator `oscillator` (0..3) is patched through to the
         output, for when the signal flow follows the cables. Any thread. */
@@ -148,9 +160,9 @@ private:
 
         juce::MidiKeyboardState& getState() noexcept { return keyboardState; }
 
-        // Audio thread: plays the keys pressed since the last block on
-        // `synth`, at its start; and takes note of the keys the host holds.
-        void playOn (Synth2Engine& synth) noexcept;
+        // Audio thread: adds the keys pressed since the last block to
+        // `midi`, at its start; and takes note of the keys the host holds.
+        void addTo (juce::MidiBuffer& midi) noexcept;
         void setHostHeld (const std::array<std::uint64_t, 2>& held) noexcept;
 
         // Message thread: see showHostNotesOnKeyboard.
@@ -193,6 +205,7 @@ private:
 
         void followBench();
         void followRack();
+        void followArp();
 
     private:
         void valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTree& child) override;
@@ -230,6 +243,16 @@ private:
     std::array<std::atomic<bool>, Synth2Engine::numOscillators> routedToOutput { true, true, true, true };
     std::atomic<double> hostBpm { 120.0 };   // the host's tempo, as of the last block
     std::atomic<int> effectsChain { Effects::encode (Effects::defaultOrder) };   // the effects' order, encoded
+
+    // The arp, and its pattern from the state, a step to an atomic. The
+    // keys played (the on-screen keyboard's, then the host's) are gathered
+    // in `played`, and the arp plays them into `arpMidi` for the engine;
+    // both have their room (Arp::midiRoom) set aside up front.
+    Arp::Player arp;
+    std::array<std::atomic<std::uint32_t>, Arp::maxSteps> arpSteps {};
+    std::atomic<int> arpLength { 8 };
+    juce::MidiBuffer played;
+    juce::MidiBuffer arpMidi;
 
     // Which envelope shapes and which filter filters each oscillator (-1 for
     // none), for each way sound can flow, so the audio thread just picks the

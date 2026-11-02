@@ -12,6 +12,7 @@
 
 #include <juce_audio_utils/juce_audio_utils.h>
 #include "PluginProcessor.h"
+#include "ArpModel.h"
 #include "Bench.h"
 #include "ParamIDs.h"
 #include "Rack.h"
@@ -169,13 +170,22 @@ int main()
             set (ParamID::eqMidFreq,     200.0f * (float) ((b / 24) % 7 + 1));
             set (ParamID::eqMidQ,        0.5f + (float) ((b / 24) % 4));
             set (ParamID::eqHighGain,    (float) ((b / 24) % 7) - 3.0f);
+
+            // The arp switches on and off, latches, swings, changes rate
+            // and gets a new pattern mid-chord.
+            set (ParamID::arpOn,    (float) ((b / 24) % 3 != 2));
+            set (ParamID::arpLatch, (float) ((b / 48) % 2));
+            set (ParamID::arpRate,  (float) ((b / 24) % (int) Arp::rates.size()));
+            set (ParamID::arpSwing, 0.3f * (float) ((b / 24) % 4));
+            juce::Random random (b);
+            Arp::Model (proc.getState()).setPattern (Arp::make ((Arp::Shape) ((b / 24) % 5), 1 + (b / 24) % Arp::maxSteps, random));
         }
 
         audioCallback (proc, buffer, midi);         // the full callback, under RTSan
     }
 
     std::printf ("PASS: %d blocks of 16-voice unison chords on up to four oscillators (stolen notes,\n"
-                 "      sustain pedal, on-screen keys, settings, modules, envelopes, filters, routing and effects changing mid-note),\n"
+                 "      sustain pedal, on-screen keys, settings, modules, envelopes, filters, routing, effects and the arp changing mid-note),\n"
                  "      no RT-safety violations\n", blocks);
     return 0;
 }

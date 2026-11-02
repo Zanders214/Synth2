@@ -8,7 +8,8 @@ detuned, spread copies on every note, give each its own envelope and its own
 swept filter, and play chords: the classic wide, detuned "supersaw" pad in a
 few turns. Then send the
 lot through a drive, an EQ, a delay and a reverb, in any order, on the EFFECTS
-tab, laid out the same way.
+tab, laid out the same way. And on the ARP tab, draw an arpeggio on a grid: hold
+keys and it plays, in time with your DAW.
 
 ```
 note -> OSC n (VOICES x shape, DETUNE + WIDTH) -> FILTER n (TYPE CUTOFF RESONANCE, swept) -> ENV n (DELAY ATTACK HOLD DECAY SUSTAIN RELEASE) -> + -> DRIVE / EQ / DELAY / REVERB (any order) -> OUTPUT
@@ -138,6 +139,44 @@ steps of diffusion that multiply each sound into a dense cloud, then eight feedb
 lines mixed into one another, each drifting very slightly in length so no pitch rings
 out. Its tail is levelled, so a long room is longer rather than louder.
 
+## Arp
+
+The **ARP** tab, after EFFECTS, is the arpeggiator. Switch it on with its power switch
+and hold keys: instead of the chord, it plays the pattern on its grid, a step at a time,
+for as long as the keys are held.
+
+The grid doesn't hold notes but places in the chord you hold. Its bottom row is your
+lowest key, the next row up the next key, and so on; past the chord's top note the rows
+go on into the octave above (hold a triad and row 4 is its root an octave up). So one
+pattern plays any chord, and follows your hands as you change it. While it plays, the
+rows are labelled with the notes they're playing and the step playing lights up.
+
+- **Click a cell** to put a note there or take it out; **drag** to paint more the same
+  way. Several rows on one step play together; a step with none is a rest.
+- **VELOCITY**: drag across the bars. Each note plays at its step's velocity times the
+  velocity you played its key with.
+- **LENGTH**: click to step through short, half, long and tied. A tied note holds into
+  the next step and, if that plays the same note, on through it without starting again.
+- **Click a step's number** to end the pattern there (1 to 16 steps; the steps after it
+  are kept, greyed out, for when you lengthen it again).
+- **START FROM** fills the grid with **Up**, **Down**, **Up-Down**, **Random** or **Chord**
+  (stabs on an off-beat rhythm), keeping its length; **Vary** changes a step or two for a
+  new idea close to the one you have; **Clear** empties it.
+
+| Control   | What it does |
+|-----------|--------------|
+| **RATE**  | How long a step is: 1/4 down to 1/32, dotted and triplet ones between. It follows your DAW's tempo. |
+| **SWING** | Makes every second step late, up to half a step (about 67% is a triplet shuffle). |
+| **LATCH** | Keeps the chord playing after you let go, until you play the next one. |
+
+While your DAW plays, the steps fall on its beats, the pattern starting on the bar, and
+it follows loops and jumps; stopped (and in the standalone app) it runs on its own clock
+from the first key, at the last tempo it had (120 BPM to start). The sustain pedal holds
+the keys you let go, as it would without the arp. The pattern is saved with your set and
+in your own presets, and the factory's **Neon Arp**, **Rolling Bass** and **Swing Stabs**
+bring their own; a preset without an arp switches it off but leaves your pattern on the
+grid, so you can try it with the next sound.
+
 ### Presets
 
 The pill in the middle of the header holds the presets: its arrows step to the
@@ -180,7 +219,7 @@ OSC -> FILTER -> ENV -> OUT), keeps the signal flow you picked (on the panel, ea
 the panel's modules it doesn't use is there too, switched off),
 puts just its effects
 on the EFFECTS tab, side by side and switched on (most pads and keys have a reverb,
-some a delay on the beat), sets its GLIDE and POLY / MONO, and sets everything
+some a delay on the beat), sets its GLIDE and POLY / MONO and its arp, and sets everything
 it doesn't use back to its default; picking it again undoes your edits. Which preset
 you loaded is saved with your set.
 
@@ -205,6 +244,9 @@ you loaded is saved with your set.
 | **Filter Pluck**  | Pluck    | A saw whose low-pass snaps shut as it rings             |
 | **Acid Bass**     | Bass     | A squelchy square, its resonant filter swept short      |
 | **Slide Lead**    | Lead     | An EDM supersaw lead, MONO, gliding 120 ms from note to note: play it legato |
+| **Neon Arp**      | Arp      | Hold a chord: the arp climbs and turns through it in sixteenths |
+| **Rolling Bass**  | Bass     | Hold a note: the arp rolls it in octaves, the off-beats lifting |
+| **Swing Stabs**   | Keys     | Hold a chord: the arp stabs it on a swung off-beat rhythm |
 
 ### Signal flow
 
@@ -463,7 +505,10 @@ Source/
   BenchModules.h             the oscillator, filter and envelope modules, and the add / settings trays
   Rack.h                     the EFFECTS tab's model: which effects are in the chain, where their cards sit, the order
   EffectsView.h              the EFFECTS tab: the area, the drive, delay and reverb cards, their wells and switches
-  PluginEditor.{h,cpp}       the Neon Plugins editor: header, tabs and gear, bench or effects, cables, keyboard, OUTPUT
+  Arp.h                      the arpeggiator: patterns, the ones to start from, and the player that turns keys held into steps
+  ArpModel.h                 the arp's pattern in the state
+  ArpView.h                  the ARP tab: the grid and its controls
+  PluginEditor.{h,cpp}       the Neon Plugins editor: header, tabs and gear, bench, effects or arp, cables, keyboard, OUTPUT
   Synth2LookAndFeel.{h,cpp}  the dials (design-system Dial: arc + glowing core)
   WavePicker.h               an oscillator well's picker (pill, arrows, wheel) and its tray of shapes
   VoiceDisplays.h            the OSC, AMP (and SWEEP) and filter response wells
@@ -473,7 +518,7 @@ Source/
   Synth2VisualModel.h        pure wave / unison / envelope / effects -> display math (uses the engine's own), the morph and its ease
   RtSafety.h                 the RealtimeSanitizer annotation
 Tests/
-  Synth2EngineTests.cpp         framework-free DSP tests: pitch, envelopes, filters, unison, the oscillators, polyphony, pedal, effects
+  Synth2EngineTests.cpp         framework-free DSP tests: pitch, envelopes, filters, unison, the oscillators, polyphony, pedal, effects, the arp
   Synth2VisualModelTests.cpp    framework-free tests for the shapes, the spread and the displays' model
   PluginTests.cpp               processor + editor: params, buses, MIDI, state, the bench, offscreen renders
   rt_check.cpp                  RealtimeSanitizer driver
