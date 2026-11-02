@@ -300,6 +300,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::delayInChain, 9 },  "Delay In Chain",  false, onOff (false)));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::reverbInChain, 9 }, "Reverb In Chain", false, onOff (false)));
 
+    // GLIDE and MONO (version 12): off to start with, so older sessions
+    // play as they did.
+    NormalisableRange glideRange (0.0f, Synth2Engine::maxGlideSeconds);
+    glideRange.setSkewForCentre (0.25f);
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { ParamID::glide, 12 }, "Glide", glideRange, 0.0f,
+        AudioParameterFloatAttributes().withStringFromValueFunction ([timeFromValue] (float value, int maximumLength)
+        {
+            return value <= 0.0f ? String ("Off") : timeFromValue (value, maximumLength);
+        })));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::mono, 12 }, "Mono", false));
+
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { ParamID::output, 1 }, "Output",
         NormalisableRange<float> (-24.0f, 6.0f, 0.1f), 0.0f,
@@ -422,7 +434,9 @@ Synth2Engine::Settings Synth2AudioProcessor::currentSettings() const noexcept
 
     settings.effects.order = Effects::decode (effectsChain.load());
     settings.effects.bpm   = hostBpm.load();
-    settings.outputDb = param (ParamID::output);
+    settings.outputDb     = param (ParamID::output);
+    settings.glideSeconds = param (ParamID::glide);
+    settings.mono         = param (ParamID::mono) >= 0.5f;
     return settings;
 }
 
@@ -663,6 +677,16 @@ void Synth2AudioProcessor::setStateInformation (const void* data, int sizeInByte
     const auto restored = juce::ValueTree::fromXml (*xml);
     const auto saved    = restored.createCopy();
     apvts.replaceState (restored);
+
+    // A session from before GLIDE and MONO played without them, whatever
+    // this instance was playing before it.
+    for (const auto* id : { ParamID::glide, ParamID::mono })
+        if (! saved.getChildWithProperty ("id", juce::String (id)).isValid())
+        {
+            auto* parameter = apvts.getParameter (id);
+            parameter->setValueNotifyingHost (parameter->getDefaultValue());
+        }
+
     Bench::Migration (apvts).migrate (saved);
     Rack::Model (apvts).migrate (saved);
     currentPreset.store (juce::jlimit (0, Presets::numPresets - 1, (int) saved.getProperty (presetProperty, 0)));

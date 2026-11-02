@@ -48,6 +48,13 @@
     values over 20 ms, so turning them while a chord plays doesn't zipper;
     switching an oscillator on or off, or routing it to the output or away,
     fades it in or out the same way.
+
+    GLIDE slides each new note to its pitch from the note played before it,
+    taking that long whatever the distance (0: no slide). MONO plays one note
+    at a time: a key pressed while another is held takes the note over
+    without starting its envelopes again (legato), sliding there, and letting
+    it go slides back to the latest key still held (or, with none, releases
+    the note).
 */
 class Synth2Engine
 {
@@ -116,6 +123,7 @@ public:
     };
 
     static constexpr float maxEnvAmount = 48.0f;
+    static constexpr float maxGlideSeconds = 2.0f;
 
     struct Settings
     {
@@ -132,6 +140,8 @@ public:
         std::array<FilterSettings, numFilters> filters {};
         Effects::Settings effects {};
         float outputDb = 0.0f;
+        float glideSeconds = 0.0f;
+        bool  mono = false;
     };
 
     void prepare (double sampleRate)
@@ -162,6 +172,9 @@ public:
         effects.set (settings.effects);
         effects.prepare (sampleRate);
         sustainDown = {};
+        monoKeys    = {};
+        lastVoice   = -1;
+        lastNoteHz  = 0.0;
     }
 
     void setSettings (const Settings& newSettings) noexcept
@@ -194,6 +207,7 @@ public:
             filter.resonance = juce::jlimit (0.0f, 1.0f, filter.resonance);
             filter.envAmount = juce::jlimit (-maxEnvAmount, maxEnvAmount, filter.envAmount);
         }
+        settings.glideSeconds = juce::jlimit (0.0f, maxGlideSeconds, settings.glideSeconds);
         smoothed.gain.setTargetValue (juce::Decibels::decibelsToGain (settings.outputDb, -100.0f));
         applyEnvelopes();
         effects.set (settings.effects);
@@ -234,6 +248,23 @@ public:
             return;
         }
 
+        // With GLIDE, the note slides from where the last one is sounding,
+        // or, gone quiet, the pitch it ended on.
+        const double glideFrom = settings.glideSeconds > 0.0f ? lastPitchHz() : 0.0;
+
+        if (settings.mono)
+        {
+            monoKeys.press (midiChannel, midiNote);
+            auto& voice = voices.front();
+            if (voice.isActive() && (voice.isHeld() || voice.isSustained()))
+                voice.slideTo (midiChannel, midiNote, ++noteCounter, settings.glideSeconds);
+            else
+                voice.start (midiChannel, midiNote, velocity, ++noteCounter, currentVoiceSettings(), random, glideFrom);
+            played (voice);
+            return;
+        }
+        monoKeys = {};
+
         SynthVoice* chosen = nullptr;
 
         // The same key again on the same channel plays on the voice it already had.
@@ -252,11 +283,22 @@ public:
         if (chosen == nullptr)
             chosen = &voiceToSteal();
 
-        chosen->start (midiChannel, midiNote, velocity, ++noteCounter, currentVoiceSettings(), random);
+        chosen->start (midiChannel, midiNote, velocity, ++noteCounter, currentVoiceSettings(), random, glideFrom);
+        played (*chosen);
     }
 
     void noteOff (int midiChannel, int midiNote) noexcept
     {
+        // MONO: letting the sounding key go slides back to the latest one
+        // still held, if any. (A note left over from POLY ends as below.)
+        if (monoKeys.lift (midiChannel, midiNote) && settings.mono)
+            if (auto& voice = voices.front(); voice.plays (midiChannel, midiNote) && voice.isHeld() && ! monoKeys.isEmpty())
+            {
+                const auto latest = monoKeys.latest();
+                voice.slideTo (latest.channel, latest.note, ++noteCounter, settings.glideSeconds);
+                played (voice);
+            }
+
         for (auto& voice : voices)
         {
             if (! voice.plays (midiChannel, midiNote) || ! voice.isHeld())
@@ -284,6 +326,7 @@ public:
     void allNotesOff (int midiChannel) noexcept
     {
         sustainDown[channelIndex (midiChannel)] = false;
+        monoKeys.liftAll (midiChannel);
         for (auto& voice : voices)
             if (voice.isActive() && voice.getChannel() == midiChannel && ! voice.isReleasing())
                 voice.release();
@@ -294,6 +337,7 @@ public:
     void allSoundOff (int midiChannel) noexcept
     {
         sustainDown[channelIndex (midiChannel)] = false;
+        monoKeys.liftAll (midiChannel);
         for (auto& voice : voices)
             if (voice.getChannel() == midiChannel)
                 voice.kill();
@@ -432,6 +476,21 @@ private:
 
     static size_t channelIndex (int midiChannel) noexcept { return (size_t) juce::jlimit (1, 16, midiChannel) - 1; }
 
+    // Where a new note slides from: the pitch the last note played is
+    // sounding at, or, once it has gone quiet, its key's (0 before any).
+    double lastPitchHz() const noexcept
+    {
+        if (lastVoice >= 0 && voices[(size_t) lastVoice].isActive())
+            return voices[(size_t) lastVoice].getPitchHz();
+        return lastNoteHz;
+    }
+
+    void played (const SynthVoice& voice) noexcept
+    {
+        lastVoice  = (int) (&voice - voices.data());
+        lastNoteHz = 440.0 * std::exp2 ((voice.getNote() - 69) / 12.0);
+    }
+
     VoiceSettings currentVoiceSettings() const noexcept
     {
         VoiceSettings voice;
@@ -452,6 +511,7 @@ private:
             oscillator.resonance = smoothed.resonance[k].getCurrentValue();
             oscillator.envAmount = settings.filters[(size_t) juce::jmax (0, filter)].envAmount;
         }
+        voice.glideSeconds = settings.glideSeconds;
         return voice;
     }
 
@@ -566,4 +626,59 @@ private:
     juce::Random  random { 0x5eed };
     std::uint64_t noteCounter = 0;
     std::array<bool, 16> sustainDown {};   // per MIDI channel
+
+    // The keys held down while MONO plays, oldest first; past the last
+    // `capacity`, the oldest are forgotten.
+    struct MonoKeys
+    {
+        struct Key
+        {
+            int channel = 1;
+            int note    = -1;
+        };
+        static constexpr int capacity = 32;
+
+        void press (int midiChannel, int midiNote) noexcept
+        {
+            lift (midiChannel, midiNote);
+            if (count == capacity)
+                remove (0);
+            keys[(size_t) count++] = { midiChannel, midiNote };
+        }
+
+        // Whether the key was held.
+        bool lift (int midiChannel, int midiNote) noexcept
+        {
+            for (int i = 0; i < count; ++i)
+                if (keys[(size_t) i].channel == midiChannel && keys[(size_t) i].note == midiNote)
+                {
+                    remove (i);
+                    return true;
+                }
+            return false;
+        }
+
+        void liftAll (int midiChannel) noexcept
+        {
+            for (int i = count - 1; i >= 0; --i)
+                if (keys[(size_t) i].channel == midiChannel)
+                    remove (i);
+        }
+
+        bool isEmpty() const noexcept { return count == 0; }
+        Key  latest() const noexcept  { return keys[(size_t) (count - 1)]; }
+
+    private:
+        void remove (int index) noexcept
+        {
+            std::copy (keys.begin() + index + 1, keys.begin() + count, keys.begin() + index);
+            --count;
+        }
+
+        std::array<Key, capacity> keys {};
+        int count = 0;
+    };
+    MonoKeys monoKeys;
+    int      lastVoice  = -1;    // the voice the last note played on
+    double   lastNoteHz = 0.0;   // and its key's pitch
 };

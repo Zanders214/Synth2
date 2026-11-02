@@ -58,7 +58,23 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
     addAndMakeVisible (outputDial);
     outputAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (p.getState(), ParamID::output, outputDial);
 
+    BenchStyle::setUpDial (glideDial, BenchStyle::dialColour (0.0f), looks, p.getState(), ParamID::glide);
+    glideDial.onValueChange = [this] { repaint (layout.glideColumn); };
+    addAndMakeVisible (glideDial);
+    glideAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (p.getState(), ParamID::glide, glideDial);
+
     addAndMakeVisible (cables);
+    addChildComponent (presetBrowser);
+
+    // Picking a preset in the browser loads it, the browser staying open to
+    // try the next; closed, the bench's zoom pill and cables come back.
+    presetBrowser.onChoose ([this] (int index) { processorRef.loadPreset (index); });
+    presetBrowser.onClose ([this]
+    {
+        benchView.setPillWanted (tab == Tab::bench);
+        cables.repaint();
+        repaint (layout.preset);
+    });
 
     // A click on an empty spot offers modules to add there.
     benchView.onEmptyClick ([this] (juce::Point<float> benchAt, juce::Point<int> viewAt)
@@ -124,6 +140,7 @@ Synth2AudioProcessorEditor::~Synth2AudioProcessorEditor()
 {
     stopTimer();
     outputDial.setLookAndFeel (nullptr);
+    glideDial.setLookAndFeel (nullptr);
 }
 
 // ---- What the modules show --------------------------------------------------------
@@ -267,12 +284,23 @@ void Synth2AudioProcessorEditor::timerCallback()
     if (const int preset = processorRef.getCurrentProgram(); preset != shown.preset)
     {
         shown.preset = preset;
+        presetBrowser.setCurrent (preset);
         repaint (layout.preset);
     }
     if (! juce::exactlyEqual (settings.outputDb, shown.output))
     {
         shown.output = settings.outputDb;
         repaint (layout.outputColumn);
+    }
+    if (! juce::exactlyEqual (settings.glideSeconds, shown.glide))
+    {
+        shown.glide = settings.glideSeconds;
+        repaint (layout.glideColumn);
+    }
+    if (const int mono = settings.mono ? 1 : 0; mono != shown.mono)
+    {
+        shown.mono = mono;
+        repaint (layout.badge);
     }
 
     processorRef.showHostNotesOnKeyboard();
@@ -294,6 +322,8 @@ void Synth2AudioProcessorEditor::timerCallback()
 
 bool Synth2AudioProcessorEditor::keyPressed (const juce::KeyPress& key)
 {
+    if (presetBrowser.handleKey (key))
+        return true;
     return playsTypedKeys() && keyboard.typedKeyPressed (key);
 }
 
@@ -351,7 +381,6 @@ Synth2AudioProcessorEditor::Trays::Trays (Synth2AudioProcessorEditor& ownerToUse
         owner.showFlow();
     });
     effectTray.onChoose ([this] (int choice) { owner.effectsView.add (Rack::allEffects[(size_t) choice], effectAt); });
-    presetTray.onChoose ([this] (int choice) { owner.processorRef.loadPreset (choice); });
 }
 
 void Synth2AudioProcessorEditor::Trays::openAdd (juce::Point<float> benchAt, juce::Point<int> editorAt)
@@ -402,19 +431,6 @@ void Synth2AudioProcessorEditor::Trays::openSettings()
     settingsTray.open ("SIGNAL FLOW", std::move (choices),
                        { gear.getRight() - juce::roundToInt (260.0f * owner.uiScale), gear.getBottom() + juce::roundToInt (8.0f * owner.uiScale) });
     owner.repaint (owner.layout.gear);
-}
-
-void Synth2AudioProcessorEditor::Trays::openPresets()
-{
-    std::vector<ChoiceTray::Choice> choices;
-    for (const auto& preset : Presets::factory)
-        choices.push_back ({ preset.name, preset.detail });
-    choices[(size_t) owner.processorRef.getCurrentProgram()].ticked = true;
-    presetTray.setBounds (owner.getLocalBounds());
-    const auto picker = owner.layout.preset;
-    presetTray.open ("PRESETS", std::move (choices),
-                     { picker.getCentreX() - juce::roundToInt (130.0f * owner.uiScale), picker.getBottom() + juce::roundToInt (8.0f * owner.uiScale) });
-    owner.repaint (owner.layout.preset);
 }
 
 void Synth2AudioProcessorEditor::Trays::stepPreset (int delta)
@@ -545,7 +561,7 @@ juce::RectangleList<int> Synth2AudioProcessorEditor::CableLayer::cableArea (bool
 
 void Synth2AudioProcessorEditor::CableLayer::paint (juce::Graphics& g)
 {
-    if (owner.tab != Tab::bench || owner.signalFlow() != Synth2AudioProcessor::SignalFlow::cables)
+    if (owner.tab != Tab::bench || owner.signalFlow() != Synth2AudioProcessor::SignalFlow::cables || owner.presetBrowser.isOpen())
         return;
 
     // Each cable in the colour of the module it comes from.
@@ -647,12 +663,18 @@ void Synth2AudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
     for (const auto which : { Tab::bench, Tab::effects })
         if (tabBounds (which).contains (e.position))
         {
+            presetBrowser.close();
             showTab (which);
             return;
         }
     if (layout.gear.toFloat().contains (e.position))
     {
         trays.openSettings();
+        return;
+    }
+    if (layout.badge.toFloat().contains (e.position))
+    {
+        toggleMono();
         return;
     }
     if (layout.preset.toFloat().contains (e.position))
@@ -662,10 +684,33 @@ void Synth2AudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
         else if (e.position.x > (float) layout.preset.getRight() - arrow)
             trays.stepPreset (1);
         else
-            trays.openPresets();
+            togglePresets();
         return;
     }
     cables.pickUpFromOutput (e.position);
+}
+
+void Synth2AudioProcessorEditor::togglePresets()
+{
+    if (presetBrowser.isOpen())
+    {
+        presetBrowser.close();
+        return;
+    }
+    // Over the bench, the zoom pill and the cables would only get in the way.
+    benchView.setPillWanted (false);
+    presetBrowser.open (processorRef.getCurrentProgram());
+    cables.repaint();
+    repaint (layout.preset);
+}
+
+void Synth2AudioProcessorEditor::toggleMono()
+{
+    auto* mono = processorRef.getState().getParameter (ParamID::mono);
+    mono->beginChangeGesture();
+    mono->setValueNotifyingHost (mono->getValue() >= 0.5f ? 0.0f : 1.0f);
+    mono->endChangeGesture();
+    repaint (layout.badge);
 }
 
 void Synth2AudioProcessorEditor::mouseDrag (const juce::MouseEvent& e)
@@ -761,9 +806,9 @@ void Synth2AudioProcessorEditor::paintHeader (juce::Graphics& g, float s) const
     // The preset picker: the loaded preset's name in a pill, with arrows to
     // step either way, lit while its tray is open.
     const auto picker = layout.preset.toFloat();
-    g.setColour (trays.isPresetsOpen() ? Palette::idleFill.withMultipliedAlpha (1.6f) : Palette::idleFill);
+    g.setColour (presetBrowser.isOpen() ? Palette::idleFill.withMultipliedAlpha (1.6f) : Palette::idleFill);
     g.fillRoundedRectangle (picker, picker.getHeight() * 0.5f);
-    g.setColour (trays.isPresetsOpen() ? Palette::strongLine : Palette::hairline);
+    g.setColour (presetBrowser.isOpen() ? Palette::strongLine : Palette::hairline);
     g.drawRoundedRectangle (picker, picker.getHeight() * 0.5f, juce::jmax (1.0f, s));
 
     const float arrowWidth = kPresetArrowWidth * s;
@@ -785,13 +830,13 @@ void Synth2AudioProcessorEditor::paintHeader (juce::Graphics& g, float s) const
     g.drawText (processorRef.getProgramName (processorRef.getCurrentProgram()), picker.reduced (arrowWidth, 0.0f),
                 juce::Justification::centred, true);
 
-    // The mode badge: a small accent pill.
+    // The mode badge: a small accent pill, POLY or MONO, a click switching it.
     const auto badge = layout.badge.toFloat();
     g.setColour (Palette::accentSoft);
     g.fillRoundedRectangle (badge, badge.getHeight() * 0.5f);
     g.setFont (Fonts::sans (10.0f * s, true, 0.14f));   // --tracking-label
     g.setColour (Palette::accent);
-    g.drawText ("POLY", badge, juce::Justification::centred, false);
+    g.drawText (paramValue (processorRef, ParamID::mono) >= 0.5f ? "MONO" : "POLY", badge, juce::Justification::centred, false);
 
     // The gear: eight teeth round a ring, lit while its settings are open.
     const auto  gear   = layout.gear.toFloat();
@@ -823,6 +868,12 @@ void Synth2AudioProcessorEditor::paintOutput (juce::Graphics& g, float s) const
     g.setColour (BenchStyle::dialColour (1.0f));
     g.drawText (BenchStyle::dialText (ParamID::output, paramValue (processorRef, ParamID::output)),
                 juce::Rectangle (column.getX(), textTop + 13.0f * s, column.getWidth(), 13.0f * s), juce::Justification::centredTop, false);
+
+    // GLIDE's, the same way, beside it.
+    const auto glide = glideDial.getBounds().toFloat().withSizeKeepingCentre (72.0f * s, (float) glideDial.getHeight());
+    BenchStyle::paintDialLabel (g, glide.withY (glide.getBottom()).withHeight (32.0f * s), "GLIDE",
+                                BenchStyle::dialText (ParamID::glide, paramValue (processorRef, ParamID::glide)),
+                                BenchStyle::dialColour (0.0f), 1.0f, s);
 
     if (tab == Tab::bench && signalFlow() == Synth2AudioProcessor::SignalFlow::cables)
     {
@@ -878,17 +929,21 @@ void Synth2AudioProcessorEditor::resized()
     benchView.setBounds (px (kPanelPad), px (kBenchTop), px (Bench::viewWidth), px (Bench::viewHeight));
     effectsView.setUiScale (s);
     effectsView.setBounds (benchView.getBounds());
+    presetBrowser.setUiScale (s);
+    presetBrowser.setBounds (benchView.getBounds());
     // The zoom pill on the bench's bottom edge, at its right, over the gap above the keyboard.
     benchView.getZoomPill().setBounds (benchView.getRight() - px (12.0f + ZoomPill::pillWidth), benchView.getBottom() - px (0.5f * ZoomPill::pillHeight),
                                        px (ZoomPill::pillWidth), px (ZoomPill::pillHeight));
 
-    // Hairline, then the keyboard with OUTPUT (and, patching, its IN jack) at its right.
+    // Hairline, then the keyboard with GLIDE and OUTPUT (and, patching, its IN jack) at its right.
     area.setTop (benchView.getBottom() + px (12.0f));
     layout.stripSeparatorY = area.getY();
     area.removeFromTop (px (14.0f));
     layout.outputColumn = area.removeFromRight (px (108.0f));
     outputDial.setBounds (layout.outputColumn.withTrimmedLeft (px (28.0f)).withHeight (px (52.0f))
                                              .withSizeKeepingCentre (px (52.0f), px (52.0f)));
+    layout.glideColumn = area.removeFromRight (px (72.0f));
+    glideDial.setBounds (layout.glideColumn.withHeight (px (52.0f)).withSizeKeepingCentre (px (52.0f), px (52.0f)));
     area.removeFromRight (px (12.0f));
     keyboard.setBounds (area);
 

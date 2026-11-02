@@ -23,7 +23,12 @@
     along the top row, each one's filter under it and its envelope under
     that (FILTER n and ENV n take OSC n), in a fixed order with no cables; and
     the EFFECTS tab too: just its effects, side by side, the drive, then the
-    delay, then the reverb.
+    delay, then the reverb. A preset also says how its notes play: its
+    GLIDE, and whether it is MONO.
+
+    Each preset belongs to a category, which the preset tray groups them by;
+    their program numbers stay in the order they were added, whatever their
+    category, so hosts' saved programs keep finding them.
 
     The first, Empty Bench, is the bench a new instance opens on.
 */
@@ -117,8 +122,17 @@ namespace Presets
         float mix    = 1.0f;
     };
 
+    /** What kind of sound a preset is, in the order the preset tray lists them. */
+    enum class Category { init, bass, lead, arp, pluck, keys, pads, strings, brass, sfx, drums };
+    inline constexpr std::array<const char*, 11> categoryNames {
+        "Init", "Bass", "Lead", "Arp", "Pluck", "Keys", "Pads", "Strings", "Brass", "SFX", "Drums" };
+    inline constexpr int numCategories = (int) categoryNames.size();
+
+    inline const char* nameOf (Category category) { return categoryNames[(size_t) category]; }
+
     struct Preset
     {
+        Category    category;
         const char* name;
         const char* detail;   // one line for the preset tray
         std::array<std::optional<Oscillator>, Bench::numOscillators> oscillators;   // empty: off the bench
@@ -126,6 +140,8 @@ namespace Presets
         std::optional<Delay>  delay {};    // empty: out of the chain
         std::optional<Reverb> reverb {};
         std::optional<Drive>  drive {};
+        float glideSeconds = 0.0f;   // each note's slide from the one before
+        bool  mono = false;          // one note at a time, legato
     };
 
     // Note lengths, by name (their place in Effects::divisions).
@@ -144,97 +160,99 @@ namespace Presets
     // The filter types, by name (their place in Filter::Type).
     inline constexpr int low24 = (int) ::Filter::Type::low24;
 
-    inline const std::array<Preset, 18> factory {{
-        { "Empty Bench", "Nothing on it yet: build your own", {}, 0.0f },
+    inline const std::array<Preset, 19> factory {{
+        { Category::init, "Empty Bench", "Nothing on it yet: build your own", {}, 0.0f },
 
-        // Pads
-        { "Supersaw Pad", "Nine wide saws, an octave blooming on top",
+        { Category::pads, "Supersaw Pad", "Nine wide saws, an octave blooming on top",
           { Oscillator { saw, 0,  0.0f, 1.0f,  { 9, 28.0f, 0.9f }, ar (0.6f, 2.5f) },
             Oscillator { saw, 12, 7.0f, 0.45f, { 5, 20.0f, 1.0f }, Envelope { 0.4f, 1.2f, 0.0f, 0.3f, 1.0f, 2.5f } } },
           -7.0f, Delay { quarter, 0.3f, 0.5f, 0.15f, true }, Reverb { 0.72f, 0.45f, 1.0f, 0.3f, 30.0f } },
-        { "Warm Strings", "Soft saw section with a low triangle",
+        { Category::strings, "Warm Strings", "Soft saw section with a low triangle",
           { Oscillator { saw, 0, 0.0f, 0.8f,        { 6, 14.0f, 0.75f }, adsr (0.45f, 1.5f, 0.85f, 1.2f) },
             Oscillator { saw, 12, -6.0f, 0.3f,      { 4, 12.0f, 0.9f },  adsr (0.6f, 1.5f, 0.85f, 1.2f) },
             Oscillator { triangle, -12, 0.0f, 0.4f, { 1, 15.0f, 0.5f },  ar (0.3f, 1.0f) } },
           -6.0f, std::nullopt, Reverb { 0.65f, 0.5f, 1.0f, 0.25f, 25.0f } },
-        { "Slow Swell", "A shimmering stack, its layers arriving in turn",
+        { Category::pads, "Slow Swell", "A shimmering stack, its layers arriving in turn",
           { Oscillator { triangle, 0, 0.0f, 1.0f, { 8, 18.0f, 0.8f }, ar (1.5f, 6.0f) },
             Oscillator { sine, 12, 4.0f, 0.5f,    { 6, 22.0f, 1.0f }, Envelope { 1.0f, 2.0f, 0.0f, 0.3f, 1.0f, 6.0f } },
             Oscillator { sine, 19, 0.0f, 0.25f,   { 4, 25.0f, 1.0f }, Envelope { 2.0f, 2.5f, 0.0f, 0.3f, 1.0f, 7.0f } },
             Oscillator { saw, -12, 0.0f, 0.2f,    { 3, 10.0f, 0.4f }, ar (1.5f, 5.0f) } },
           -9.0f, Delay { half, 0.35f, 0.4f, 0.12f, true }, Reverb { 0.8f, 0.4f, 1.0f, 0.3f, 40.0f } },
 
-        // Leads
-        { "Trance Lead", "Bright detuned saw and square",
+        { Category::lead, "Trance Lead", "Bright detuned saw and square",
           { Oscillator { saw, 0, 0.0f, 1.0f,     { 7, 18.0f, 0.7f }, adsr (0.003f, 0.4f, 0.7f, 0.25f) },
             Oscillator { square, 0, -8.0f, 0.5f, { 3, 10.0f, 0.5f }, adsr (0.003f, 0.4f, 0.7f, 0.25f) } },
           -6.0f, Delay { dottedEighth, 0.4f, 0.55f, 0.22f, true }, Reverb { 0.55f, 0.45f, 1.0f, 0.18f, 20.0f } },
-        { "8-Bit Lead", "Bare squares, straight from the console",
+        { Category::lead, "8-Bit Lead", "Bare squares, straight from the console",
           { Oscillator { square, 0, 0.0f, 1.0f,  {}, adsr (0.001f, 0.15f, 0.6f, 0.04f) },
             Oscillator { square, 12, 0.0f, 0.3f, {}, adsr (0.001f, 0.08f, 0.0f, 0.04f) } },
           -9.0f },
-        { "Hollow Flute", "Breathy triangle, its octave breathing in late",
+        { Category::lead, "Hollow Flute", "Breathy triangle, its octave breathing in late",
           { Oscillator { triangle, 0, 0.0f, 1.0f, { 2, 5.0f, 0.3f }, adsr (0.08f, 0.2f, 0.85f, 0.35f) },
             Oscillator { sine, 12, 0.0f, 0.25f,   {},                Envelope { 0.12f, 0.25f, 0.0f, 0.3f, 1.0f, 0.3f } } },
           -3.0f, std::nullopt, Reverb { 0.5f, 0.55f, 0.8f, 0.2f, 15.0f } },
 
-        // Plucks
-        { "Saw Pluck", "A short, bright pluck for arpeggios",
+        { Category::arp, "Saw Pluck", "A short, bright pluck for arpeggios",
           { Oscillator { saw, 0, 0.0f, 1.0f,   { 3, 8.0f, 0.6f }, adsr (0.001f, 0.35f, 0.0f, 0.3f) },
             Oscillator { sine, 12, 0.0f, 0.4f, {},                adsr (0.001f, 0.12f, 0.0f, 0.1f) } },
           -5.0f, Delay { dottedEighth, 0.35f, 0.6f, 0.2f, true }, Reverb { 0.45f, 0.5f, 1.0f, 0.15f, 10.0f } },
-        { "Wood Mallet", "A soft mallet that dies away",
+        { Category::pluck, "Wood Mallet", "A soft mallet that dies away",
           { Oscillator { sine, 0, 0.0f, 1.0f,     {}, adsr (0.001f, 0.6f, 0.0f, 0.5f) },
             Oscillator { triangle, 24, 0.0f, 0.3f, {}, adsr (0.001f, 0.06f, 0.0f, 0.06f) } },
           -3.0f, std::nullopt, Reverb { 0.45f, 0.5f, 1.0f, 0.18f, 10.0f } },
-        { "Chord Stab", "Held for a beat, then gone: house chords",
+        { Category::keys, "Chord Stab", "Held for a beat, then gone: house chords",
           { Oscillator { saw, 0, 0.0f, 1.0f,     { 5, 14.0f, 0.8f }, Envelope { 0.0f, 0.002f, 0.12f, 0.1f, 0.0f, 0.1f } },
             Oscillator { square, -12, 0.0f, 0.4f, {},                 Envelope { 0.0f, 0.002f, 0.12f, 0.1f, 0.0f, 0.1f } } },
           -7.0f, std::nullopt, Reverb { 0.4f, 0.5f, 1.0f, 0.15f, 10.0f } },
 
-        // Keys
-        { "Drawbar Organ", "Sines at 16', 8' and 4', with a percussive click",
+        { Category::keys, "Drawbar Organ", "Sines at 16', 8' and 4', with a percussive click",
           { Oscillator { sine, 0, 0.0f, 1.0f,   { 2, 4.0f, 0.4f }, ar (0.004f, 0.06f) },
             Oscillator { sine, 12, 0.0f, 0.6f,  { 2, 4.0f, 0.4f }, ar (0.004f, 0.06f) },
             Oscillator { sine, 19, 0.0f, 0.5f,  {},                adsr (0.002f, 0.25f, 0.0f, 0.06f) },
             Oscillator { sine, -12, 0.0f, 0.7f, {},                ar (0.004f, 0.06f) } },
           -8.0f, std::nullopt, Reverb { 0.4f, 0.6f, 0.8f, 0.15f, 15.0f } },
-        { "Glass Keys", "Struck sines, the overtones dying first",
+        { Category::keys, "Glass Keys", "Struck sines, the overtones dying first",
           { Oscillator { sine, 0, 0.0f, 1.0f,       { 3, 6.0f, 0.6f }, adsr (0.001f, 2.0f, 0.25f, 1.5f) },
             Oscillator { sine, 19, 0.0f, 0.35f,     { 2, 4.0f, 0.8f }, adsr (0.001f, 0.8f, 0.0f, 1.0f) },
             Oscillator { triangle, 24, 3.0f, 0.15f, {},                adsr (0.001f, 0.3f, 0.0f, 0.4f) } },
           -5.0f, std::nullopt, Reverb { 0.6f, 0.35f, 1.0f, 0.25f, 20.0f } },
-        { "Brass Section", "Biting saws that settle, a square swelling in",
+        { Category::brass, "Brass Section", "Biting saws that settle, a square swelling in",
           { Oscillator { saw, 0, 0.0f, 1.0f,      { 4, 9.0f, 0.5f }, adsr (0.06f, 0.3f, 0.75f, 0.25f) },
             Oscillator { saw, 0, 10.0f, 0.8f,     { 4, 9.0f, 0.5f }, adsr (0.06f, 0.3f, 0.75f, 0.25f) },
             Oscillator { square, -12, 0.0f, 0.3f, {},                Envelope { 0.05f, 0.15f, 0.0f, 0.3f, 1.0f, 0.3f } } },
           -7.0f, std::nullopt, Reverb { 0.5f, 0.5f, 1.0f, 0.18f, 20.0f }, Drive { 0.25f, 1, 0.65f, 1.0f } },
-        { "Fifth Stack", "Root, fifth and sub for big chords",
+        { Category::keys, "Fifth Stack", "Root, fifth and sub for big chords",
           { Oscillator { saw, 0, 0.0f, 1.0f,      { 5, 16.0f, 0.6f }, adsr (0.01f, 0.6f, 0.75f, 0.4f) },
             Oscillator { saw, 7, 0.0f, 0.7f,      { 5, 16.0f, 0.6f }, adsr (0.01f, 0.6f, 0.75f, 0.4f) },
             Oscillator { square, -12, 0.0f, 0.6f, {},                 ar (0.01f, 0.4f) } },
           -9.0f, std::nullopt, Reverb { 0.55f, 0.45f, 1.0f, 0.18f, 20.0f } },
 
-        // Bass
-        { "Reese Bass", "Two beating saws an octave down, warmly driven",
+        { Category::bass, "Reese Bass", "Two beating saws an octave down, warmly driven",
           { Oscillator { saw, -12, 0.0f, 1.0f,  { 3, 12.0f, 0.3f }, adsr (0.005f, 0.5f, 0.8f, 0.2f) },
             Oscillator { saw, -12, 18.0f, 0.9f, { 3, 12.0f, 0.3f }, adsr (0.005f, 0.5f, 0.8f, 0.2f) } },
           -7.5f, std::nullopt, std::nullopt, Drive { 0.35f, 0, 0.55f, 1.0f } },
-        { "Sub Bass", "A clean sine sub with a plucked edge",
+        { Category::bass, "Sub Bass", "A clean sine sub with a plucked edge",
           { Oscillator { sine, -12, 0.0f, 1.0f,    {}, ar (0.002f, 0.12f) },
             Oscillator { triangle, 0, 0.0f, 0.35f, {}, adsr (0.002f, 0.2f, 0.3f, 0.08f) } },
           -4.0f },
 
         // Added later, at the end, so the presets before them keep the
         // program numbers hosts have saved.
-        { "Filter Pluck", "A saw whose low-pass snaps shut as it rings",
+        { Category::pluck, "Filter Pluck", "A saw whose low-pass snaps shut as it rings",
           { Oscillator { saw, 0, 0.0f, 1.0f, { 3, 10.0f, 0.6f }, adsr (0.002f, 1.2f, 0.3f, 0.35f),
                          Filter { low24, 260.0f, 0.35f, 36.0f, Envelope { 0.0f, 0.001f, 0.0f, 0.45f, 0.0f, 0.3f, 0.0f, -0.6f, 0.0f } } } },
           -4.0f, Delay { dottedEighth, 0.35f, 0.55f, 0.2f, true }, Reverb { 0.5f, 0.5f, 1.0f, 0.15f, 10.0f } },
-        { "Acid Bass", "A squelchy square, its resonant filter swept short",
+        { Category::bass, "Acid Bass", "A squelchy square, its resonant filter swept short",
           { Oscillator { square, -12, 0.0f, 1.0f, {}, adsr (0.002f, 0.3f, 0.7f, 0.08f),
                          Filter { low24, 180.0f, 0.72f, 30.0f, Envelope { 0.0f, 0.001f, 0.0f, 0.22f, 0.1f, 0.1f, 0.0f, -0.5f, 0.0f } } } },
           -8.0f, std::nullopt, std::nullopt, Drive { 0.3f, 1, 0.6f, 1.0f } },
+        { Category::lead, "Slide Lead", "Mono supersaw that slides from note to note",
+          { Oscillator { saw, 0, 0.0f, 1.0f,     { 9, 22.0f, 0.75f }, adsr (0.002f, 0.5f, 0.8f, 0.18f),
+                         Filter { low24, 2400.0f, 0.25f, 18.0f, Envelope { 0.0f, 0.001f, 0.0f, 0.35f, 0.3f, 0.2f } } },
+            Oscillator { saw, 12, 5.0f, 0.4f,    { 5, 16.0f, 0.9f },  adsr (0.002f, 0.5f, 0.8f, 0.18f) },
+            Oscillator { square, -12, 0.0f, 0.35f, {},                adsr (0.002f, 0.5f, 0.9f, 0.18f) } },
+          -8.0f, Delay { dottedEighth, 0.35f, 0.55f, 0.2f, true }, Reverb { 0.6f, 0.45f, 1.0f, 0.2f, 20.0f },
+          Drive { 0.2f, 0, 0.7f, 1.0f }, 0.12f, true },
     }};
 
     inline constexpr int numPresets = (int) std::tuple_size_v<decltype (factory)>;
@@ -320,6 +338,8 @@ namespace Presets
             values.emplace_back (ParamID::reverbPreDelay, preset.reverb->preDelayMs);
         }
         values.emplace_back (ParamID::output, preset.outputDb);
+        values.emplace_back (ParamID::glide,  preset.glideSeconds);
+        values.emplace_back (ParamID::mono,   preset.mono ? 1.0f : 0.0f);
         return values;
     }
 

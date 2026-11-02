@@ -63,6 +63,8 @@ namespace BenchStyle
         }
         if (id == ParamID::output)
             return Format::decibels (value);
+        if (id == ParamID::glide)
+            return value <= 0.0f ? juce::String ("OFF") : Format::seconds (value);
         if (id == ParamID::delayTime || id == ParamID::reverbPreDelay)
             return juce::String (juce::roundToInt (value)) + " ms";
         if (id == ParamID::reverbSize)

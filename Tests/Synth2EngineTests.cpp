@@ -1442,6 +1442,58 @@ void testEngineEffects()
                               { { 0, on (69) }, { note, off (69) }, { note + 4800, juce::MidiMessage::allSoundOff (1) } });
     check (rms (stopped, 0, after, after + note) < 1.0e-6f, "All Sound Off silences the repeats");
 }
+
+// ---- GLIDE and MONO: notes slide from the one before; one note, legato. ------
+void testGlideAndMono()
+{
+    std::printf ("Glide and mono:\n");
+
+    const auto at = [] (double seconds) { return (int) (seconds * sampleRate); };
+
+    // POLY with GLIDE: a note slides up from the last one played, even once
+    // that one has gone quiet, and gets there in GLIDE.
+    auto settings = defaults (Waveform::sine);
+    settings.glideSeconds = 0.2f;
+    auto poly = makeEngine (settings);
+    const auto slid = run (*poly, at (1.5), { { 0, on (69) }, { at (0.2), off (69) }, { at (0.8), on (81) } });
+    const float early = frequencyOf (slid, at (0.825), at (0.875));
+    check (early > 480.0f && early < 700.0f, "a new note starts part way up its slide (" + std::to_string (early) + " Hz)");
+    check (approx (frequencyOf (slid, at (1.1), at (1.5)), 880.0f, 1.0f), "and is on its pitch once GLIDE has passed");
+
+    settings.glideSeconds = 0.0f;
+    auto straight = makeEngine (settings);
+    const auto jumped = run (*straight, at (1.0), { { 0, on (69) }, { at (0.2), off (69) }, { at (0.5), on (81) } });
+    check (approx (frequencyOf (jumped, at (0.51), at (0.56)), 880.0f, 2.0f), "with no GLIDE it starts on its pitch");
+
+    // MONO: a key pressed over a held one takes its note over, sliding
+    // there without starting the envelope again; letting it go slides back.
+    settings = defaults (Waveform::sine);
+    settings.glideSeconds = 0.05f;
+    settings.mono = true;
+    settings.envelopes[0] = { 0.0f, 0.005f, 0.0f, 0.05f, 0.5f, 0.1f };
+    auto mono = makeEngine (settings);
+    const auto held = run (*mono, at (0.3), { { 0, on (69) } });
+    run (*mono, at (0.01), { { 0, on (81) } });
+    check (mono->getNumActiveNotes() == 1 && mono->isNoteSounding (81) && ! mono->isNoteSounding (69),
+           "MONO plays one note: the latest key takes it over");
+    check (mono->getActivity (0)[0].stage == Envelope::Stage::sustain, "legato, without starting its envelope again");
+    const auto up = run (*mono, at (0.3));
+    check (approx (frequencyOf (up, at (0.1), at (0.3)), 880.0f, 1.0f), "sliding to the new key");
+    run (*mono, at (0.01), { { 0, off (81) } });
+    const auto back = run (*mono, at (0.3));
+    check (mono->isNoteSounding (69) && mono->getNumActiveNotes() == 1 && approx (frequencyOf (back, at (0.1), at (0.3)), 440.0f, 1.0f),
+           "letting it go slides back to the key still held");
+    run (*mono, at (0.5), { { 0, off (69) } });
+    check (mono->getNumActiveNotes() == 0, "and letting that go ends the note");
+    check (frequencyOf (held, at (0.1), at (0.3)) > 0.0f, "(the first note played)");
+
+    // Under the pedal, the key let go stays the note until the pedal lifts.
+    auto pedalled = makeEngine (settings);
+    run (*pedalled, at (0.2), { { 0, pedal (true) }, { 10, on (60) }, { 100, off (60) }, { 200, on (64) } });
+    check (pedalled->getNumActiveNotes() == 1 && pedalled->isNoteSounding (64), "a key over a pedalled one takes the note over too");
+    run (*pedalled, at (0.5), { { 0, off (64) }, { 10, pedal (false) } });
+    check (pedalled->getNumActiveNotes() == 0, "which ends when the pedal lifts");
+}
 } // namespace
 
 int main()
@@ -1468,6 +1520,7 @@ int main()
     testDrive();
     testEffectsChain();
     testEngineEffects();
+    testGlideAndMono();
 
     std::printf ("\n%s\n", failures == 0 ? "ALL TESTS PASSED" : "SOME TESTS FAILED");
     return failures == 0 ? 0 : 1;

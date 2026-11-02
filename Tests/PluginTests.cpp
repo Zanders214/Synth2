@@ -617,6 +617,21 @@ void testStateRoundTrip()
     d.setStateInformation (saved.getData(), (int) saved.getSize());
     check (Bench::Model (d.getState()).isEmpty(), "an empty bench comes back empty");
 
+    // One from before GLIDE and MONO plays without them, whatever was loaded before it.
+    auto beforeGlide = d.getState().copyState().createCopy();
+    for (const auto* id : { ParamID::glide, ParamID::mono })
+        beforeGlide.removeChild (beforeGlide.getChildWithProperty ("id", juce::String (id)), nullptr);
+    juce::MemoryBlock glideless;
+    juce::AudioProcessor::copyXmlToBinary (*beforeGlide.createXml(), glideless);
+    Synth2AudioProcessor sliding;
+    for (int i = 0; i < Presets::numPresets; ++i)
+        if (juce::String (Presets::factory[(size_t) i].name) == "Slide Lead")
+            sliding.loadPreset (i);
+    const bool wasSliding = param (sliding, ParamID::mono) >= 0.5f && param (sliding, ParamID::glide) > 0.0f;
+    sliding.setStateInformation (glideless.getData(), (int) glideless.getSize());
+    check (wasSliding && param (sliding, ParamID::mono) < 0.5f && approx (param (sliding, ParamID::glide), 0.0f, 1e-4f),
+           "a session from before GLIDE and MONO comes back POLY, without GLIDE, over a preset that had both");
+
     // Older sessions, made from this one: without the bench's tree and the
     // parameters that came after them, and with any they had that are gone.
     const auto olderSession = [&a] (const juce::ValueTree& bench, std::initializer_list<std::pair<const char*, float>> values)
@@ -803,6 +818,13 @@ void testEditor()
     check (editor->getLocalBounds().contains (editor->getKeyboard().getBounds()) && editor->getKeyboard().getY() > bench.getBottom()
                && editor->getKeyboard().getHeight() > 80,
            "the keyboard runs along the bottom");
+    check (editor->getGlideDial().getX() > editor->getKeyboard().getRight() && editor->getGlideDial().getRight() < editor->getOutputDial().getX(),
+           "GLIDE sits between the keyboard and OUTPUT");
+    const auto badge = editor->badgeBounds();
+    editor->mouseDown (mouseAt (*editor, badge.getCentre()));
+    check (param (p, ParamID::mono) >= 0.5f, "a click on the POLY badge switches to MONO");
+    editor->mouseDown (mouseAt (*editor, badge.getCentre()));
+    check (param (p, ParamID::mono) < 0.5f, "and another back to POLY");
     check (editor->getOutputDial().getX() > editor->getKeyboard().getRight() && editor->getOutputDial().getWidth() >= 40,
            "with OUTPUT at its right");
     const auto empty = render (*editor);
@@ -2203,6 +2225,17 @@ void testPresets()
 
     // The pads and keys go through a room, and some through the delay; the basses stay dry.
     const auto presetNamed = [&names] (const char* name) { return Presets::factory[(size_t) names.indexOf (name)]; };
+
+    // Each sits in a category; Slide Lead, a lead, slides between notes, one at a time.
+    check (presetNamed ("Empty Bench").category == Presets::Category::init && presetNamed ("Reese Bass").category == Presets::Category::bass
+               && presetNamed ("Glass Keys").category == Presets::Category::keys && presetNamed ("Warm Strings").category == Presets::Category::strings,
+           "each preset sits in its category");
+    check (names.indexOf ("Slide Lead") >= firstSixteen.size() && presetNamed ("Slide Lead").category == Presets::Category::lead,
+           "Slide Lead is a lead, added after the others");
+    p.loadPreset (names.indexOf ("Slide Lead"));
+    check (param (p, ParamID::mono) >= 0.5f && approx (param (p, ParamID::glide), 0.12f, 1e-3f), "it plays MONO, with GLIDE");
+    p.loadPreset (names.indexOf ("Trance Lead"));
+    check (param (p, ParamID::mono) < 0.5f && approx (param (p, ParamID::glide), 0.0f, 1e-4f), "and the others put both back");
     check (presetNamed ("Supersaw Pad").reverb.has_value() && presetNamed ("Glass Keys").reverb.has_value()
                && presetNamed ("Supersaw Pad").delay.has_value() && ! presetNamed ("Sub Bass").reverb.has_value(),
            "the pads and keys have reverb, the basses none");
@@ -2334,16 +2367,51 @@ void testPresets()
     editor->mouseDown (mouseAt (*editor, { picker.getX() + 6.0f, picker.getCentreY() }));
     check (p.getCurrentProgram() == Presets::numPresets - 1, "its left arrow steps back, wrapping round");
 
-    auto& tray = editor->getTrays().getPreset();
+    // Its name opens the browser over the bench, the keyboard still there to play.
+    auto& browser = editor->getPresetBrowser();
     editor->mouseDown (mouseAt (*editor, picker.getCentre()));
-    check (tray.isOpen() && tray.getCaption() == "PRESETS" && tray.getNumChoices() == Presets::numPresets
-               && tray.getChoice (Presets::numPresets - 1).ticked && ! tray.getChoice (0).ticked,
-           "its name opens a tray of them all, the loaded one ticked");
-    check (editor->getLocalBounds().toFloat().contains (tray.trayBounds()), "which fits on the face");
-    pumpUntil ([&tray] { return tray.getAlpha() >= 1.0f; });
+    check (browser.isOpen() && browser.getBounds() == editor->getBench().getBounds() && editor->getKeyboard().isVisible(),
+           "its name opens the preset browser over the bench, the keyboard still showing");
+    check (browser.getCategory() == PresetBrowser::all && (int) browser.getListed().size() == Presets::numPresets
+               && browser.getCurrent() == Presets::numPresets - 1,
+           "listing them all, the loaded one marked");
+    pumpUntil ([&browser] { return browser.getAlpha() >= 1.0f; });
     snapshot (render (*editor), "9-presets");
-    tray.mouseDown (mouseAt (tray, tray.choiceBounds (2).getCentre()));
-    check (! tray.isOpen() && p.getCurrentProgram() == 2, "picking one loads it");
+
+    // By category.
+    browser.mouseDown (mouseAt (browser, browser.categoryBounds ((int) Presets::Category::sfx).getCentre()));
+    check (browser.getCategory() == PresetBrowser::all, "a category with no presets in it can't be opened");
+    browser.mouseDown (mouseAt (browser, browser.categoryBounds ((int) Presets::Category::bass).getCentre()));
+    bool justBass = browser.getListed().size() == 3;
+    for (const int index : browser.getListed())
+        justBass = justBass && Presets::factory[(size_t) index].category == Presets::Category::bass;
+    check (browser.getCategory() == (int) Presets::Category::bass && justBass, "a click on a category lists just its presets");
+
+    // Searched: every word, in the name, the description or the category.
+    browser.mouseDown (mouseAt (browser, browser.categoryBounds (PresetBrowser::all).getCentre()));
+    browser.getSearch().setText ("squelchy bass");
+    check (pumpUntil ([&browser] { return browser.getListed().size() == 1; }) && browser.getListed().front() == names.indexOf ("Acid Bass"),
+           "the search narrows the list to the presets with every word");
+    snapshot (render (*editor), "9b-presets-search");
+    browser.mouseDown (mouseAt (browser, browser.rowBounds (0).getCentre()));
+    check (browser.isOpen() && p.getCurrentProgram() == names.indexOf ("Acid Bass"), "a click loads a preset, the browser staying open");
+    browser.keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
+    check (browser.isOpen() && browser.getSearch().isEmpty() && (int) browser.getListed().size() == Presets::numPresets,
+           "Escape clears the search");
+
+    // The arrow keys step through the list as it reads, loading each.
+    browser.mouseDown (mouseAt (browser, browser.categoryBounds ((int) Presets::Category::strings).getCentre()));
+    browser.mouseDown (mouseAt (browser, browser.rowBounds (0).getCentre()));
+    check (p.getCurrentProgram() == 2, "picking one loads it");
+    browser.mouseDown (mouseAt (browser, browser.categoryBounds (PresetBrowser::all).getCentre()));
+    const auto& listed = browser.getListed();
+    const auto  at     = std::find (listed.begin(), listed.end(), 2);
+    browser.keyPressed (juce::KeyPress (juce::KeyPress::downKey));
+    check (at != listed.end() && at + 1 != listed.end() && p.getCurrentProgram() == *(at + 1), "the down arrow loads the next one listed");
+    browser.keyPressed (juce::KeyPress (juce::KeyPress::upKey));
+    check (p.getCurrentProgram() == 2, "and up the one before");
+    browser.keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
+    check (! browser.isOpen(), "and Escape closes it");
     auto& osc3 = editor->getBench().getModule ({ Bench::Kind::oscillator, 2 });
     check (pumpUntil ([&] { return osc3.isVisible() && osc3.getAlpha() >= 1.0f; }), "and its modules appear on the bench");
     snapshot (render (*editor), "10-preset-loaded");
