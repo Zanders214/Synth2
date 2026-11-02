@@ -27,7 +27,9 @@
     (times the velocity its key was played with), for its own length: short,
     half or most of the step, or tied, held until the next step and, if that
     plays the same note, on through it without starting again. SWING makes
-    every second step late, by up to half a step. LATCH keeps the chord
+    every second step late, by up to half a step. OCTAVES plays the pattern
+    again an octave up each time round, through that many octaves before
+    it starts again from the bottom. LATCH keeps the chord
     playing after the keys go up, until the next one is pressed. The sustain
     pedal holds the keys let go while it is down, as it would without the arp.
 
@@ -130,6 +132,7 @@ namespace Arp
         { "1/16T", 1.0 / 6.0 },
         { "1/32",  0.125 } }};
     inline constexpr int sixteenth = 5;   // RATE to start with
+    inline constexpr int maxOctaves = 4;
 
     // ---- Patterns to start from -------------------------------------------------
 
@@ -225,6 +228,7 @@ namespace Arp
         int     rate  = sixteenth;   // into rates
         float   swing = 0.0f;        // 0..1: every second step late by up to half a step
         bool    latch = false;
+        int     octaves = 1;         // 1..maxOctaves: how many octaves the pattern climbs through, once round each
         Pattern pattern {};
     };
 
@@ -638,6 +642,7 @@ namespace Arp
             const int   index   = (int) (((k % length) + length) % length);   // k is negative in a host's pre-roll
             const auto& step    = pattern[index];
             const auto  heard   = chord();
+            const int   shift   = 12 * octaveOf ((k - index) / length);
             const double from   = startOf (k);
             const bool   tied   = step.length == Length::tie;
             const double offAt  = from + gateOf (step.length) * (startOf (k + 1) - from);
@@ -647,8 +652,8 @@ namespace Arp
             pitches.fill (-1);
             if (heard.size > 0)
                 for (int r = 0; r < numRows; ++r)
-                    if (step.plays (r) && heard.pitchOf (r) <= 127)
-                        pitches[(size_t) r] = heard.pitchOf (r);
+                    if (step.plays (r) && heard.pitchOf (r) + shift <= 127)
+                        pitches[(size_t) r] = heard.pitchOf (r) + shift;
             for (auto& note : sounding)
                 if (note.pitch >= 0 && note.tied)
                 {
@@ -678,7 +683,7 @@ namespace Arp
                         break;
                     }
             }
-            publish (index, heard);
+            publish (index, heard, shift);
         }
 
         bool isSounding (int pitch) const noexcept
@@ -698,15 +703,22 @@ namespace Arp
             addIfRoom (*target, data, numBytes, when);
         }
 
-        void publish (int step) noexcept { publish (step, Chord()); }
+        // Which octave up the pattern's time round `cycle` plays in (0: the keys').
+        int octaveOf (std::int64_t cycle) const noexcept
+        {
+            const auto octaves = (std::int64_t) juce::jlimit (1, maxOctaves, current->octaves);
+            return (int) (((cycle % octaves) + octaves) % octaves);
+        }
 
-        void publish (int step, const Chord& heard) noexcept
+        void publish (int step) noexcept { publish (step, Chord(), 0); }
+
+        void publish (int step, const Chord& heard, int shift) noexcept
         {
             shownStep.store (step, std::memory_order_relaxed);
             std::uint64_t packed = ~std::uint64_t {};
             if (step >= 0 && heard.size > 0)
                 for (int r = 0; r < numRows; ++r)
-                    if (const int pitch = heard.pitchOf (r); pitch <= 127)
+                    if (const int pitch = heard.pitchOf (r) + shift; pitch <= 127)
                         packed = (packed & ~(std::uint64_t { 0xff } << (8 * r))) | ((std::uint64_t) pitch << (8 * r));
             shownRows.store (packed, std::memory_order_relaxed);
         }

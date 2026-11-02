@@ -166,6 +166,7 @@ rows are labelled with the notes they're playing and the step playing lights up.
 | Control   | What it does |
 |-----------|--------------|
 | **RATE**  | How long a step is: 1/4 down to 1/32, dotted and triplet ones between. It follows your DAW's tempo. |
+| **OCTAVES** | 1 to 4: each time round, the pattern plays an octave higher, through that many octaves, then starts again from your keys. |
 | **SWING** | Makes every second step late, up to half a step (about 67% is a triplet shuffle). |
 | **LATCH** | Keeps the chord playing after you let go, until you play the next one. |
 

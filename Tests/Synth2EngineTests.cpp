@@ -1759,6 +1759,18 @@ void testArp()
         check (near (offAt (60, step), 3 * step + (int) (0.9 * step)), "tied, the note lasts on to the end of the next step's own length");
     }
 
+    // OCTAVES climbs an octave each time round, then starts again from the keys.
+    {
+        ArpRig rig;
+        rig.settings.pattern = Arp::make (Arp::Shape::up, 4, *std::make_unique<juce::Random> (1));
+        rig.settings.octaves = 2;
+        const auto notes = rig.play (step * 9, { { 0, arpOn (60) }, { 0, arpOn (64) }, { 0, arpOn (67) } });
+        check (onsOf (notes) == std::vector<int> { 60, 64, 67, 72, 72, 76, 79, 84, 60 },
+               "two octaves: once round from the keys, once an octave up, then from the keys again");
+        rig.play (step * 4);
+        check (rig.player.rowNotes()[0] == 72 && rig.player.rowNotes()[3] == 84, "the rows read as the notes of the octave playing");
+    }
+
     // SWING puts every second step late.
     {
         ArpRig rig;

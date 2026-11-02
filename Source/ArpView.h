@@ -384,8 +384,9 @@ private:
 /**
     ArpView — the ARP tab: the arpeggiator, over the keyboard like the bench
     and the effects. Along the top its power switch, RATE (how long a step
-    is), SWING and LATCH; under them a row of patterns to start from (Up,
-    Down, Up-Down, Random and Chord), Vary (a step or two changed) and Clear;
+    is), OCTAVES (how many the pattern climbs through, once round in each)
+    and SWING; under them a row of patterns to start from (Up, Down,
+    Up-Down, Random and Chord), Vary (a step or two changed), Clear and LATCH;
     and the grid itself (see ArpGrid), which plays while keys are held. The
     pattern is the state's (see Arp::Model), so it is saved with the
     session and in a user preset, and a factory preset can bring its own.
@@ -397,6 +398,7 @@ public:
         : model (stateToUse), grid (stateToUse),
           power (Synth2::Palette::amber, stateToUse, ParamID::arpOn),
           rate (*stateToUse.getParameter (ParamID::arpRate), rateNames(), Synth2::Palette::cyan),
+          octaves (*stateToUse.getParameter (ParamID::arpOctaves), octaveNames(), Synth2::Palette::amber),
           latch ("LATCH", Synth2::Palette::pink, stateToUse, ParamID::arpLatch)
     {
         setWantsKeyboardFocus (false);
@@ -404,6 +406,7 @@ public:
         addAndMakeVisible (grid);
         addAndMakeVisible (power);
         addAndMakeVisible (rate);
+        addAndMakeVisible (octaves);
         addAndMakeVisible (latch);
         for (auto* control : std::initializer_list<juce::Component*> { &power, &latch })
         {
@@ -443,6 +446,7 @@ public:
     ArpButton&  getClear() noexcept              { return clear; }
     PowerSwitch& getPower() noexcept             { return power; }
     SegmentedChoice& getRate() noexcept          { return rate; }
+    SegmentedChoice& getOctaves() noexcept       { return octaves; }
     PillToggle& getLatch() noexcept              { return latch; }
     juce::Slider& getSwing() noexcept            { return swing; }
 
@@ -469,6 +473,7 @@ public:
         uiScale = newScale;
         grid.setUiScale (newScale);
         rate.setUiScale (newScale);
+        octaves.setUiScale (newScale);
         latch.setUiScale (newScale);
         for (auto& button : shapes)
             button.setUiScale (newScale);
@@ -484,9 +489,10 @@ public:
         const auto  px = [s] (float x, float y, float w, float h) { return (juce::Rectangle<float> (x, y, w, h) * s).toNearestInt(); };
 
         power.setBounds (px (24.0f, 30.0f, 20.0f, 20.0f));
-        rate.setBounds (px (300.0f, 40.0f, 8.0f * 52.0f + 7.0f * 6.0f, 26.0f));
-        swing.setBounds (px (794.0f, 20.0f, 48.0f, 48.0f));
-        latch.setBounds (px (872.0f, 40.0f, 96.0f, 26.0f));
+        rate.setBounds (px (300.0f, 40.0f, 8.0f * 44.0f + 7.0f * 6.0f, 26.0f));
+        octaves.setBounds (px (718.0f, 40.0f, 4.0f * 34.0f + 3.0f * 6.0f, 26.0f));
+        swing.setBounds (px (904.0f, 20.0f, 48.0f, 48.0f));
+        latch.setBounds (px (872.0f, 112.0f, 96.0f, 26.0f));
 
         float x = 108.0f;
         for (auto& button : shapes)
@@ -522,6 +528,7 @@ public:
             g.drawText (text, box * s, juce::Justification::centredLeft, false);
         };
         label ("RATE", { 300.0f, 22.0f, 100.0f, 14.0f });
+        label ("OCTAVES", { 718.0f, 22.0f, 100.0f, 14.0f });
         label ("START FROM", { 24.0f, 112.0f, 84.0f, 26.0f });
 
         BenchStyle::paintDialLabel (g, swingLabelBounds().toFloat().withTrimmedTop (0.0f), "SWING",
@@ -541,6 +548,14 @@ public:
     }
 
 private:
+    static std::vector<juce::String> octaveNames()
+    {
+        std::vector<juce::String> names;
+        for (int count = 1; count <= Arp::maxOctaves; ++count)
+            names.emplace_back (count);
+        return names;
+    }
+
     static std::vector<juce::String> rateNames()
     {
         std::vector<juce::String> names;
@@ -566,6 +581,7 @@ private:
     ArpGrid    grid;
     PowerSwitch     power;
     SegmentedChoice rate;
+    SegmentedChoice octaves;
     PillToggle      latch;
     juce::Slider    swing;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> swingAttachment;

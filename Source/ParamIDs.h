@@ -289,15 +289,17 @@ namespace ParamID
                                                                 eqMidGain, eqMidFreq, eqMidQ, eqHighGain, eqHighFreq, eqInChain };
 
     // The arpeggiator, on the ARP tab (see Arp.h): whether it plays, how
-    // long each step is (an index into Arp::rates), SWING and LATCH. The
+    // long each step is (an index into Arp::rates), SWING, LATCH and how
+    // many OCTAVES it climbs (an index: 0 for one). The
     // pattern itself lives in the state tree, beside the bench.
     inline constexpr const char* arpOn    = "arpOn";
     inline constexpr const char* arpRate  = "arpRate";
     inline constexpr const char* arpSwing = "arpSwing";
     inline constexpr const char* arpLatch = "arpLatch";
+    inline constexpr const char* arpOctaves = "arpOctaves";
 
     // Every one of the arp's (version 14), for a session saved before it.
-    inline constexpr std::array<const char*, 4> arpParameters { arpOn, arpRate, arpSwing, arpLatch };
+    inline constexpr std::array<const char*, 5> arpParameters { arpOn, arpRate, arpSwing, arpLatch, arpOctaves };
 
     // Retired with the first bench's shared unison and envelope modules; only
     // read from sessions saved with them, to carry them over.
