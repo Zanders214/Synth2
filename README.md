@@ -7,11 +7,11 @@ each with one of the four basic wave shapes and its own stack of up to 16
 detuned, spread copies on every note, give each its own envelope and its own
 swept filter, and play chords: the classic wide, detuned "supersaw" pad in a
 few turns. Then send the
-lot through a drive, a delay and a reverb, in any order, on the EFFECTS tab,
-laid out the same way.
+lot through a drive, an EQ, a delay and a reverb, in any order, on the EFFECTS
+tab, laid out the same way.
 
 ```
-note -> OSC n (VOICES x shape, DETUNE + WIDTH) -> FILTER n (TYPE CUTOFF RESONANCE, swept) -> ENV n (DELAY ATTACK HOLD DECAY SUSTAIN RELEASE) -> + -> DRIVE / DELAY / REVERB (any order) -> OUTPUT
+note -> OSC n (VOICES x shape, DETUNE + WIDTH) -> FILTER n (TYPE CUTOFF RESONANCE, swept) -> ENV n (DELAY ATTACK HOLD DECAY SUSTAIN RELEASE) -> + -> DRIVE / EQ / DELAY / REVERB (any order) -> OUTPUT
 ```
 
 ## The workbench
@@ -71,8 +71,8 @@ The **BENCH | EFFECTS** tabs in the header swap the bench for the effects. Every
 goes through them together, after the oscillators are mixed and before OUTPUT.
 
 The EFFECTS tab works like the bench. It opens empty: click anywhere on it and a tray
-offers a **Drive**, a **Delay** and a **Reverb** (one of each; one already in the chain
-is greyed out). The effect lands where you clicked, switched on. Drag a card by its
+offers a **Drive**, an **EQ**, a **Delay** and a **Reverb** (one of each; one already in
+the chain is greyed out). All four fit side by side in a row. The effect lands where you clicked, switched on. Drag a card by its
 header to move it anywhere on the tab; drop it with its middle on another card and the
 two swap places. The cross in its header takes it out of the chain (its settings are
 kept for when it comes back).
@@ -86,11 +86,12 @@ with the notes (before it, the echoes and the room stay clean).
 
 Each effect has the same power switch at the left of its header as the bench's modules:
 switched off, it greys out and keeps its place in the chain, silent. The switches are
-automatable; being in the chain is not. Each effect also has a **MIX**: up to the middle the dry sound stays at full level and the effect
+automatable; being in the chain is not. Each effect but the EQ also has a **MIX**: up to the middle the dry sound stays at full level and the effect
 is added underneath; from there the dry sound fades out until only the effect is left.
 Switching an effect on or off, or taking it out of the chain, fades it over 20 ms; once
 it is off it costs nothing, and switching it back on starts clean. A set saved before
-effects could be moved opens with all three on the tab, in the order they played.
+effects could be moved opens with all three on the tab, in the order they played, and
+one saved when three cards filled a row is set out four to a row, in the same order.
 
 | Control       | What it does                                                        |
 |---------------|---------------------------------------------------------------------|
@@ -105,6 +106,11 @@ effects could be moved opens with all three on the tab, in the order they played
 | **Pre-Delay** | How long the room waits before it starts, 0 to 250 ms, so each note's attack stays clear of it. |
 | **Damping**   | How quickly the room's highs die away.                               |
 | **Width**     | How wide the room spreads: 0% is the same on both sides.             |
+| **Low Cut**   | The EQ's highpass, 20 Hz to 2 kHz; at 20 Hz it is out (**OFF**).      |
+| **High Cut**  | Its lowpass, 1 kHz to 20 kHz; at 20 kHz it is out (**OFF**).          |
+| **12 / 24 dB/OCT** | How steeply both cuts fall away: 12 dB an octave, or 24 for a sharper edge. |
+| **Low**, **High** | Shelves that lift or dip everything under (or over) their **FREQ** by up to 18 dB: LOW from 30 Hz to 1 kHz, HIGH from 1 kHz to 16 kHz. |
+| **Mid**       | A bell that lifts or dips round its **FREQ** (100 Hz to 10 kHz) by up to 18 dB, as narrow as **Q** says (0.3 wide to 6 narrow). |
 
 The DRIVE card's well draws the curve itself: the dashed diagonal is the clean sound,
 the glowing line what comes out at the current DRIVE, SHAPE and MIX. The curve is
@@ -115,6 +121,11 @@ offset is left behind by TUBE's lean.
 Like tape, each repeat of the delay also loses its deepest lows (so they don't pile up
 into mud), rounds off gently when driven hard, and wavers very slightly in pitch, so
 the repeats sit behind the sound rather than copying it.
+
+The EQ card's well draws its response from 20 Hz to 20 kHz, ±24 dB: the cuts falling
+away at the ends, the shelves and the bell rising and dipping round the 0 dB line. It is
+drawn from the same filters that play, and every setting glides over 20 ms, so sweeping
+a frequency never zips. The EQ has no MIX: blending EQ'd sound with dry would comb.
 
 The DELAY card's well shows the dry sound and each repeat where it falls across two
 seconds, the left side above the line and the right below; the REVERB card's shows the

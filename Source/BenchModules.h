@@ -66,10 +66,29 @@ namespace BenchStyle
     }
 
     /** A dial's value as it reads under the dial. */
+    /** What an EQ dial shows, if `id` is one of the EQ's. */
+    inline std::optional<juce::String> eqDialText (const juce::String& id, float value)
+    {
+        using namespace Synth2;
+        if (id == ParamID::eqLowCut)
+            return Effects::lowCutIsOut (value) ? juce::String ("OFF") : Format::hertz (value);
+        if (id == ParamID::eqHighCut)
+            return Effects::highCutIsOut (value) ? juce::String ("OFF") : Format::hertz (value);
+        if (id == ParamID::eqLowFreq || id == ParamID::eqMidFreq || id == ParamID::eqHighFreq)
+            return Format::hertz (value);
+        if (id == ParamID::eqLowGain || id == ParamID::eqMidGain || id == ParamID::eqHighGain)
+            return Format::decibels (value);
+        if (id == ParamID::eqMidQ)
+            return juce::String (value, 2);
+        return std::nullopt;
+    }
+
     inline juce::String dialText (const juce::String& id, float value)
     {
         using namespace Synth2;
         if (auto text = moduleDialText (id, value))
+            return *text;
+        if (auto text = eqDialText (id, value))
             return *text;
         if (id == ParamID::output)
             return Format::decibels (value);

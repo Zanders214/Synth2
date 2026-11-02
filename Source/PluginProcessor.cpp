@@ -74,7 +74,7 @@ namespace ParameterParts
 
     String hzText (float value, int)
     {
-        if (value < 1000.0f)
+        if (roundToInt (value) < 1000)
             return String (roundToInt (value)) + " Hz";
         return String (value / 1000.0f, value < 10000.0f ? 2 : 1) + " kHz";
     }
@@ -270,6 +270,56 @@ namespace ParameterParts
         addPercent (layout, ParameterID { ParamID::driveTone, 8 }, "Drive Tone", 1.0f, effects.drive.tone);
         addPercent (layout, ParameterID { ParamID::driveMix, 8 },  "Drive Mix",  1.0f, effects.drive.mix);
     }
+
+    // A frequency, even octaves across the knob; at the end `outAt` (if
+    // given) the filter is out, and reads so.
+    void addHz (Layout& layout, ParameterID id, const String& name, Range<float> range, float value, float outAt = 0.0f)
+    {
+        NormalisableRange hz (range.getStart(), range.getEnd());
+        hz.setSkewForCentre (std::sqrt (range.getStart() * range.getEnd()));
+        layout.add (std::make_unique<AudioParameterFloat> (
+            id, name, hz, value,
+            AudioParameterFloatAttributes().withLabel ("Hz").withStringFromValueFunction ([outAt] (float hzValue, int maximumLength)
+            {
+                if (outAt > 0.0f && std::abs (hzValue - outAt) < 0.001f * outAt)
+                    return String ("Off");
+                return hzText (hzValue, maximumLength);
+            })));
+    }
+
+    void addGain (Layout& layout, ParameterID id, const String& name, float value)
+    {
+        layout.add (std::make_unique<AudioParameterFloat> (
+            id, name, NormalisableRange<float> (-Effects::maxEqGainDb, Effects::maxEqGainDb, 0.1f), value,
+            AudioParameterFloatAttributes().withLabel ("dB").withStringFromValueFunction ([] (float db, int)
+            {
+                return (db > 0.05f ? "+" : "") + String (db, 1) + " dB";
+            })));
+    }
+
+    // The EQ (version 13), off and flat to start with.
+    void addEq (Layout& layout, const Effects::Settings& effects)
+    {
+        const auto& eq = effects.eq;
+        layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::eqOn, 13 }, "EQ On", eq.on));
+        addHz (layout, ParameterID { ParamID::eqLowCut, 13 }, "EQ Low Cut", { Effects::minLowCutHz, Effects::maxLowCutHz },
+               eq.lowCutHz, Effects::minLowCutHz);
+        addHz (layout, ParameterID { ParamID::eqHighCut, 13 }, "EQ High Cut", { Effects::minHighCutHz, Effects::maxHighCutHz },
+               eq.highCutHz, Effects::maxHighCutHz);
+        layout.add (std::make_unique<AudioParameterChoice> (
+            ParameterID { ParamID::eqSlope, 13 }, "EQ Cut Slope", StringArray { "12 dB/oct", "24 dB/oct" }, eq.slope));
+        addGain (layout, ParameterID { ParamID::eqLowGain, 13 }, "EQ Low Gain", eq.lowGainDb);
+        addHz (layout, ParameterID { ParamID::eqLowFreq, 13 }, "EQ Low Freq", { Effects::minLowHz, Effects::maxLowHz }, eq.lowHz);
+        addGain (layout, ParameterID { ParamID::eqMidGain, 13 }, "EQ Mid Gain", eq.midGainDb);
+        addHz (layout, ParameterID { ParamID::eqMidFreq, 13 }, "EQ Mid Freq", { Effects::minMidHz, Effects::maxMidHz }, eq.midHz);
+        NormalisableRange q (Effects::minEqQ, Effects::maxEqQ);
+        q.setSkewForCentre (std::sqrt (Effects::minEqQ * Effects::maxEqQ));
+        layout.add (std::make_unique<AudioParameterFloat> (
+            ParameterID { ParamID::eqMidQ, 13 }, "EQ Mid Q", q, eq.midQ,
+            AudioParameterFloatAttributes().withStringFromValueFunction ([] (float value, int) { return String (value, 2); })));
+        addGain (layout, ParameterID { ParamID::eqHighGain, 13 }, "EQ High Gain", eq.highGainDb);
+        addHz (layout, ParameterID { ParamID::eqHighFreq, 13 }, "EQ High Freq", { Effects::minHighHz, Effects::maxHighHz }, eq.highHz);
+    }
 }
 }
 
@@ -337,6 +387,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
         ParameterID { ParamID::output, 1 }, "Output",
         NormalisableRange<float> (-24.0f, 6.0f, 0.1f), 0.0f,
         AudioParameterFloatAttributes().withLabel ("dB")));
+
+    // The EQ (version 13), out of the chain to start with, like the other
+    // effects. Last, so every parameter before it keeps its place.
+    addEq (layout, effects);
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::eqInChain, 13 }, "EQ In Chain", false, onOff (false)));
 
     return layout;
 }
@@ -452,6 +507,19 @@ Synth2Engine::Settings Synth2AudioProcessor::currentSettings() const noexcept
     reverb.width   = param (ParamID::reverbWidth);
     reverb.mix     = param (ParamID::reverbMix);
     reverb.preDelayMs = param (ParamID::reverbPreDelay);
+
+    auto& eq = settings.effects.eq;
+    eq.on         = playing (ParamID::eqOn, ParamID::eqInChain);
+    eq.lowCutHz   = param (ParamID::eqLowCut);
+    eq.highCutHz  = param (ParamID::eqHighCut);
+    eq.slope      = juce::roundToInt (param (ParamID::eqSlope));
+    eq.lowGainDb  = param (ParamID::eqLowGain);
+    eq.lowHz      = param (ParamID::eqLowFreq);
+    eq.midGainDb  = param (ParamID::eqMidGain);
+    eq.midHz      = param (ParamID::eqMidFreq);
+    eq.midQ       = param (ParamID::eqMidQ);
+    eq.highGainDb = param (ParamID::eqHighGain);
+    eq.highHz     = param (ParamID::eqHighFreq);
 
     settings.effects.order = Effects::decode (effectsChain.load());
     settings.effects.bpm   = hostBpm.load();
@@ -705,10 +773,10 @@ void Synth2AudioProcessor::restoreState (const juce::ValueTree& restored, bool m
     const auto saved = restored.createCopy();
     apvts.replaceState (restored);
 
-    // A session from before GLIDE and MONO played without them, whatever
-    // this instance was playing before it; and a preset sounds the same
-    // whatever was playing before it, so all it doesn't say goes back to
-    // its default.
+    // A session from before GLIDE and MONO, or the EQ, played without them,
+    // whatever this instance was playing before it; and a preset sounds the
+    // same whatever was playing before it, so all it doesn't say goes back
+    // to its default.
     const auto toDefault = [&saved] (juce::RangedAudioParameter& parameter)
     {
         if (saved.getChildWithProperty ("id", parameter.getParameterID()).isValid())
@@ -726,6 +794,8 @@ void Synth2AudioProcessor::restoreState (const juce::ValueTree& restored, bool m
     else
     {
         for (const auto* id : { ParamID::glide, ParamID::mono })
+            toDefault (*apvts.getParameter (id));
+        for (const auto* id : ParamID::eqParameters)
             toDefault (*apvts.getParameter (id));
     }
 

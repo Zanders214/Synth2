@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <utility>
 #include <vector>
 
 #include "EffectSettings.h"
@@ -13,11 +14,11 @@
     Effects
 
     The effects every note goes through together, after the mix and before
-    OUTPUT: a DRIVE, a stereo DELAY and a REVERB, one after the other in
-    whichever order the settings ask for (by default the drive, then the
-    delay, then the reverb).
+    OUTPUT: a DRIVE, an EQ, a stereo DELAY and a REVERB, one after the other
+    in whichever order the settings ask for (by default the drive, then the
+    EQ, the delay and the reverb).
 
-        notes  ->  +  ->  DRIVE  ->  DELAY  ->  REVERB  ->  OUTPUT     (or any other order)
+        notes  ->  +  ->  DRIVE  ->  EQ  ->  DELAY  ->  REVERB  ->  OUTPUT     (or any other order)
 
     Each has its own switch and MIX. MIX keeps the dry sound at full level up
     to the middle, adding the effect underneath it, and from there fades the
@@ -42,6 +43,12 @@
     comes out. The curve is applied through its antiderivative (first-order
     antiderivative antialiasing), which keeps most of the new harmonics above
     the top of the band from folding back down as harsh, unrelated tones.
+
+    EQ shapes the tone with up to seven second-order filters (see
+    eqStages): LOW CUT and HIGH CUT at 12 or 24 dB an octave, a LOW and a
+    HIGH shelf and a MID bell. It has no MIX (a blend of EQ'd and dry sound
+    would comb), only its switch; its settings glide over 20 ms, so sweeping
+    a frequency never zips.
 
     REVERB is a feedback-delay-network room (see Room.h): SIZE sets how long
     it rings, PRE-DELAY how long it waits before it starts, DAMPING how
@@ -427,13 +434,171 @@ namespace Effects
         bool  holding = false;
     };
 
-    /** The drive, the delay and the reverb, in the order the settings ask for. */
+    /** The EQ: its filters one after the other on each side, the ones that
+        are out skipped, gliding to new settings and crossfaded in and out
+        by its Blend. */
+    class Eq
+    {
+    public:
+        void prepare (double newSampleRate)
+        {
+            sampleRate = newSampleRate;
+            blend.prepare (sampleRate);
+            forEachGlide ([this] (auto& value)
+            {
+                value.reset (sampleRate, fadeSeconds);
+                value.setCurrentAndTargetValue (value.getTargetValue());
+            });
+            design();
+            clear();
+        }
+
+        void set (const EqSettings& newSettings) noexcept
+        {
+            blend.set (newSettings.on, 1.0f);
+            if (newSettings.slope != slope)
+            {
+                slope   = newSettings.slope;
+                changed = true;
+            }
+            lowCut.setTargetValue (std::clamp (newSettings.lowCutHz, minLowCutHz, maxLowCutHz));
+            highCut.setTargetValue (std::clamp (newSettings.highCutHz, minHighCutHz, maxHighCutHz));
+            lowGain.setTargetValue (std::clamp (newSettings.lowGainDb, -maxEqGainDb, maxEqGainDb));
+            lowHz.setTargetValue (std::clamp (newSettings.lowHz, minLowHz, maxLowHz));
+            midGain.setTargetValue (std::clamp (newSettings.midGainDb, -maxEqGainDb, maxEqGainDb));
+            midHz.setTargetValue (std::clamp (newSettings.midHz, minMidHz, maxMidHz));
+            midQ.setTargetValue (std::clamp (newSettings.midQ, minEqQ, maxEqQ));
+            highGain.setTargetValue (std::clamp (newSettings.highGainDb, -maxEqGainDb, maxEqGainDb));
+            highHz.setTargetValue (std::clamp (newSettings.highHz, minHighHz, maxHighHz));
+        }
+
+        void process (float* left, float* right, int numSamples) noexcept
+        {
+            if (blend.isIdle())
+            {
+                if (holding)
+                    clear();
+                return;
+            }
+            holding = true;
+
+            // The settings move once per call (the engine's chunks are at
+            // most 32 samples).
+            bool moving = std::exchange (changed, false);
+            forEachGlide ([&moving, numSamples] (auto& value)
+            {
+                moving = moving || value.isSmoothing();
+                value.skip (numSamples);
+            });
+            if (moving)
+                design();
+
+            std::array<float*, 2> channels { left, right };
+            for (int n = 0; n < numSamples; ++n)
+            {
+                const auto gains = blend.next();
+                for (size_t side = 0; side < 2; ++side)
+                {
+                    const float in = channels[side][n];
+                    double out = in;
+                    for (int i = 0; i < numActive; ++i)
+                        out = stages[(size_t) active[(size_t) i]].run (side, out);
+                    channels[side][n] = gains.dry * in + gains.wet * (float) out;
+                }
+            }
+        }
+
+        /** Forgets what the filters were holding. */
+        void clear() noexcept
+        {
+            for (auto& stage : stages)
+                stage.memory = {};
+            holding = false;
+        }
+
+    private:
+        // One filter, run transposed (direct form II), with each side's memory.
+        struct Stage
+        {
+            Biquad filter;
+            std::array<std::array<double, 2>, 2> memory {};
+
+            double run (size_t side, double x) noexcept
+            {
+                auto& z = memory[side];
+                const double y = filter.b0 * x + z[0];
+                z[0] = filter.b1 * x - filter.a1 * y + z[1];
+                z[1] = filter.b2 * x - filter.a2 * y;
+                return y;
+            }
+        };
+
+        // Each setting that glides: the frequencies and Q in octaves, the gains in dB.
+        template <typename Visit>
+        void forEachGlide (Visit&& visit) noexcept
+        {
+            for (auto* value : { &lowCut, &highCut, &lowHz, &midHz, &highHz, &midQ })
+                visit (*value);
+            for (auto* value : { &lowGain, &midGain, &highGain })
+                visit (*value);
+        }
+
+        // The filters for the settings where they have glided to. One that
+        // passes the sound untouched is skipped; its memory stays empty, as
+        // it would have running, so it comes back in without a click.
+        void design() noexcept
+        {
+            EqSettings now;
+            now.slope      = slope;
+            now.lowCutHz   = lowCut.getCurrentValue();
+            now.highCutHz  = highCut.getCurrentValue();
+            now.lowGainDb  = lowGain.getCurrentValue();
+            now.lowHz      = lowHz.getCurrentValue();
+            now.midGainDb  = midGain.getCurrentValue();
+            now.midHz      = midHz.getCurrentValue();
+            now.midQ       = midQ.getCurrentValue();
+            now.highGainDb = highGain.getCurrentValue();
+            now.highHz     = highHz.getCurrentValue();
+
+            const auto filters = eqStages (now, sampleRate);
+            numActive = 0;
+            for (size_t i = 0; i < stages.size(); ++i)
+            {
+                stages[i].filter = filters[i];
+                if (filters[i].isIdentity())
+                    stages[i].memory = {};
+                else
+                    active[(size_t) numActive++] = (int) i;
+            }
+        }
+
+        double sampleRate = 44100.0;
+        Blend  blend;
+        juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> lowCut  { minLowCutHz };
+        juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> highCut { maxHighCutHz };
+        juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> lowHz   { 120.0f };
+        juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> midHz   { 1000.0f };
+        juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> highHz  { 8000.0f };
+        juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> midQ    { 0.7f };
+        juce::SmoothedValue<float> lowGain  { 0.0f };
+        juce::SmoothedValue<float> midGain  { 0.0f };
+        juce::SmoothedValue<float> highGain { 0.0f };
+        int  slope = 0;
+        std::array<Stage, (size_t) numEqStages> stages {};
+        std::array<int, (size_t) numEqStages> active {};
+        int  numActive = 0;
+        bool changed   = true;
+        bool holding   = false;
+    };
+
+    /** The drive, the EQ, the delay and the reverb, in the order the settings ask for. */
     class Chain
     {
     public:
         void prepare (double sampleRate)
         {
             drive.prepare (sampleRate);
+            eq.prepare (sampleRate);
             delay.prepare (sampleRate);
             reverb.prepare (sampleRate);
         }
@@ -441,6 +606,7 @@ namespace Effects
         void set (const Settings& settings) noexcept
         {
             drive.set (settings.drive);
+            eq.set (settings.eq);
             delay.set (settings.delay, settings.bpm);
             reverb.set (settings.reverb);
             order = isOrder (settings.order) ? settings.order : defaultOrder;
@@ -456,6 +622,7 @@ namespace Effects
                     case Kind::drive:  drive.process (left, right, numSamples);  break;
                     case Kind::delay:  delay.process (left, right, numSamples);  break;
                     case Kind::reverb: reverb.process (left, right, numSamples); break;
+                    case Kind::eq:     eq.process (left, right, numSamples);     break;
                 }
             }
         }
@@ -463,12 +630,14 @@ namespace Effects
         void clear() noexcept
         {
             drive.clear();
+            eq.clear();
             delay.clear();
             reverb.clear();
         }
 
     private:
         Drive  drive;
+        Eq     eq;
         Delay  delay;
         Reverb reverb;
         Order  order = defaultOrder;

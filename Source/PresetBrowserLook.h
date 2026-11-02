@@ -388,9 +388,11 @@ namespace PresetBrowserLook
         float x = chips.getX();
         if (preset.drive.has_value())
             x += paintChip (g, "DRIVE", x, chips.getCentreY(), Palette::amber, s) + 6.0f * s;
+        if (preset.eq.has_value())
+            x += paintChip (g, "EQ", x, chips.getCentreY(), Palette::pink, s) + 6.0f * s;
         if (preset.delay.has_value())
             x += paintChip (g, "DELAY " + juce::String (Effects::divisions[(size_t) preset.delay->division].name).toUpperCase(), x,
-                            chips.getCentreY(), Palette::pink, s) + 6.0f * s;
+                            chips.getCentreY(), Palette::cyan, s) + 6.0f * s;
         if (preset.reverb.has_value())
             x += paintChip (g, "REVERB", x, chips.getCentreY(), Palette::violet, s) + 6.0f * s;
         if (juce::exactlyEqual (x, chips.getX()))

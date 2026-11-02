@@ -259,6 +259,17 @@ namespace ParamID
     inline constexpr const char* reverbWidth   = "reverbWidth";
     inline constexpr const char* reverbMix     = "reverbMix";
     inline constexpr const char* reverbPreDelay = "reverbPreDelay";
+    inline constexpr const char* eqOn       = "eqOn";
+    inline constexpr const char* eqLowCut   = "eqLowCut";
+    inline constexpr const char* eqHighCut  = "eqHighCut";
+    inline constexpr const char* eqSlope    = "eqSlope";
+    inline constexpr const char* eqLowGain  = "eqLowGain";
+    inline constexpr const char* eqLowFreq  = "eqLowFreq";
+    inline constexpr const char* eqMidGain  = "eqMidGain";
+    inline constexpr const char* eqMidFreq  = "eqMidFreq";
+    inline constexpr const char* eqMidQ     = "eqMidQ";
+    inline constexpr const char* eqHighGain = "eqHighGain";
+    inline constexpr const char* eqHighFreq = "eqHighFreq";
 
     // How notes are played: GLIDE, how long each slides to its pitch from
     // the note before it, and MONO, one note at a time, legato (see
@@ -271,6 +282,11 @@ namespace ParamID
     inline constexpr const char* driveInChain  = "driveInChain";
     inline constexpr const char* delayInChain  = "delayInChain";
     inline constexpr const char* reverbInChain = "reverbInChain";
+    inline constexpr const char* eqInChain     = "eqInChain";
+
+    // Every one of the EQ's (version 13), for a session saved before it.
+    inline constexpr std::array<const char*, 12> eqParameters { eqOn, eqLowCut, eqHighCut, eqSlope, eqLowGain, eqLowFreq,
+                                                                eqMidGain, eqMidFreq, eqMidQ, eqHighGain, eqHighFreq, eqInChain };
 
     // Retired with the first bench's shared unison and envelope modules; only
     // read from sessions saved with them, to carry them over.

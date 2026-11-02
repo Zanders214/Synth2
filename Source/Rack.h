@@ -14,19 +14,20 @@
     Rack
 
     The EFFECTS tab, laid out like the bench: an empty space the user puts
-    effects on (a drive, a delay and a reverb, one of each) and arranges
-    freely. Every note goes through the effects in the chain in the order
+    effects on (a drive, an EQ, a delay and a reverb, one of each) and
+    arranges freely. Every note goes through the effects in the chain in the order
     they read in, row by row and left to right, so moving a card moves its
     effect along the chain; dropping a card on another swaps the two.
 
     Whether an effect is in the chain is its parameter (driveInChain,
-    delayInChain, reverbInChain), so the engine, host undo and a restored
-    session all agree on it; its power switch (driveOn, delayOn, reverbOn)
-    bypasses it without taking it out. Where each card sits lives in a RACK
-    child of the plugin's state tree, saved and restored with the session:
+    eqInChain, delayInChain, reverbInChain), so the engine, host undo and a
+    restored session all agree on it; its power switch (driveOn, eqOn,
+    delayOn, reverbOn) bypasses it without taking it out. Where each card
+    sits lives in a RACK child of the plugin's state tree, saved and
+    restored with the session:
 
-        RACK { version: 1 }
-          EFFECT { id: "drive" | "delay" | "reverb", x, y }
+        RACK { version: 2 }
+          EFFECT { id: "drive" | "eq" | "delay" | "reverb", x, y }
 
     Positions are in design pixels from the rack area's top left (under the
     line spelling out the chain), so they scale with the window. An effect
@@ -47,6 +48,7 @@ namespace Rack
         {
             case Kind::delay:  return "delay";
             case Kind::reverb: return "reverb";
+            case Kind::eq:     return "eq";
             case Kind::drive:  break;
         }
         return "drive";
@@ -67,6 +69,7 @@ namespace Rack
         {
             case Kind::delay:  return ParamID::delayInChain;
             case Kind::reverb: return ParamID::reverbInChain;
+            case Kind::eq:     return ParamID::eqInChain;
             case Kind::drive:  break;
         }
         return ParamID::driveInChain;
@@ -79,6 +82,7 @@ namespace Rack
         {
             case Kind::delay:  return ParamID::delayOn;
             case Kind::reverb: return ParamID::reverbOn;
+            case Kind::eq:     return ParamID::eqOn;
             case Kind::drive:  break;
         }
         return ParamID::driveOn;
@@ -86,26 +90,30 @@ namespace Rack
 
     // ---- Geometry (design pixels) ------------------------------------------------
 
-    inline constexpr float cardWidth   = 292.0f;
+    inline constexpr float cardWidth   = 218.0f;                               // four in a row
     inline constexpr float cardHeight  = 448.0f;
     inline constexpr float chainHeight = 40.0f;                                // the line spelling out the chain, over the area
     inline constexpr float areaWidth   = Bench::viewWidth;                     // the bench's box (the effects don't zoom)
     inline constexpr float areaHeight  = Bench::viewHeight - chainHeight;
-    inline constexpr float gap         = 29.0f;                                // room for an arrow between two cards
+    inline constexpr float gap         = 24.0f;                                // room for an arrow between two cards
 
     inline juce::Rectangle<float> boundsAt (juce::Point<float> topLeft) noexcept
     {
         return { topLeft.x, topLeft.y, cardWidth, cardHeight };
     }
 
-    /** Where the card in place `place` (0..2) of a chain set out afresh sits:
+    /** Where the card in place `place` (0..3) of a chain set out afresh sits:
         side by side, across the middle of the area. */
     inline juce::Point<float> defaultPosition (int place) noexcept
     {
-        return { gap + (float) juce::jlimit (0, 2, place) * (cardWidth + gap), 0.5f * (areaHeight - cardHeight) };
+        return { gap + (float) juce::jlimit (0, Effects::numKinds - 1, place) * (cardWidth + gap), 0.5f * (areaHeight - cardHeight) };
     }
 
-    inline juce::Point<float> defaultPosition (Kind kind) noexcept { return defaultPosition ((int) kind); }
+    /** Where `kind`'s card sits with every effect in the chain set out afresh. */
+    inline juce::Point<float> defaultPosition (Kind kind) noexcept
+    {
+        return defaultPosition ((int) (std::find (allEffects.begin(), allEffects.end(), kind) - allEffects.begin()));
+    }
 
     /** Where a card dropped at `wanted` lands: there, or the nearest free spot. */
     inline juce::Point<float> resolveOverlap (juce::Point<float> wanted, const std::vector<juce::Rectangle<float>>& others)
@@ -121,7 +129,7 @@ namespace Rack
     inline const juce::Identifier xProperty       { "x" };
     inline const juce::Identifier yProperty       { "y" };
     inline const juce::Identifier versionProperty { "version" };
-    inline constexpr int          currentVersion = 1;
+    inline constexpr int          currentVersion = 2;   // 2: four cards to a row
 
     /** The effects in `state`: which are in the chain, where their cards
         sit, and so the order sound goes through them. Message thread only. */
@@ -141,22 +149,30 @@ namespace Rack
         /** Brings a restored session up to date. `saved` is the state as it
             was saved: one from before the rack had all three effects on the
             tab, side by side in the order they played (the drive, then the
-            delay and the reverb in either order), so it opens as it was. */
+            delay and the reverb in either order), so it opens as it was; one
+            from when three cards filled a row has its chain set out afresh,
+            four to a row, in the same order. */
         void migrate (const juce::ValueTree& saved)
         {
-            if (! saved.getChildWithName (rackType).isValid())
+            if (const auto savedRack = saved.getChildWithName (rackType); ! savedRack.isValid())
             {
                 ensureRack();
-                const auto order = savedValue (saved, ParamID::effectsOrder, 0.0f) >= 0.5f
-                                 ? Effects::Order { Kind::drive, Kind::reverb, Kind::delay }
-                                 : Effects::defaultOrder;
+                const bool reverbFirst = savedValue (saved, ParamID::effectsOrder, 0.0f) >= 0.5f;
+                const std::array order { Kind::drive, reverbFirst ? Kind::reverb : Kind::delay, reverbFirst ? Kind::delay : Kind::reverb };
                 for (size_t place = 0; place < order.size(); ++place)
                 {
                     setPosition (order[place], defaultPosition ((int) place));
                     setParameter (inChainParameter (order[place]), true);
                 }
             }
+            else if ((int) savedRack.getProperty (versionProperty, 1) < currentVersion)
+            {
+                int place = 0;
+                for (const auto kind : readingOrder())
+                    setPosition (kind, defaultPosition (place++));
+            }
             ensureRack();
+            rack().setProperty (versionProperty, currentVersion, nullptr);
         }
 
         bool isInChain (Kind kind) const { return state.getRawParameterValue (inChainParameter (kind))->load() >= 0.5f; }
@@ -202,7 +218,7 @@ namespace Rack
 
         /** Moves `kind`'s card to `to` (or the nearest free spot); returns
             where it landed. Dropped with its middle on another card, it
-            trades places with that card instead, so even a full row (three
+            trades places with that card instead, so even a full row (four
             cards fill one) is reordered by dropping one card on another. */
         juce::Point<float> move (Kind kind, juce::Point<float> to)
         {
@@ -220,7 +236,7 @@ namespace Rack
         }
 
         /** Sets the effects in the chain out afresh, as a preset loads: side
-            by side, the drive, then the delay, then the reverb. */
+            by side, the drive, then the EQ, the delay and the reverb. */
         void layOut()
         {
             ensureRack();

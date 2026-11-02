@@ -445,16 +445,29 @@ private:
     the header to move the card anywhere on the tab (and so along the chain).
 
     Its dials sit in rows of three under the well, by slot (0..2 the first
-    row, 3..5 the second), each row spread across the card; a card with one
-    row of dials gives the other row's room to its well.
+    row, 3..5 the second, 6..8 the third), each row spread across the card;
+    the well takes whatever room the rows leave, so a card with one row of
+    dials gives the other row's room to its well.
 */
 class EffectCard : public juce::Component
 {
 public:
+    /** How many rows of dials a card can have, and how big they are (design pixels). */
+    struct DialGrid
+    {
+        int   rows;
+        float dialSize;
+        float spacing;   // over each row
+
+        float rowHeight() const noexcept { return spacing + dialSize + 31.0f; }   // 31: the dial's name and value
+    };
+
+    static constexpr DialGrid twoRows { 2, 52.0f, 14.0f };
+
     EffectCard (const juce::String& cardTitle, const char* onParam, juce::Colour cardColour, Synth2LookAndFeel& looksToUse,
-                juce::AudioProcessorValueTreeState& stateToUse)
+                juce::AudioProcessorValueTreeState& stateToUse, DialGrid gridToUse = twoRows)
         : title (cardTitle), colour (cardColour), looks (looksToUse), state (stateToUse),
-          power (cardColour, stateToUse, onParam)
+          power (cardColour, stateToUse, onParam), grid (gridToUse)
     {
         setRepaintsOnMouseActivity (true);
         addAndMakeVisible (power);
@@ -558,14 +571,14 @@ public:
         auto area = getLocalBounds().withTrimmedTop (px (30.0f)).reduced (px (12.0f), 0);
         area.removeFromTop (px (10.0f));
         const int rows = numRows();
-        layoutWell (area.removeFromTop (px (wellHeight + (float) (maxRows - rows) * rowHeight)));
+        layoutWell (area.removeFromTop (px (Rack::cardHeight - aroundTheDials - (float) rows * grid.rowHeight())));
 
         // Rows of up to three dials across the card; dials sharing a slot
         // (one shown at a time) take the same place.
         for (int row = 0; row < rows; ++row)
         {
-            area.removeFromTop (px (14.0f));
-            const auto band  = area.removeFromTop (px (52.0f + 31.0f));
+            area.removeFromTop (px (grid.spacing));
+            const auto band  = area.removeFromTop (px (grid.dialSize + 31.0f));
             const int  count = slotsInRow (row);
             const int  columnWidth = band.getWidth() / juce::jmax (1, count);
             for (const auto& dial : dials)
@@ -576,7 +589,7 @@ public:
                 dial->column = band.withTrimmedLeft (column * columnWidth);
                 if (column + 1 < count)
                     dial->column.setWidth (columnWidth);
-                dial->slider.setBounds (dial->column.withHeight (px (52.0f)).withSizeKeepingCentre (px (52.0f), px (52.0f)));
+                dial->slider.setBounds (dial->column.withHeight (px (grid.dialSize)).withSizeKeepingCentre (px (grid.dialSize), px (grid.dialSize)));
             }
         }
 
@@ -683,17 +696,15 @@ private:
 
     bool on() const noexcept { return power.getToggleState(); }
 
-    static constexpr int   perRow     = 3;
-    static constexpr int   maxRows    = 2;
-    static constexpr float wellHeight = 164.0f;          // with two rows of dials under it
-    static constexpr float rowHeight  = 14.0f + 52.0f + 31.0f;
+    static constexpr int   perRow        = 3;
+    static constexpr float aroundTheDials = 30.0f + 10.0f + 14.0f + 24.0f + 12.0f;   // the header, the gaps, the switches
 
     int numRows() const noexcept
     {
         int rows = 0;
         for (const auto& dial : dials)
             rows = juce::jmax (rows, dial->columnIndex / perRow + 1);
-        return juce::jmin (rows, maxRows);
+        return juce::jmin (rows, grid.rows);
     }
 
     // How many columns row `row` spreads across: up to its last slot in use.
@@ -711,6 +722,7 @@ private:
     Synth2LookAndFeel& looks;
     juce::AudioProcessorValueTreeState& state;
     PowerSwitch power;
+    DialGrid grid;
     std::vector<std::unique_ptr<Dial>> dials;
     std::function<void()> removeHandler;
     std::function<void (juce::Point<int>)> movedHandler;
@@ -787,8 +799,8 @@ private:
     void layoutSwitches (juce::Rectangle<int> row) override
     {
         const auto px = [s = getUiScale()] (float v) { return juce::roundToInt (v * s); };
-        sync.setBounds (row.withWidth (px (78.0f)).withX (row.getX() + px (10.0f)));
-        pingPong.setBounds (sync.getBounds().withWidth (px (104.0f)).translated (px (88.0f), 0));
+        sync.setBounds (row.withWidth (px (72.0f)).withX (row.getX() + px (5.0f)));
+        pingPong.setBounds (sync.getBounds().withWidth (px (104.0f)).translated (px (80.0f), 0));
     }
 
     EchoDisplay display;
@@ -885,6 +897,166 @@ private:
     SegmentedChoice shape;
 };
 
+/**
+    EqDisplay — the EQ's well: how loud it leaves each frequency, from 20 Hz
+    to 20 kHz across (in even octaves) and from -24 dB to +24 dB up, over
+    lines at 100 Hz, 1 kHz and 10 kHz and at 0 dB. The cuts fall away off
+    the bottom; the shelves and the bell rise and dip round the middle line.
+*/
+class EqDisplay final : public DisplayWell
+{
+public:
+    static constexpr float rangeDb     = 24.0f;
+    static constexpr double displayRate = 48000.0;   // the curve is drawn as the EQ runs at 48 kHz
+
+    EqDisplay() { setInterceptsMouseClicks (false, false); }
+
+    void setTint (juce::Colour newColour) { colour = newColour; repaint(); }
+
+    void setEqState (const Effects::EqSettings& newState)
+    {
+        if (same (newState, eq))
+            return;
+        eq = newState;
+        repaint();
+    }
+
+    const Effects::EqSettings& getEqState() const noexcept { return eq; }
+
+    /** Where `hz` sits across `plot`. */
+    static float xOf (double hz, juce::Rectangle<float> plot) noexcept
+    {
+        const auto across = std::log (hz / (double) Effects::minLowCutHz) / std::log ((double) Effects::maxHighCutHz / (double) Effects::minLowCutHz);
+        return plot.getX() + (float) across * plot.getWidth();
+    }
+
+    /** And where `db` sits up it (a little past the bottom for deeper cuts,
+        so they fall away out of the well). */
+    static float yOf (double db, juce::Rectangle<float> plot) noexcept
+    {
+        const auto up = std::clamp ((float) db, -1.25f * rangeDb, rangeDb) / rangeDb;
+        return plot.getCentreY() - 0.5f * up * plot.getHeight();
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        using namespace Synth2;
+        const float s = getUiScale();
+        const auto  readout = juce::String (Effects::eqSlopeNames[(size_t) juce::jlimit (0, 1, eq.slope)]) + "/OCT";
+        const auto  plot = paintWell (g, "RESPONSE", readout).reduced (2.0f * s, 2.0f * s);
+
+        // The frequency lines, and 0 dB.
+        const float line = juce::jmax (1.0f, s);
+        g.setFont (Fonts::mono (8.0f * s));
+        for (const auto& [hz, label] : { std::pair (100.0, "100"), std::pair (1000.0, "1k"), std::pair (10000.0, "10k") })
+        {
+            const float x = xOf (hz, plot);
+            g.setColour (Palette::gridLine);
+            g.fillRect (juce::Rectangle (x - 0.5f * line, plot.getY(), line, plot.getHeight()));
+            g.setColour (Palette::textFaint);
+            g.drawText (label, juce::Rectangle (x + 3.0f * s, plot.getY(), 24.0f * s, 10.0f * s),
+                        juce::Justification::centredLeft, false);
+        }
+        g.setColour (Palette::strongLine.withMultipliedAlpha (1.5f));
+        g.fillRect (juce::Rectangle (plot.getX(), plot.getCentreY() - 0.5f * line, plot.getWidth(), line));
+
+        // The curve, glowing, over a wash down (or up) to 0 dB.
+        juce::Path curve;
+        const int points = juce::jmax (64, (int) plot.getWidth());
+        for (int p = 0; p <= points; ++p)
+        {
+            const float x  = plot.getX() + plot.getWidth() * (float) p / (float) points;
+            const auto  hz = (double) Effects::minLowCutHz * std::pow ((double) Effects::maxHighCutHz / (double) Effects::minLowCutHz,
+                                                                       (double) p / (double) points);
+            const juce::Point at (x, yOf (Effects::eqResponseDb (eq, hz, displayRate), plot));
+            if (p == 0)
+                curve.startNewSubPath (at);
+            else
+                curve.lineTo (at);
+        }
+        auto wash = curve;
+        wash.lineTo (plot.getRight(), plot.getCentreY());
+        wash.lineTo (plot.getX(), plot.getCentreY());
+        wash.closeSubPath();
+        const juce::Graphics::ScopedSaveState inside (g);
+        g.reduceClipRegion (plot.getSmallestIntegerContainer());
+        g.setColour (colour.withAlpha (0.12f));
+        g.fillPath (wash);
+        g.setColour (colour.withAlpha (0.25f));
+        g.strokePath (curve, juce::PathStrokeType (6.0f * s, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.setColour (colour);
+        g.strokePath (curve, juce::PathStrokeType (2.0f * s, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
+
+private:
+    static bool same (const Effects::EqSettings& a, const Effects::EqSettings& b) noexcept
+    {
+        using juce::exactlyEqual;
+        return a.slope == b.slope && exactlyEqual (a.lowCutHz, b.lowCutHz) && exactlyEqual (a.highCutHz, b.highCutHz)
+            && exactlyEqual (a.lowGainDb, b.lowGainDb) && exactlyEqual (a.lowHz, b.lowHz)
+            && exactlyEqual (a.midGainDb, b.midGainDb) && exactlyEqual (a.midHz, b.midHz) && exactlyEqual (a.midQ, b.midQ)
+            && exactlyEqual (a.highGainDb, b.highGainDb) && exactlyEqual (a.highHz, b.highHz);
+    }
+
+    Effects::EqSettings eq;
+    juce::Colour colour { Synth2::Palette::pink };
+};
+
+/** The EQ card: its response in the well over three columns of dials, LOW,
+    MID and HIGH (each band's GAIN over its FREQ; under them LOW CUT, the
+    bell's Q and HIGH CUT), with the cuts' slope beneath. */
+class EqCard final : public EffectCard
+{
+public:
+    EqCard (Synth2LookAndFeel& looksToUse, juce::AudioProcessorValueTreeState& stateToUse)
+        : EffectCard ("EQ", ParamID::eqOn, Synth2::Palette::pink, looksToUse, stateToUse, { 3, 44.0f, 10.0f }),
+          slope (*stateToUse.getParameter (ParamID::eqSlope), { "12 dB/OCT", "24 dB/OCT" }, Synth2::Palette::pink)
+    {
+        addAndMakeVisible (display);
+        display.setTint (Synth2::Palette::pink);
+        const auto low  = BenchStyle::dialColour (0.0f);
+        const auto mid  = BenchStyle::dialColour (0.5f);
+        const auto high = BenchStyle::dialColour (1.0f);
+        addDial (ParamID::eqLowGain,  "LOW",      low,  0);
+        addDial (ParamID::eqMidGain,  "MID",      mid,  1);
+        addDial (ParamID::eqHighGain, "HIGH",     high, 2);
+        addDial (ParamID::eqLowFreq,  "FREQ",     low,  3);
+        addDial (ParamID::eqMidFreq,  "FREQ",     mid,  4);
+        addDial (ParamID::eqHighFreq, "FREQ",     high, 5);
+        addDial (ParamID::eqLowCut,   "LOW CUT",  low,  6);
+        addDial (ParamID::eqMidQ,     "Q",        mid,  7);
+        addDial (ParamID::eqHighCut,  "HIGH CUT", high, 8);
+        addAndMakeVisible (slope);
+    }
+
+    EqDisplay&       getDisplay() noexcept { return display; }
+    SegmentedChoice& getSlope() noexcept   { return slope; }
+
+    void refresh (const Effects::EqSettings& eq) { display.setEqState (eq); }
+
+    void setUiScale (float newScale) override
+    {
+        slope.setUiScale (newScale);
+        display.setUiScale (newScale);
+        EffectCard::setUiScale (newScale);
+    }
+
+private:
+    void layoutWell (juce::Rectangle<int> well) override
+    {
+        display.setUiScale (getUiScale());
+        display.setBounds (well);
+    }
+
+    void layoutSwitches (juce::Rectangle<int> row) override
+    {
+        const auto px = [s = getUiScale()] (float v) { return juce::roundToInt (v * s); };
+        slope.setBounds (row.reduced (px (10.0f), 0));
+    }
+
+    EqDisplay       display;
+    SegmentedChoice slope;
+};
 
 /**
     EffectsView — the EFFECTS tab, laid out like the bench: a dark, faintly
@@ -898,7 +1070,7 @@ private:
     moves it, and its effect along the chain; letting go lands it there, or
     on the nearest free spot if it would cover another. Let go with its
     middle on another card, the two swap places (which is how a full row of
-    three is reordered). Its cross takes it out of the chain, and its power switch bypasses
+    four is reordered). Its cross takes it out of the chain, and its power switch bypasses
     it in place. A card that arrives fades in, one that is taken out fades
     out, and one that has to make way glides.
 */
@@ -906,7 +1078,7 @@ class EffectsView final : public juce::Component
 {
 public:
     EffectsView (juce::AudioProcessorValueTreeState& stateToUse, Synth2LookAndFeel& looks)
-        : model (stateToUse), drive (looks, stateToUse), delay (looks, stateToUse), reverb (looks, stateToUse)
+        : model (stateToUse), drive (looks, stateToUse), delay (looks, stateToUse), reverb (looks, stateToUse), eq (looks, stateToUse)
     {
         for (const auto kind : Rack::allEffects)
         {
@@ -916,7 +1088,7 @@ public:
             card.onRemove ([this, kind] { remove (kind); });
             card.onMoved ([this, kind] (juce::Point<int> topLeft) { land (kind, topLeft); });
         }
-        shownOn = { drive.getPower().getToggleState(), delay.getPower().getToggleState(), reverb.getPower().getToggleState() };
+        shownOn = powers();
         setRepaintsOnMouseActivity (false);
         sync();
     }
@@ -927,6 +1099,7 @@ public:
     DriveCard&  getDrive() noexcept  { return drive; }
     DelayCard&  getDelay() noexcept  { return delay; }
     ReverbCard& getReverb() noexcept { return reverb; }
+    EqCard&     getEq() noexcept     { return eq; }
 
     EffectCard& getCard (Rack::Kind kind) noexcept
     {
@@ -934,6 +1107,7 @@ public:
         {
             case Rack::Kind::delay:  return delay;
             case Rack::Kind::reverb: return reverb;
+            case Rack::Kind::eq:     return eq;
             case Rack::Kind::drive:  break;
         }
         return drive;
@@ -993,7 +1167,7 @@ public:
     void sync()
     {
         auto& animator = juce::Desktop::getInstance().getAnimator();
-        std::array<juce::Rectangle<int>, 3> cardBounds {};
+        std::array<juce::Rectangle<int>, (size_t) Effects::numKinds> cardBounds {};
         for (const auto kind : Rack::allEffects)
         {
             auto& card = getCard (kind);
@@ -1030,9 +1204,8 @@ public:
         drive.refresh (settings.drive);
         delay.refresh (settings.delay, settings.bpm);
         reverb.refresh (settings.reverb);
-        const std::array<bool, 3> on { drive.getPower().getToggleState(), delay.getPower().getToggleState(),
-                                       reverb.getPower().getToggleState() };
-        if (on != shownOn)
+        eq.refresh (settings.eq);
+        if (const auto on = powers(); on != shownOn)
         {
             shownOn = on;
             for (const auto kind : Rack::allEffects)
@@ -1114,12 +1287,22 @@ public:
     }
 
 private:
+    // Each effect's power switch, by Rack::Kind.
+    std::array<bool, (size_t) Effects::numKinds> powers()
+    {
+        std::array<bool, (size_t) Effects::numKinds> on {};
+        for (const auto kind : Rack::allEffects)
+            on[(size_t) kind] = getCard (kind).getPower().getToggleState();
+        return on;
+    }
+
     const EffectCard& getCard (Rack::Kind kind) const noexcept
     {
         switch (kind)
         {
             case Rack::Kind::delay:  return delay;
             case Rack::Kind::reverb: return reverb;
+            case Rack::Kind::eq:     return eq;
             case Rack::Kind::drive:  break;
         }
         return drive;
@@ -1158,9 +1341,10 @@ private:
     DriveCard   drive;
     DelayCard   delay;
     ReverbCard  reverb;
+    EqCard      eq;
     std::vector<Rack::Kind> chain;
-    std::array<bool, 3> shownOn {};   // drive, delay, reverb
-    std::array<juce::Rectangle<int>, 3> shownBounds {};
+    std::array<bool, (size_t) Effects::numKinds> shownOn {};   // by Rack::Kind
+    std::array<juce::Rectangle<int>, (size_t) Effects::numKinds> shownBounds {};
     std::function<void (juce::Point<float>, juce::Point<int>)> emptyClickHandler;
     float uiScale = 1.0f;
 };
