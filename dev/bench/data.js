@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793629543660,
+  "lastUpdate": 1793634508049,
   "repoUrl": "https://github.com/Zanders214/Synth2",
   "entries": {
     "ZandersSynth2 DSP": [
@@ -2267,6 +2267,90 @@ window.BENCHMARK_DATA = {
           {
             "name": "DSP load 16x16 4-osc + filters @48k/512",
             "value": 14.851,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "152227414+Zanders214@users.noreply.github.com",
+            "name": "Dennis Zanders",
+            "username": "Zanders214"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fbb7ece165c51ef9e623a069c859a11c8a12ea1c",
+          "message": "Merge pull request #33 from Zanders214/claude/eq\n\nAdd an EQ to the effects: cuts, shelves and a bell",
+          "timestamp": "2026-11-02T16:46:20+01:00",
+          "tree_id": "b4ccc94a3308c6e49a8e58ff731f77ba4a6e7c40",
+          "url": "https://github.com/Zanders214/Synth2/commit/fbb7ece165c51ef9e623a069c859a11c8a12ea1c"
+        },
+        "date": 1793634507198,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "processBlock 8x7",
+            "value": 62493.256,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 8x7 @48k/512",
+            "value": 0.586,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16",
+            "value": 225641.655,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 @48k/512",
+            "value": 2.115,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 2-osc",
+            "value": 518403.996,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 2-osc @48k/512",
+            "value": 4.86,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 4-osc",
+            "value": 839956.223,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 4-osc @48k/512",
+            "value": 7.875,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 4-osc + effects",
+            "value": 970034.144,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 4-osc + effects @48k/512",
+            "value": 9.094,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 4-osc + filters",
+            "value": 1318286.944,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 4-osc + filters @48k/512",
+            "value": 12.359,
             "unit": "%"
           }
         ]
