@@ -72,13 +72,15 @@ public:
         return at != entries.end() ? &*at : nullptr;
     }
 
-    /** Saves `state` as `name`, replacing one already saved under that name;
+    /** Saves `state` as `name`, replacing one already saved under that name
+        (by this instance or another: the folder is read again first);
         returns it as it now reads, or nothing if it couldn't be written. */
     std::optional<Entry> save (const juce::String& name, const juce::String& detail, Presets::Category category, const juce::ValueTree& state)
     {
         const auto trimmed = name.trim();
         if (trimmed.isEmpty() || ! state.isValid() || ! folder.createDirectory().wasOk())
             return std::nullopt;
+        rescan();
 
         auto file = folder.getChildFile (juce::File::createLegalFileName (trimmed) + extension);
         if (const auto* existing = find (trimmed))

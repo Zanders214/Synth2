@@ -471,6 +471,12 @@ public:
         loaded if it is one of the user's, otherwise on just its category. */
     void openSavePanel()
     {
+        // Another instance may have saved since the browser opened.
+        if (store != nullptr)
+        {
+            store->rescan();
+            refilter();
+        }
         const auto* entry = currentEntry();
         const auto  category = entry != nullptr ? entry->category
                              : juce::isPositiveAndBelow (current, Presets::numPresets) ? Presets::factory[(size_t) current].category

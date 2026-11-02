@@ -2488,6 +2488,16 @@ void testUserPresets()
     check (oddName.has_value() && oddName->name == "A/B: \"C\"" && oddName->file.existsAsFile() && store.all().size() == 3,
            "a name a file can't have still saves, under the name given");
 
+    // Saved elsewhere meanwhile (another instance, on the same folder), the
+    // same name still replaces it rather than saving a second.
+    UserPresets elsewhere (folder);
+    elsewhere.rescan();
+    elsewhere.save ("From Elsewhere", "", Presets::Category::keys, p.getState().copyState());
+    const auto again = store.save ("from elsewhere", "", Presets::Category::keys, p.getState().copyState());
+    check (again.has_value() && store.all().size() == 4 && folder.findChildFiles (juce::File::findFiles, false, "*.zs2preset").size() == 4,
+           "a name saved by another instance since is replaced, not saved twice");
+    check (again.has_value() && store.remove (*again) && store.all().size() == 3, "(and removed again)");
+
     // Deleted: its file gone.
     const auto oddFile = oddName->file;
     check (p.deleteUserPreset (*oddName) && ! oddFile.exists() && store.find ("A/B: \"C\"") == nullptr && store.all().size() == 2,
