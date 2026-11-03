@@ -27,8 +27,8 @@ Synth2AudioProcessor::Synth2AudioProcessor()
     // The on-screen keyboard and the follower (the bench's layout and the
     // effects' rack in the state, and listening for changes to them) set
     // themselves up as members.
-    played.ensureSize ((size_t) Arp::midiRoom);
-    arpMidi.ensureSize ((size_t) Arp::midiRoom);
+    arp.played.ensureSize ((size_t) Arp::midiRoom);
+    arp.out.ensureSize ((size_t) Arp::midiRoom);
     for (size_t f = 0; f < filterValues.size(); ++f)
     {
         const auto& ids   = ParamID::filters[f];
@@ -419,17 +419,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
     return layout;
 }
 
-std::array<NoteActivity, Synth2Engine::maxNotes> Synth2AudioProcessor::getNoteActivity (int osc) const noexcept
+std::array<NoteActivity, Synth2Engine::maxNotes> Synth2AudioProcessor::Activity::getNoteActivity (int osc) const noexcept
 {
     return read (noteActivity[(size_t) juce::jlimit (0, Synth2Engine::numOscillators - 1, osc)]);
 }
 
-std::array<NoteActivity, Synth2Engine::maxNotes> Synth2AudioProcessor::getSweepActivity (int osc) const noexcept
+std::array<NoteActivity, Synth2Engine::maxNotes> Synth2AudioProcessor::Activity::getSweepActivity (int osc) const noexcept
 {
     return read (sweepActivity[(size_t) juce::jlimit (0, Synth2Engine::numOscillators - 1, osc)]);
 }
 
-std::array<NoteActivity, Synth2Engine::maxNotes> Synth2AudioProcessor::read (const PublishedNotes& published) noexcept
+std::array<NoteActivity, Synth2Engine::maxNotes> Synth2AudioProcessor::Activity::read (const PublishedNotes& published) noexcept
 {
     std::array<NoteActivity, Synth2Engine::maxNotes> activity {};
     for (size_t i = 0; i < activity.size(); ++i)
@@ -439,6 +439,21 @@ std::array<NoteActivity, Synth2Engine::maxNotes> Synth2AudioProcessor::read (con
         activity[i].progress = published[i].progress.load();
     }
     return activity;
+}
+
+void Synth2AudioProcessor::Activity::publish (const Synth2Engine& voices) noexcept
+{
+    activeNotes.store (voices.getNumActiveNotes());
+    for (size_t k = 0; k < noteActivity.size(); ++k)
+    {
+        const auto notes  = voices.getActivity ((int) k);
+        const auto sweeps = voices.getSweepActivity ((int) k);
+        for (size_t i = 0; i < notes.size(); ++i)
+        {
+            noteActivity[k][i].publish (notes[i]);
+            sweepActivity[k][i].publish (sweeps[i]);
+        }
+    }
 }
 
 Synth2Engine::Settings Synth2AudioProcessor::currentSettings() const noexcept
@@ -561,9 +576,9 @@ Arp::Settings Synth2AudioProcessor::arpSettings() const noexcept
     settings.swing = param (ParamID::arpSwing);
     settings.latch = param (ParamID::arpLatch) >= 0.5f;
     settings.octaves = juce::roundToInt (param (ParamID::arpOctaves)) + 1;
-    settings.pattern.length = arpLength.load (std::memory_order_relaxed);
+    settings.pattern.length = arp.length.load();
     for (int i = 0; i < Arp::maxSteps; ++i)
-        settings.pattern[i] = Arp::decode (arpSteps[(size_t) i].load (std::memory_order_relaxed));
+        settings.pattern[i] = Arp::decode (arp.steps[(size_t) i].load());
     return settings;
 }
 
@@ -571,7 +586,7 @@ void Synth2AudioProcessor::prepareToPlay (double sampleRate, int)
 {
     engine.setSettings (currentSettings());
     engine.prepare (sampleRate);
-    arp.prepare (sampleRate);
+    arp.player.prepare (sampleRate);
 }
 
 void Synth2AudioProcessor::releaseResources()
@@ -608,24 +623,13 @@ void Synth2AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     transport.bpm = hostBpm.load();
 
     engine.setSettings (currentSettings());
-    played.clear();
-    keys.addTo (played);
+    arp.played.clear();
+    keys.addTo (arp.played);
     for (const auto event : midi)
-        Arp::addIfRoom (played, event.data, event.numBytes, event.samplePosition);
-    arp.process (played, arpMidi, buffer.getNumSamples(), arpSettings(), transport);
-    engine.process (buffer, arpMidi);
-    activeNotes.store (engine.getNumActiveNotes());
-
-    for (size_t k = 0; k < noteActivity.size(); ++k)
-    {
-        const auto activity = engine.getActivity ((int) k);
-        const auto sweeps   = engine.getSweepActivity ((int) k);
-        for (size_t i = 0; i < activity.size(); ++i)
-        {
-            noteActivity[k][i].publish (activity[i]);
-            sweepActivity[k][i].publish (sweeps[i]);
-        }
-    }
+        Arp::addIfRoom (arp.played, event.data, event.numBytes, event.samplePosition);
+    arp.player.process (arp.played, arp.out, buffer.getNumSamples(), arpSettings(), transport);
+    engine.process (buffer, arp.out);
+    activity.publish (engine);
 
     keys.setHostHeld (engine.getHeldNotes());
 
@@ -976,8 +980,8 @@ void Synth2AudioProcessor::Follower::followArp()
 {
     const auto pattern = Arp::Model (owner.apvts).pattern();
     for (int i = 0; i < Arp::maxSteps; ++i)
-        owner.arpSteps[(size_t) i].store (Arp::encode (pattern[i]), std::memory_order_relaxed);
-    owner.arpLength.store (pattern.length, std::memory_order_relaxed);
+        owner.arp.steps[(size_t) i].store (Arp::encode (pattern[i]));
+    owner.arp.length.store (pattern.length);
 }
 
 void Synth2AudioProcessor::Follower::valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTree& child)

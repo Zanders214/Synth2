@@ -5,6 +5,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 
 #include "RtSafety.h"
@@ -47,7 +48,7 @@ namespace Arp
 
     inline void addIfRoom (juce::MidiBuffer& midi, const juce::uint8* data, int numBytes, int samplePosition) noexcept
     {
-        constexpr int header = (int) (sizeof (std::int32_t) + sizeof (std::uint16_t));
+        constexpr auto header = (int) (sizeof (std::int32_t) + sizeof (std::uint16_t));
         if (midi.data.size() + numBytes + header <= midiRoom)
             midi.addEvent (data, numBytes, samplePosition);
     }
@@ -58,7 +59,7 @@ namespace Arp
     inline constexpr std::array<const char*, numLengths> lengthNames { "Short", "Half", "Long", "Tie" };
 
     /** The part of its step a note sounds for (a tie, all of it and on). */
-    inline constexpr double gateOf (Length length) noexcept
+    constexpr double gateOf (Length length) noexcept
     {
         switch (length)
         {
@@ -76,15 +77,28 @@ namespace Arp
         float        velocity = 0.8f;   // 0..1
         Length       length   = Length::half;
 
-        bool plays (int row) const noexcept { return ((rows >> row) & 1u) != 0; }
+        bool plays (int row) const noexcept { return ((std::byte { rows } >> row) & std::byte { 1 }) != std::byte {}; }
         bool isRest() const noexcept        { return rows == 0; }
 
-        bool operator== (const Step& other) const noexcept
+        /** Has row `row` play, or not. */
+        void setRow (int row, bool on) noexcept
         {
-            return rows == other.rows && length == other.length
-                && juce::roundToInt (velocity * 127.0f) == juce::roundToInt (other.velocity * 127.0f);
+            const auto bit = std::byte { 1 } << row;
+            rows = std::to_integer<std::uint8_t> (on ? std::byte { rows } | bit : std::byte { rows } & ~bit);
         }
-        bool operator!= (const Step& other) const noexcept { return ! operator== (other); }
+
+        /** Moves its notes a row up, or down. */
+        void shift (bool up) noexcept
+        {
+            rows = std::to_integer<std::uint8_t> (up ? std::byte { rows } << 1 : std::byte { rows } >> 1);
+        }
+
+        friend bool operator== (const Step& a, const Step& b) noexcept
+        {
+            return a.rows == b.rows && a.length == b.length
+                && juce::roundToInt (a.velocity * 127.0f) == juce::roundToInt (b.velocity * 127.0f);
+        }
+        friend bool operator!= (const Step& a, const Step& b) noexcept { return ! (a == b); }
     };
 
     /** A step in 32 bits, to hand to the audio thread in an atomic: its
@@ -112,8 +126,8 @@ namespace Arp
         const Step& operator[] (int index) const noexcept { return steps[(size_t) index]; }
         Step&       operator[] (int index) noexcept       { return steps[(size_t) index]; }
 
-        bool operator== (const Pattern& other) const noexcept { return length == other.length && steps == other.steps; }
-        bool operator!= (const Pattern& other) const noexcept { return ! operator== (other); }
+        friend bool operator== (const Pattern& a, const Pattern& b) noexcept { return a.length == b.length && a.steps == b.steps; }
+        friend bool operator!= (const Pattern& a, const Pattern& b) noexcept { return ! (a == b); }
     };
 
     /** The step lengths RATE can be, in beats (a quarter note). */
@@ -167,9 +181,18 @@ namespace Arp
                 case Shape::down:   pattern[i] = single (3 - i % 4, accent); break;
                 case Shape::upDown: pattern[i] = single (upDown[(size_t) (i % 6)], accent); break;
                 case Shape::random:
-                    pattern[i] = random.nextInt (8) == 0 ? Step {} : single (random.nextInt (6), random.nextInt (3) == 0 ? 1.0f : 0.65f,
-                                                                             random.nextInt (4) == 0 ? Length::longNote : Length::half);
+                {
+                    if (random.nextInt (8) == 0)   // a rest
+                    {
+                        pattern[i] = Step {};
+                        break;
+                    }
+                    const int row = random.nextInt (6);
+                    const float velocity = random.nextInt (3) == 0 ? 1.0f : 0.65f;
+                    const auto held = random.nextInt (4) == 0 ? Length::longNote : Length::half;
+                    pattern[i] = single (row, velocity, held);
                     break;
+                }
                 case Shape::chord:
                     pattern[i] = stabs[(size_t) i] ? Step { 0b111, accent, Length::shortNote } : Step {};
                     break;
@@ -201,8 +224,7 @@ namespace Arp
                 case 0:   // a note up or down a row
                     if (! step.isRest())
                     {
-                        const bool up = (step.rows & 0x80u) == 0 && (random.nextBool() || (step.rows & 1u) != 0);
-                        step.rows = (std::uint8_t) (up ? step.rows << 1 : step.rows >> 1);
+                        step.shift (! step.plays (numRows - 1) && (random.nextBool() || step.plays (0)));
                         break;
                     }
                     [[fallthrough]];
@@ -306,13 +328,13 @@ namespace Arp
         }
 
         /** The pattern's step playing (-1 for none), for the grid's playhead. Any thread. */
-        int playingStep() const noexcept { return shownStep.load (std::memory_order_relaxed); }
+        int playingStep() const noexcept { return shownStep.load(); }
 
         /** The note each row plays with the keys held now (-1 past the
             notes), for the grid's labels; all -1 with no keys. Any thread. */
         std::array<int, numRows> rowNotes() const noexcept
         {
-            const auto packed = shownRows.load (std::memory_order_relaxed);
+            const auto packed = shownRows.load();
             std::array<int, numRows> notes {};
             for (int r = 0; r < numRows; ++r)
             {
@@ -360,10 +382,16 @@ namespace Arp
 
         void handle (const juce::uint8* data, int numBytes, int when) noexcept
         {
-            const int status  = numBytes > 0 ? (data[0] & 0xf0) : 0;
-            const int channel = numBytes > 0 ? (data[0] & 0x0f) + 1 : 1;
-            const int first   = numBytes > 1 ? data[1] & 0x7f : 0;
-            const int second  = numBytes > 2 ? data[2] & 0x7f : 0;
+            // Byte `index` of the message under `mask`, or 0 past its end.
+            const auto bits = [data, numBytes] (int index, std::byte mask)
+            {
+                return index < numBytes ? std::to_integer<int> (std::byte { data[index] } & mask) : 0;
+            };
+
+            const int status  = bits (0, std::byte { 0xf0 });
+            const int channel = bits (0, std::byte { 0x0f }) + 1;
+            const int first   = bits (1, std::byte { 0x7f });
+            const int second  = bits (2, std::byte { 0x7f });
             const bool on     = current->on;
 
             if (status == 0x90 && second > 0)
@@ -464,8 +492,7 @@ namespace Arp
             {
                 if (key.note < 0)
                     continue;
-                const auto end = chord.notes.begin() + chord.size;
-                if (std::find (chord.notes.begin(), end, key.note) != end)
+                if (const auto end = chord.notes.begin() + chord.size; std::find (chord.notes.begin(), end, key.note) != end)
                     continue;
                 int i = chord.size++;
                 for (; i > 0 && chord.notes[(size_t) i - 1] > key.note; --i)
@@ -639,7 +666,7 @@ namespace Arp
             const auto& pattern = current->pattern;
             const int   length  = juce::jlimit (1, maxSteps, pattern.length);
             const auto  k       = nextStep++;
-            const int   index   = (int) (((k % length) + length) % length);   // k is negative in a host's pre-roll
+            const auto  index   = (int) (((k % length) + length) % length);   // k is negative in a host's pre-roll
             const auto& step    = pattern[index];
             const auto  heard   = chord();
             const int   shift   = 12 * octaveOf ((k - index) / length);
@@ -714,13 +741,13 @@ namespace Arp
 
         void publish (int step, const Chord& heard, int shift) noexcept
         {
-            shownStep.store (step, std::memory_order_relaxed);
+            shownStep.store (step);
             std::uint64_t packed = ~std::uint64_t {};
             if (step >= 0 && heard.size > 0)
                 for (int r = 0; r < numRows; ++r)
                     if (const int pitch = heard.pitchOf (r) + shift; pitch <= 127)
                         packed = (packed & ~(std::uint64_t { 0xff } << (8 * r))) | ((std::uint64_t) pitch << (8 * r));
-            shownRows.store (packed, std::memory_order_relaxed);
+            shownRows.store (packed);
         }
 
         double sampleRate  = 44100.0;
