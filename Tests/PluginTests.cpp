@@ -977,15 +977,30 @@ void testEditor()
            "the right arrow steps SAW to SQUARE");
     picker.mouseDown (mouseAt (picker, picker.nextArrow().getCentre()));
     picker.mouseDown (mouseAt (picker, picker.previousArrow().getCentre()));
-    check (picker.getSelected() == 3 && ! menu.isOpen(), "and round to SINE and back, without opening the tray");
+    check (picker.getSelected() == 3 && ! menu.isOpen(), "and on to NOISE and back, without opening the tray");
 
     juce::MouseWheelDetails wheel {};
     wheel.deltaY = -0.25f;
     picker.mouseWheelMove (mouseAt (picker, { 40.0f, 60.0f }), wheel);
-    check (picker.getSelected() == 0, "scrolling over the well flips the shape");
+    check (picker.getSelected() == 4 && approx (param (p, ParamID::osc1Wave), (float) Waveform::noise, 1e-6f), "scrolling over the well flips the shape");
+
+    // NOISE has no pitch or stack: its card shows LEVEL alone.
+    const auto onlyLevel = [&osc1]
+    {
+        bool levelAlone = osc1.getDial (2).isVisible();
+        for (const int dial : { 0, 1, 3, 4, 5 })
+            levelAlone = levelAlone && ! osc1.getDial (dial).isVisible();
+        return levelAlone;
+    };
+    check (pumpUntil (onlyLevel) && osc1.getLocalBounds().contains (osc1.getDial (2).getBounds()),
+           "on NOISE, the oscillator hides PITCH, FINE, VOICES, DETUNE and WIDTH, leaving LEVEL");
+    check (pumpUntil ([&well] { return well.getShownWave() == Waveform::noise && well.getState().voices == 1; }),
+           "and its well draws the noise, without the stack's copies");
+    snapshot (render (*editor), "4a-noise");
     wheel.deltaY = 0.25f;
     picker.mouseWheelMove (mouseAt (picker, { 40.0f, 60.0f }), wheel);
     check (picker.getSelected() == 3 && pumpUntil ([&well] { return well.getShownWave() == Waveform::square; }), "and the well follows");
+    check (pumpUntil ([&osc1] { return osc1.getDial (0).isVisible() && osc1.getDial (5).isVisible(); }), "back on SQUARE, every dial shows again");
 
     picker.mouseDown (mouseAt (picker, { 60.0f, 60.0f }));
     const auto wellInEditor = editor->getLocalArea (&well, well.getLocalBounds()).toFloat();
@@ -2425,10 +2440,14 @@ void testPresets()
         bool modulesMatch = true;
         bool shapedByOwn  = true;
         bool filteredByOwn = true;
+        bool tunedAsWritten = true;
         float attack = 0.0f;
         for (int slot = 0; slot < Bench::numOscillators; ++slot)
         {
             const auto& osc = preset.oscillators[(size_t) slot];
+            if (osc.has_value())
+                tunedAsWritten = tunedAsWritten && settings.oscillators[(size_t) slot].semitones == osc->semitones
+                                                && approx (settings.oscillators[(size_t) slot].fineCents, osc->fineCents, 0.05f);
             const bool shaped = osc.has_value() && osc->envelope.has_value();
             const bool filtered = osc.has_value() && osc->filter.has_value();
             modulesMatch = modulesMatch && bench.isPresent ({ Bench::Kind::oscillator, slot }) == osc.has_value()
@@ -2450,6 +2469,7 @@ void testPresets()
         const std::string name = preset.name;
         check (q.getCurrentProgram() == i && modulesMatch && apart, name + ": its modules are on the bench, apart");
         check (shapedByOwn && filteredByOwn, name + ": each envelope and filter takes its own oscillator");
+        check (tunedAsWritten, name + ": each oscillator plays at the PITCH and FINE it is written with, within their ranges");
         check (peak > 0.2f && peak < 1.0f, name + ": a chord sounds without clipping (peak " + std::to_string (peak) + ")");
     }
 
@@ -2609,8 +2629,10 @@ void testPresets()
     snapshot (render (*editor), "9-presets");
 
     // By category.
-    browser.mouseDown (mouseAt (browser, browser.categoryBounds ((int) Presets::Category::sfx).getCentre()));
-    check (browser.getCatalog().getShown() == PresetBrowser::all, "a category with no presets in it can't be opened");
+    for (int category = 0; category < Presets::numCategories; ++category)
+        check (browser.getCatalog().countIn (category) > 0, std::string (Presets::categoryNames[(size_t) category]) + " has presets of its own");
+    browser.mouseDown (mouseAt (browser, browser.categoryBounds (PresetBrowser::user).getCentre()));
+    check (browser.getCatalog().getShown() == PresetBrowser::user && browser.getCatalog().getListed().empty(), "the user's, with none saved yet, lists none");
     browser.mouseDown (mouseAt (browser, browser.categoryBounds ((int) Presets::Category::bass).getCentre()));
     const auto numBass = (size_t) std::count_if (Presets::factory.begin(), Presets::factory.end(),
                                                  [] (const Presets::Preset& preset) { return preset.category == Presets::Category::bass; });
@@ -2797,7 +2819,15 @@ void testUserPresets()
     check (! nightFile.exists() && store.find ("Night Pad") == nullptr && presets.getUserPresetName().isEmpty() && browser.getCatalog().getListed().size() == 2,
            "a second deletes it");
     browser.mouseDown (mouseAt (browser, browser.categoryBounds ((int) Presets::Category::sfx).getCentre()));
-    check (browser.getCatalog().getShown() == PresetBrowser::user, "and a category with none of either still can't be opened");
+    const auto& sfx = browser.getCatalog().getListed();
+    const auto inSfx = [] (const auto& preset) { return preset.category == Presets::Category::sfx; };
+    const auto numSfx  = (size_t) std::count_if (Presets::factory.begin(), Presets::factory.end(), inSfx);
+    const auto userSfx = (size_t) std::count_if (store.all().begin(), store.all().end(), inSfx);
+    bool factoryFirst = sfx.size() == numSfx + userSfx;
+    for (size_t i = 0; factoryFirst && i < sfx.size(); ++i)
+        factoryFirst = sfx[i].isUser() == (i >= numSfx);
+    check (browser.getCatalog().getShown() == (int) Presets::Category::sfx && factoryFirst,
+           "a category lists the factory's presets in it, then the user's");
 
     base.reset();
     folder.deleteRecursively();
@@ -2902,7 +2932,11 @@ void testPanel()
 
     // A preset on the panel stays on it, its six there.
     model.setFlow (Bench::Flow::panel);
-    p.loadPreset (Presets::numPresets - 1);
+    int tranceLead = -1;
+    for (int i = 0; i < Presets::numPresets; ++i)
+        if (juce::String (Presets::factory[(size_t) i].name) == "Trance Lead")
+            tranceLead = i;
+    p.loadPreset (tranceLead);
     int on = 0;
     bool sixThere = true;
     for (const auto& id : panelSix)
@@ -3318,6 +3352,8 @@ void testTypedKeys()
 }
 
 } // namespace
+
+
 
 int main()
 {

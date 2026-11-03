@@ -143,7 +143,7 @@ public:
     /** The caption at the well's top left ("WAVE"); empty for none. */
     void setCaption (const juce::String& newCaption) { caption = newCaption; repaint(); }
 
-    /** Shows `wave` (0..3) in place of the chosen one, or the chosen one
+    /** Shows `wave` (0..4) in place of the chosen one, or the chosen one
         again for -1. */
     void setPreview (int wave)
     {

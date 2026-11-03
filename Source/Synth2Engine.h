@@ -183,6 +183,15 @@ public:
         for (size_t k = 0; k < (size_t) numOscillators; ++k)
         {
             auto& oscillator = settings.oscillators[k];
+            if (oscillator.wave == Waveform::noise)
+            {
+                // Noise has no pitch to move or stack: the controls it hides play no part.
+                oscillator.semitones   = 0;
+                oscillator.fineCents   = 0.0f;
+                oscillator.voices      = 1;
+                oscillator.detuneCents = 0.0f;
+                oscillator.width       = 0.0f;
+            }
             oscillator.semitones   = juce::jlimit (-maxSemitones, maxSemitones, oscillator.semitones);
             oscillator.fineCents   = juce::jlimit (-maxFineCents, maxFineCents, oscillator.fineCents);
             oscillator.level       = juce::jlimit (0.0f, 1.0f, oscillator.level);

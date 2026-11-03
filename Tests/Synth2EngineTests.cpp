@@ -559,6 +559,78 @@ void testOscillators()
                                     + std::to_string (largestStep) + ")");
 }
 
+// ---- Test 5a: NOISE: white, the same loudness whatever the key, and new each hit.
+
+void testNoise()
+{
+    std::printf ("Noise:\n");
+
+    // How alike each sample is to the next: about 1 for a tone, about 0 for white noise.
+    const auto neighbourly = [] (const juce::AudioBuffer<float>& out, int start, int end)
+    {
+        double together = 0.0, alone = 0.0;
+        for (int i = start + 1; i < end; ++i)
+        {
+            together += (double) out.getSample (0, i) * out.getSample (0, i - 1);
+            alone    += (double) out.getSample (0, i) * out.getSample (0, i);
+        }
+        return (float) (together / juce::jmax (1e-12, alone));
+    };
+    const auto play = [] (const Synth2Engine::Settings& settings, int note)
+    {
+        auto engine = makeEngine (settings);
+        return run (*engine, blockSize * 16, { { 0, on (note) } });
+    };
+
+    const auto noise = defaults (Waveform::noise);
+    const auto saw   = defaults (Waveform::saw);
+    const auto low   = play (noise, 36);
+    const auto high  = play (noise, 96);
+    const int  from  = blockSize * 4;
+    const int  to    = blockSize * 16;
+    check (std::abs (neighbourly (low, from, to)) < 0.05f && std::abs (neighbourly (high, from, to)) < 0.05f
+               && neighbourly (play (saw, 36), from, to) > 0.9f,
+           "NOISE is white, each sample unrelated to the one before, low on the keys or high");
+    const float sawLevel = rms (play (saw, 60), 0, from, to);
+    check (approx (rms (low, 0, from, to), sawLevel, sawLevel * 0.1f) && approx (rms (high, 0, from, to), sawLevel, sawLevel * 0.1f),
+           "about as loud as a saw, whatever the key");
+    check (peak (low, 0, to) <= 1.0f, "and stays within -1..1");
+
+    // Its PITCH, FINE and unison stack play no part: one centred voice.
+    auto stacked = noise;
+    stacked.oscillators[0].semitones   = 12;
+    stacked.oscillators[0].voices      = 16;
+    stacked.oscillators[0].detuneCents = 50.0f;
+    stacked.oscillators[0].width       = 1.0f;
+    const auto wide = play (stacked, 36);
+    double spread = 0.0;
+    for (int i = from; i < to; ++i)
+        spread += std::abs (wide.getSample (0, i) - wide.getSample (1, i));
+    check (spread < 1e-3 && approx (rms (wide, 0, from, to), rms (low, 0, from, to), rms (low, 0, from, to) * 0.1f),
+           "its hidden PITCH and stack change nothing: one voice, in the middle, as loud");
+
+    // Each hit is new noise, not a recording played again.
+    auto engine = makeEngine (noise);
+    const auto twice = run (*engine, blockSize * 40, { { 0, on (60) }, { blockSize * 8, off (60) }, { blockSize * 20, on (60) } });
+    double differs = 0.0;
+    for (int i = 0; i < blockSize * 4; ++i)
+        differs += std::abs (twice.getSample (0, i) - twice.getSample (0, blockSize * 20 + i));
+    check (differs > 1.0, "a key struck again plays different noise");
+
+    // Four at a time, it gives what one at a time does, to the bit.
+    BlepOscillator one, four;
+    one.reset (0.3);
+    four.reset (0.3);
+    one.setIncrement (0.01);
+    four.setIncrement (0.01);
+    std::array<float, 1001> stepped {}, rendered {}, levels {};
+    levels.fill (1.0f);
+    for (auto& sample : stepped)
+        sample = one.next (Waveform::noise);
+    four.render (Waveform::noise, rendered.data(), levels.data(), (int) rendered.size(), false);
+    check (stepped == rendered, "rendering NOISE in runs gives what stepping it does, to the bit");
+}
+
 // ---- Test 5b: the bench's modules: four oscillators, routing, unison and envelope off.
 void testModules()
 {
@@ -1928,6 +2000,7 @@ int main()
     testUnison();
     testVoicesChangeMidNote();
     testOscillators();
+    testNoise();
     testModules();
     testPolyphony();
     testPedalAndPanic();

@@ -54,6 +54,8 @@ void testShapes()
             bounded  = bounded && v >= -1.0f && v <= 1.0f;
             periodic = periodic && approx (v, O::naive ((Waveform) w, t + 3.0), 1e-4f);
         }
+    for (int i = 0; i < 1000; ++i)
+        bounded = bounded && std::abs (O::naive (Waveform::noise, i / 137.0)) <= 1.0f;
     check (bounded,  "every shape stays within -1..1");
     check (periodic, "every shape repeats each cycle");
 }
@@ -474,8 +476,8 @@ void testWavePicking()
     using M = Synth2VisualModel;
 
     check (M::stepWave (2, 1) == 3 && M::stepWave (2, -1) == 1, "the arrows step to the next and previous shape");
-    check (M::stepWave (3, 1) == 0 && M::stepWave (0, -1) == 3, "and wrap round at either end");
-    check (M::stepWave (1, 9) == 2 && M::stepWave (1, -9) == 0, "any number of steps lands on a shape");
+    check (M::stepWave (3, 1) == 4 && M::stepWave (4, 1) == 0 && M::stepWave (0, -1) == 4, "past SQUARE to NOISE, and wrap round at either end");
+    check (M::stepWave (1, 10) == 1 && M::stepWave (1, -9) == 2, "any number of steps lands on a shape");
 
     check (approx (M::ease (0.0f), 0.0f, 1e-4f) && approx (M::ease (1.0f), 1.0f, 1e-4f), "the ease starts at 0 and ends at 1");
     bool rising = true;

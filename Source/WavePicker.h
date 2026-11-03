@@ -11,9 +11,9 @@
 
 namespace WaveGlyph
 {
-    inline constexpr int numWaves = 4;
-    inline constexpr std::array<const char*, numWaves> shortNames { "SINE", "TRI", "SAW", "SQUARE" };
-    inline constexpr std::array<const char*, numWaves> longNames  { "SINE", "TRIANGLE", "SAW", "SQUARE" };
+    inline constexpr int numWaves = (int) Waveform::noise + 1;
+    inline constexpr std::array<const char*, numWaves> shortNames { "SINE", "TRI", "SAW", "SQUARE", "NOISE" };
+    inline constexpr std::array<const char*, numWaves> longNames  { "SINE", "TRIANGLE", "SAW", "SQUARE", "NOISE" };
 
     /** `cycles` of `wave` drawn across `area`, peak to peak its full height. */
     inline juce::Path path (Waveform wave, juce::Rectangle<float> area, float cycles)
@@ -79,7 +79,7 @@ public:
 
     int getSelected() const noexcept { return selected; }
 
-    /** Picks `index` (0..3), as one gesture. */
+    /** Picks `index` (0..4), as one gesture. */
     void choose (int index) { attachment.setValueAsCompleteGesture ((float) juce::jlimit (0, numWaves - 1, index)); }
 
     /** Picks the shape `delta` steps on, wrapping round. */
@@ -207,7 +207,7 @@ private:
 };
 
 /**
-    WaveMenu — the tray the WAVE well drops open: the four shapes as big tiles,
+    WaveMenu — the tray the WAVE well drops open: the five shapes as big tiles,
     each drawn glowing in the spectrum, the chosen one ringed in the accent.
 
     It covers the whole editor while open, dimming everything but the

@@ -708,10 +708,17 @@ public:
         const float s = uiScale;
         const auto px = [s] (float v) { return juce::roundToInt (v * s); };
 
-        // The dials show unless the gear menu's view hides them, and always on the panel.
+        // The dials show unless the gear menu's view hides them (always on
+        // the panel), all but those the module leaves out as it is set.
         const bool withDials = panelShape || Bench::showsDials (id.kind, view);
-        for (const auto& dial : dials)
-            dial->slider.setVisible (withDials);
+        std::vector<Dial*> shown;
+        for (size_t i = 0; i < dials.size(); ++i)
+        {
+            const bool showing = withDials && showsDial ((int) i);
+            dials[i]->slider.setVisible (showing);
+            if (showing)
+                shown.push_back (dials[i].get());
+        }
 
         power.setBounds (px (10.0f), px (6.0f), px (18.0f), px (18.0f));
 
@@ -723,35 +730,37 @@ public:
             // Every dial in one row along the bottom, the display over them.
             auto row = area.removeFromBottom (px (6.0f + 52.0f + 31.0f)).withTrimmedBottom (px (6.0f));
             area.removeFromBottom (px (8.0f));
-            layoutWell (area);
-            const int columnWidth = dials.empty() ? 0 : row.getWidth() / (int) dials.size();
-            for (size_t i = 0; i < dials.size(); ++i)
+            layoutWell (area, false);
+            const int columnWidth = shown.empty() ? 0 : row.getWidth() / (int) shown.size();
+            for (size_t i = 0; i < shown.size(); ++i)
             {
-                auto column = i + 1 == dials.size() ? row : row.removeFromLeft (columnWidth);
-                dials[i]->column = column;
-                dials[i]->slider.setBounds (column.withHeight (px (52.0f)).withSizeKeepingCentre (px (52.0f), px (52.0f)));
+                auto column = i + 1 == shown.size() ? row : row.removeFromLeft (columnWidth);
+                shown[i]->column = column;
+                shown[i]->slider.setBounds (column.withHeight (px (52.0f)).withSizeKeepingCentre (px (52.0f), px (52.0f)));
             }
             return;
         }
 
-        layoutWell (area.removeFromTop (px (Bench::wellHeightOf (id.kind, view))));
+        const bool displayHidden = id.kind == Bench::Kind::oscillator ? view.oscillators == Bench::OscillatorView::compact
+                                                                      : Bench::wellHeightOf (id.kind, view) <= 0.0f;
+        layoutWell (area.removeFromTop (px (Bench::wellHeightOf (id.kind, view))), displayHidden);
         if (! Bench::showsDials (id.kind, view))
             return;
 
         // Rows of (up to) three dials across the card, each with its name and
         // value beneath.
         constexpr size_t perRow = 3;
-        for (size_t first = 0; first < dials.size(); first += perRow)
+        for (size_t first = 0; first < shown.size(); first += perRow)
         {
-            const size_t last = juce::jmin (dials.size(), first + perRow);
+            const size_t last = juce::jmin (shown.size(), first + perRow);
             const int columnWidth = area.getWidth() / (int) (last - first);
             area.removeFromTop (px (12.0f));
             auto band = area.removeFromTop (px (52.0f + 31.0f));
             for (size_t i = first; i < last; ++i)
             {
                 auto column = i + 1 == last ? band : band.removeFromLeft (columnWidth);
-                dials[i]->column = column;
-                dials[i]->slider.setBounds (column.withHeight (px (52.0f)).withSizeKeepingCentre (px (52.0f), px (52.0f)));
+                shown[i]->column = column;
+                shown[i]->slider.setBounds (column.withHeight (px (52.0f)).withSizeKeepingCentre (px (52.0f), px (52.0f)));
             }
         }
     }
@@ -847,17 +856,14 @@ protected:
         showDim (true);
     }
 
-    /** Lays the module's display well (and anything over it) out in `well`. */
-    virtual void layoutWell (juce::Rectangle<int> well) = 0;
+    /** Lays the module's display well (and anything over it) out in `well`;
+        `displayHidden` when the gear menu's view hides the well's display, as
+        the panel never does. */
+    virtual void layoutWell (juce::Rectangle<int> well, bool displayHidden) = 0;
 
-    /** Whether the gear menu's views hide the well's display, as the panel never does. */
-    bool wellHidden() const noexcept
-    {
-        if (panelShape)
-            return false;
-        return id.kind == Bench::Kind::oscillator ? view.oscillators == Bench::OscillatorView::compact
-                                                  : Bench::wellHeightOf (id.kind, view) <= 0.0f;
-    }
+    /** Whether dial `index` shows, as the module is set (it can leave out
+        the ones that do nothing). */
+    virtual bool showsDial (int) const noexcept { return true; }
 
     float getUiScale() const noexcept { return uiScale; }
 
@@ -950,22 +956,34 @@ public:
     WavePicker&  getPicker() noexcept  { return picker; }
 
     /** Shows the oscillator as it plays: its shape, with a faint copy for
-        each of its unison voices, its pitch and its level. */
+        each of its unison voices, its pitch and its level. Noise has no
+        pitch or stack, so it hides PITCH, FINE, VOICES, DETUNE and WIDTH,
+        leaving LEVEL. */
     void refresh (const Synth2Engine::OscillatorSettings& osc)
     {
+        const bool isNoise = osc.wave == Waveform::noise;
         VoiceDisplayState shown;
         shown.wave   = osc.wave;
-        shown.voices = Unison::clampVoices (osc.voices);
-        shown.detune = osc.detuneCents;
-        shown.width  = osc.width;
+        shown.voices = isNoise ? 1 : Unison::clampVoices (osc.voices);
+        shown.detune = isNoise ? 0.0f : osc.detuneCents;
+        shown.width  = isNoise ? 0.0f : osc.width;
         display.setState (shown);
-        display.setOsc ({ Synth2VisualModel::cyclesFor (osc.semitones, osc.fineCents), osc.level });
+        display.setOsc ({ isNoise ? Synth2VisualModel::cyclesShown : Synth2VisualModel::cyclesFor (osc.semitones, osc.fineCents), osc.level });
+        if (isNoise != noise)
+        {
+            noise = isNoise;
+            resized();
+            repaint();
+        }
     }
 
 private:
-    void layoutWell (juce::Rectangle<int> well) override
+    static constexpr int levelDial = 2;   // the one dial noise keeps
+
+    bool showsDial (int index) const noexcept override { return ! noise || index == levelDial; }
+
+    void layoutWell (juce::Rectangle<int> well, bool compact) override
     {
-        const bool compact = wellHidden();
         display.setUiScale (getUiScale());
         picker.setUiScale (getUiScale());
         picker.setCompact (compact);
@@ -976,6 +994,7 @@ private:
 
     WaveDisplay display;
     WavePicker  picker;
+    bool        noise = false;   // playing NOISE, its pitch and stack dials hidden
 };
 
 /** An envelope: its AMP well over DELAY / ATTACK / HOLD and DECAY / SUSTAIN /
@@ -1013,7 +1032,7 @@ public:
     void refresh (const AmpDisplayState& amp) { display.setAmpState (amp); }
 
 private:
-    void layoutWell (juce::Rectangle<int> well) override
+    void layoutWell (juce::Rectangle<int> well, bool) override
     {
         display.setUiScale (getUiScale());
         display.setVisible (! well.isEmpty());
@@ -1089,7 +1108,7 @@ public:
     }
 
 private:
-    void layoutWell (juce::Rectangle<int> well) override
+    void layoutWell (juce::Rectangle<int> well, bool) override
     {
         response.setUiScale (getUiScale());
         if (isPanelShaped())
