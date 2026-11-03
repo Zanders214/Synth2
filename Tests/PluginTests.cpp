@@ -1167,6 +1167,40 @@ void testEditor()
     setParam (p, ParamID::env1Attack, 0.005f);
     snapshot (render (*editor), "8-cables");
 
+    // The cables hang in front of the cards, or, from their switch beside
+    // the zoom pill (or C), behind them, still over the bottom strip; one
+    // being dragged is always in front.
+    auto& hang = editor->getCables().getSwitch();
+    check (hang.isVisible() && ! hang.getToggleState() && ! model.view().cablesBehind, "with the cables, their switch shows, hanging them in front");
+    const auto inFront = render (*editor);
+    const auto keys    = editor->getKeyboard().getBounds();
+    hang.triggerClick();
+    check (pumpUntil ([&] { return model.view().cablesBehind && hang.getToggleState(); }) && pixelsChanged (inFront, render (*editor)) > 200,
+           "BEHIND hangs them behind the cards");
+    check (pixelsChanged (inFront.getClippedImage (keys), render (*editor).getClippedImage (keys)) == 0, "but still over the keyboard");
+    snapshot (render (*editor), "8b-cables-behind");
+    {
+        juce::MemoryBlock kept;
+        p.getStateInformation (kept);
+        Synth2AudioProcessor reopened;
+        reopened.setStateInformation (kept.getData(), (int) kept.getSize());
+        check (Bench::Model (reopened.getState()).view().cablesBehind, "a saved set keeps them there");
+    }
+    const auto behind = render (*editor);
+    osc1.mouseDown (mouseAt (osc1, jack));
+    osc1.mouseDrag (mouseAt (osc1, jack + juce::Point<float> (200.0f, 120.0f), jack));
+    check (editor->getCables().isPatching() && pixelsChanged (behind, render (*editor)) > 50, "a cable being dragged is drawn over the cards");
+    osc1.mouseUp (mouseAt (osc1, osc1.getLocalPoint (editor, editor->getCables().jackCentre (e1, Jack::in)), jack));
+    check (model.inputOf (e1) == std::optional (o1), "and plugged back in, hangs behind them again");
+    const auto replugged = render (*editor);
+    check (editor->keyPressed (juce::KeyPress ('c')) && ! model.view().cablesBehind && ! hang.getToggleState()
+               && pumpUntil ([&] { return pixelsChanged (replugged, render (*editor)) > 200; }),
+           "C brings them back in front");
+    editor->mouseDown (mouseAt (*editor, editor->presetBounds().getCentre()));
+    check (editor->getPresetBrowser().isOpen() && ! hang.isVisible(), "the switch goes with the cables, under the preset browser");
+    editor->mouseDown (mouseAt (*editor, editor->presetBounds().getCentre()));
+    check (hang.isVisible(), "and comes back with them");
+
     // Picking a cable up: by its oscillator, an envelope's IN or the output's IN.
     drag (osc1, Jack::out, { 400.0f, 860.0f });
     check (! model.inputOf (e1).has_value() && osc1.isDimmed() && env1.isDimmed(), "a cable dropped anywhere else is unplugged");

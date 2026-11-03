@@ -52,8 +52,9 @@
     back off (see setFlow). Where each sits on the free bench is kept, so it
     comes back there.
 
-    How the modules show themselves (see View), from the gear menu, and how
-    far the bench is zoomed and panned (see Viewport) are kept on the BENCH
+    How the modules show themselves (see View), from the gear menu, whether
+    the cables hang in front of them or behind, and how far the bench is
+    zoomed and panned (see Viewport) are kept on the BENCH
     too, so a set opens looking as it was left. Presets leave them alone.
 */
 namespace Bench
@@ -385,14 +386,17 @@ namespace Bench
         a small pill with the shape's icon and name. */
     enum class OscillatorView { full, compact };
 
+    /** How the modules show themselves, and whether the patch cables hang
+        in front of them or behind them. */
     struct View
     {
-        EnvelopeView   envelopes   = EnvelopeView::both;
-        OscillatorView oscillators = OscillatorView::full;
+        EnvelopeView   envelopes    = EnvelopeView::both;
+        OscillatorView oscillators  = OscillatorView::full;
+        bool           cablesBehind = false;
 
         friend bool operator== (const View& a, const View& b) noexcept
         {
-            return a.envelopes == b.envelopes && a.oscillators == b.oscillators;
+            return a.envelopes == b.envelopes && a.oscillators == b.oscillators && a.cablesBehind == b.cablesBehind;
         }
         friend bool operator!= (const View& a, const View& b) noexcept { return ! (a == b); }
     };
@@ -455,6 +459,7 @@ namespace Bench
     inline const juce::Identifier versionProperty { "version" };
     inline const juce::Identifier envelopeViewProperty   { "envelopeView" };
     inline const juce::Identifier oscillatorViewProperty { "oscillatorView" };
+    inline const juce::Identifier cablesBehindProperty   { "cablesBehind" };
     inline const juce::Identifier zoomProperty    { "zoom" };
     inline const juce::Identifier panXProperty    { "panX" };
     inline const juce::Identifier panYProperty    { "panY" };
@@ -919,7 +924,8 @@ namespace Bench
 
         // ---- How the modules show themselves ---------------------------------------
 
-        /** The view the gear menu picked (both and full when none was saved). */
+        /** The view the gear menu picked (both and full when none was saved),
+            and where the cables hang (in front when none was saved). */
         View view() const
         {
             const auto tree  = bench();
@@ -932,7 +938,8 @@ namespace Bench
                 return fallback;
             };
             return { (EnvelopeView) index (envelopeViewProperty, envelopeViewNames, (int) EnvelopeView::both),
-                     (OscillatorView) index (oscillatorViewProperty, oscillatorViewNames, (int) OscillatorView::full) };
+                     (OscillatorView) index (oscillatorViewProperty, oscillatorViewNames, (int) OscillatorView::full),
+                     (bool) tree.getProperty (cablesBehindProperty, false) };
         }
 
         void setView (const View& newView)
@@ -941,6 +948,7 @@ namespace Bench
             auto tree = bench();
             tree.setProperty (envelopeViewProperty, envelopeViewNames[(size_t) newView.envelopes], nullptr);
             tree.setProperty (oscillatorViewProperty, oscillatorViewNames[(size_t) newView.oscillators], nullptr);
+            tree.setProperty (cablesBehindProperty, newView.cablesBehind, nullptr);
         }
 
         /** How far the bench is zoomed and panned (1 at the top left when none was saved). */

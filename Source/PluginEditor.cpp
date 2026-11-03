@@ -82,14 +82,17 @@ Synth2AudioProcessorEditor::Synth2AudioProcessorEditor (Synth2AudioProcessor& p)
         [this]
         {
             benchView.setPillWanted (tab == Tab::bench);
+            cables.showSwitch();
             cables.repaint();
             repaint (layout.preset);
         } });
 
     // A click on an empty spot offers modules to add there; the cables
-    // follow the cards as the bench zooms and pans.
+    // follow the cards as the bench zooms and pans, and hung behind them,
+    // the bench paints them under its cards.
     benchView.setHandlers ({ [this] (juce::Point<float> benchAt, juce::Point<int> viewAt) { trays.openAdd (benchAt, viewAt + benchView.getPosition()); },
-                             [this] { cables.repaint(); } });
+                             [this] { cables.repaint(); },
+                             [this] (juce::Graphics& g) { cables.paintBehind (g); } });
     // And on the EFFECTS tab, offers the effects not yet in the chain.
     effectsView.onEmptyClick ([this] (juce::Point<float> rackAt, juce::Point<int> viewAt)
     {
@@ -182,6 +185,10 @@ void Synth2AudioProcessorEditor::showView()
     {
         shown.view = view;
         benchView.setView (view);
+        // And the cables, which may have gone behind the cards or come back in front.
+        benchView.repaint();
+        cables.repaint();
+        cables.showSwitch();
     }
 }
 
@@ -234,6 +241,7 @@ void Synth2AudioProcessorEditor::showFlow()
     if ((int) flow != shown.flow)
     {
         shown.flow = (int) flow;
+        cables.showSwitch();
         repaint();
     }
 }
@@ -285,6 +293,8 @@ void Synth2AudioProcessorEditor::timerCallback()
     {
         shown.cables = signature;
         cables.repaint();
+        if (shown.view.cablesBehind)
+            benchView.repaint();
         repaint (layout.outputColumn);
     }
     const auto userPreset = processorRef.getPresetLoader().getUserPresetName();
@@ -332,6 +342,12 @@ bool Synth2AudioProcessorEditor::keyPressed (const juce::KeyPress& key)
 {
     if (presetBrowser.handleKey (key))
         return true;
+    // C hangs the cables behind the cards, or back in front.
+    if (cables.getSwitch().isVisible() && key == juce::KeyPress ('c'))
+    {
+        cables.hangBehind (! model.view().cablesBehind);
+        return true;
+    }
     return playsTypedKeys() && keyboard.typedKeyPressed (key);
 }
 
@@ -353,6 +369,7 @@ void Synth2AudioProcessorEditor::showTab (Tab which)
     benchView.setPillWanted (tab == Tab::bench);
     effectsView.setVisible (tab == Tab::effects);
     arpView.setVisible (tab == Tab::arp);
+    cables.showSwitch();
     cables.repaint();
     repaint();
 }
@@ -452,6 +469,45 @@ void Synth2AudioProcessorEditor::Trays::stepPreset (int delta)
 }
 
 // ---- Cables ----------------------------------------------------------------------------
+
+Synth2AudioProcessorEditor::CableLayer::CableLayer (Synth2AudioProcessorEditor& ownerToUse) : owner (ownerToUse)
+{
+    // The cables take no clicks; their FRONT / BEHIND switch does.
+    setInterceptsMouseClicks (false, true);
+    addChildComponent (cablesSwitch);
+    cablesSwitch.setTooltip (owner.playsTypedKeys() ? "Hang the cables in front of the modules or behind them (C)"
+                                                    : "Hang the cables in front of the modules or behind them");
+    cablesSwitch.onClick = [this] { hangBehind (cablesSwitch.getToggleState()); };
+}
+
+// The switch sits on the bench's bottom edge, left of its zoom pill.
+void Synth2AudioProcessorEditor::CableLayer::resized()
+{
+    const float s     = owner.uiScale;
+    const auto  pill  = owner.benchView.getZoomPill().getBounds();
+    const int   width = juce::roundToInt (CablesSwitch::switchWidth * s);
+    cablesSwitch.setUiScale (s);
+    cablesSwitch.setBounds (pill.getX() - juce::roundToInt (8.0f * s) - width, pill.getY(), width, pill.getHeight());
+}
+
+bool Synth2AudioProcessorEditor::CableLayer::shows() const noexcept
+{
+    return owner.tab == Tab::bench && owner.model.flow() == Synth2AudioProcessor::SignalFlow::cables && ! owner.presetBrowser.isOpen();
+}
+
+void Synth2AudioProcessorEditor::CableLayer::hangBehind (bool behind)
+{
+    auto view = owner.model.view();
+    view.cablesBehind = behind;
+    owner.model.setView (view);
+    owner.showView();
+}
+
+void Synth2AudioProcessorEditor::CableLayer::showSwitch()
+{
+    cablesSwitch.setVisible (shows());
+    cablesSwitch.setToggleState (owner.model.view().cablesBehind, juce::dontSendNotification);
+}
 
 juce::Rectangle<float> Synth2AudioProcessorEditor::CableLayer::outputJackBounds() const noexcept
 {
@@ -572,13 +628,12 @@ juce::RectangleList<int> Synth2AudioProcessorEditor::CableLayer::cableArea (bool
     return area;
 }
 
-void Synth2AudioProcessorEditor::CableLayer::paint (juce::Graphics& g)
+// Every cable, in the colour of the module it comes from, where it may be
+// drawn (see cableArea): over the bench's box if `overBox`, and over the
+// bottom strip under it if `belowBox`.
+void Synth2AudioProcessorEditor::CableLayer::paintPatched (juce::Graphics& g, bool overBox, bool belowBox) const
 {
-    if (owner.tab != Tab::bench || owner.model.flow() != Synth2AudioProcessor::SignalFlow::cables || owner.presetBrowser.isOpen())
-        return;
-
-    // Each cable in the colour of the module it comes from.
-    const auto box    = owner.benchView.getBounds().toFloat();
+    const auto box    = owner.benchView.getBounds();
     const auto output = outputJackBounds().getCentre();
     for (const auto& [from, to] : owner.model.cables())
     {
@@ -587,18 +642,41 @@ void Synth2AudioProcessorEditor::CableLayer::paint (juce::Graphics& g)
             continue;
         const auto start = jackCentre (from);
         const auto end   = to.has_value() ? jackCentre (*to, BenchModule::Jack::in) : output;
+        auto area = cableArea (belowBox && box.toFloat().contains (start) && (! to.has_value() || box.toFloat().contains (end)));
+        if (! overBox)
+            area.subtract (box);
+        if (area.isEmpty())
+            continue;
         const juce::Graphics::ScopedSaveState saved (g);
-        g.reduceClipRegion (cableArea (box.contains (start) && (! to.has_value() || box.contains (end))));
+        g.reduceClipRegion (area);
         paintCable (g, start, end, source.getHeader().getJackColour());
     }
+}
+
+void Synth2AudioProcessorEditor::CableLayer::paint (juce::Graphics& g)
+{
+    if (! shows())
+        return;
+
+    // Over the box too, unless they hang behind the cards (see paintBehind).
+    paintPatched (g, ! owner.model.view().cablesBehind, true);
 
     if (patching.from.has_value())
     {
         const auto start = jackCentre (*patching.from);
         const juce::Graphics::ScopedSaveState saved (g);
-        g.reduceClipRegion (cableArea (box.contains (start)));
+        g.reduceClipRegion (cableArea (owner.benchView.getBounds().toFloat().contains (start)));
         paintCable (g, start, patching.to, owner.benchView.getModule (*patching.from).getHeader().getJackColour().withAlpha (0.8f));
     }
+}
+
+void Synth2AudioProcessorEditor::CableLayer::paintBehind (juce::Graphics& g) const
+{
+    if (! shows() || ! owner.model.view().cablesBehind)
+        return;
+    const juce::Graphics::ScopedSaveState saved (g);
+    g.addTransform (juce::AffineTransform::translation ((float) -owner.benchView.getX(), (float) -owner.benchView.getY()));
+    paintPatched (g, true, false);
 }
 
 // With the cables: every module's jacks, lit where a cable is plugged in, and
@@ -713,6 +791,7 @@ void Synth2AudioProcessorEditor::togglePresets()
     // Over the bench, the zoom pill and the cables would only get in the way.
     benchView.setPillWanted (false);
     presetBrowser.open (processorRef.getCurrentProgram(), processorRef.getPresetLoader().getUserPresetName());
+    cables.showSwitch();
     cables.repaint();
     repaint (layout.preset);
 }
