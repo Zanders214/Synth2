@@ -342,8 +342,9 @@ bool Synth2AudioProcessorEditor::keyPressed (const juce::KeyPress& key)
 {
     if (presetBrowser.handleKey (key))
         return true;
-    // C hangs the cables behind the cards, or back in front.
-    if (cables.getSwitch().isVisible() && key == juce::KeyPress ('c'))
+    // C hangs the cables behind the cards, or back in front (in the
+    // standalone app; a host keeps its keys).
+    if (playsTypedKeys() && cables.getSwitch().isVisible() && key == juce::KeyPress ('c'))
     {
         cables.hangBehind (! model.view().cablesBehind);
         return true;

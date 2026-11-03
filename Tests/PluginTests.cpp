@@ -1193,9 +1193,10 @@ void testEditor()
     osc1.mouseUp (mouseAt (osc1, osc1.getLocalPoint (editor, editor->getCables().jackCentre (e1, Jack::in)), jack));
     check (model.inputOf (e1) == std::optional (o1), "and plugged back in, hangs behind them again");
     const auto replugged = render (*editor);
-    check (editor->keyPressed (juce::KeyPress ('c')) && ! model.view().cablesBehind && ! hang.getToggleState()
-               && pumpUntil ([&] { return pixelsChanged (replugged, render (*editor)) > 200; }),
-           "C brings them back in front");
+    check (! editor->keyPressed (juce::KeyPress ('c', {}, 'c')) && model.view().cablesBehind, "in a host, C is left to the host");
+    hang.triggerClick();
+    check (pumpUntil ([&] { return ! model.view().cablesBehind && ! hang.getToggleState() && pixelsChanged (replugged, render (*editor)) > 200; }),
+           "FRONT brings them back in front");
     editor->mouseDown (mouseAt (*editor, editor->presetBounds().getCentre()));
     check (editor->getPresetBrowser().isOpen() && ! hang.isVisible(), "the switch goes with the cables, under the preset browser");
     editor->mouseDown (mouseAt (*editor, editor->presetBounds().getCentre()));
@@ -3306,6 +3307,14 @@ void testTypedKeys()
     check (! keyboard.holdsTypedNotes() && ! p.getKeyboardState().isNoteOn (1, 64),
            "and keys found up later (let go in another window) are let go");
     releaseAll (p);
+
+    // With the cables, C hangs them behind the cards, or back in front.
+    setParam (p, ParamID::signalFlow, (float) Synth2AudioProcessor::SignalFlow::cables);
+    auto& hang = editor->getCables().getSwitch();
+    check (pumpUntil ([&hang] { return hang.isVisible(); }) && editor->keyPressed (juce::KeyPress ('c', {}, 'c')) && hang.getToggleState(),
+           "C hangs the cables behind the cards");
+    check (editor->keyPressed (juce::KeyPress ('c', {}, 'c')) && ! hang.getToggleState() && ! p.getKeyboardState().isNoteOn (1, 60),
+           "and back in front, playing nothing");
 }
 
 } // namespace
