@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793726097059,
+  "lastUpdate": 1793729634741,
   "repoUrl": "https://github.com/Zanders214/Synth2",
   "entries": {
     "ZandersSynth2 DSP": [
@@ -2855,6 +2855,90 @@ window.BENCHMARK_DATA = {
           {
             "name": "DSP load 16x16 4-osc + filters @48k/512",
             "value": 7.301,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "152227414+Zanders214@users.noreply.github.com",
+            "name": "Dennis Zanders",
+            "username": "Zanders214"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4284d3fa8efbfe090e24e7badc1a182b3d5deac0",
+          "message": "Merge pull request #40 from Zanders214/claude/pitch-sweep\n\nSweep each oscillator's pitch into its note, and add Kick and Tom",
+          "timestamp": "2026-11-03T19:09:30+01:00",
+          "tree_id": "de5a27d4864bb87a58a2137807f9932322a3a8df",
+          "url": "https://github.com/Zanders214/Synth2/commit/4284d3fa8efbfe090e24e7badc1a182b3d5deac0"
+        },
+        "date": 1793729613225,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "processBlock 8x7",
+            "value": 48732.39,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 8x7 @48k/512",
+            "value": 0.457,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16",
+            "value": 131972.3,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 @48k/512",
+            "value": 1.237,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 2-osc",
+            "value": 286366.688,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 2-osc @48k/512",
+            "value": 2.685,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 4-osc",
+            "value": 500182.681,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 4-osc @48k/512",
+            "value": 4.689,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 4-osc + effects",
+            "value": 639876.925,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 4-osc + effects @48k/512",
+            "value": 5.999,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 4-osc + filters",
+            "value": 780585.893,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 4-osc + filters @48k/512",
+            "value": 7.318,
             "unit": "%"
           }
         ]
