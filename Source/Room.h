@@ -285,18 +285,26 @@ namespace Effects
         // Walsh-Hadamard butterflies.
         static void hadamard (Frame& x) noexcept
         {
-            for (size_t half = 1; half < (size_t) channels; half *= 2)
-                for (size_t start = 0; start < (size_t) channels; start += 2 * half)
-                    for (size_t i = start; i < start + half; ++i)
-                    {
-                        const float a = x[i];
-                        const float b = x[i + half];
-                        x[i]        = a + b;
-                        x[i + half] = a - b;
-                    }
+            butterflies<1> (x);
+            butterflies<2> (x);
+            butterflies<4> (x);
             const float scale = 1.0f / std::sqrt ((float) channels);
             for (auto& v : x)
                 v *= scale;
+        }
+
+        template <size_t half>
+        static void butterflies (Frame& x) noexcept
+        {
+            static_assert (2 * half <= (size_t) channels);
+            for (size_t start = 0; start < (size_t) channels; start += 2 * half)
+                for (size_t i = start; i < start + half; ++i)
+                {
+                    const float a = x[i];
+                    const float b = x[i + half];
+                    x[i]        = a + b;
+                    x[i + half] = a - b;
+                }
         }
 
         double targetPreDelay() const noexcept

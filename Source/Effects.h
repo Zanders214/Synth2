@@ -169,6 +169,9 @@ namespace Effects
             double previous = 0.0;
             float  lowpass  = 0.0f;
             float  dc       = 0.0f;
+            double previousIntegral = 0.0;
+            DriveShape integralShape = DriveShape::warm;
+            bool   integralKnown    = false;
 
             // The curve's average over the step from the last input to `x`:
             // the difference of its antiderivative across the step, or the
@@ -176,11 +179,33 @@ namespace Effects
             float curve (DriveShape s, float x) noexcept
             {
                 const double step = (double) x - previous;
-                const double out  = std::abs (step) > 1.0e-4
-                                  ? (driveCurveIntegral (s, x) - driveCurveIntegral (s, previous)) / step
-                                  : (double) driveCurve (s, (float) (0.5 * ((double) x + previous)));
+                double out = 0.0;
+                if (std::abs (step) > 1.0e-4)
+                {
+                    const double integral = driveCurveIntegral (s, x);
+                    out = (integral - integralAt (s, previous)) / step;
+                    remember (s, integral);
+                }
+                else
+                {
+                    out = (double) driveCurve (s, (float) (0.5 * ((double) x + previous)));
+                    integralKnown = false;
+                }
                 previous = x;
                 return (float) out;
+            }
+
+        private:
+            double integralAt (DriveShape s, double x) const noexcept
+            {
+                return integralKnown && integralShape == s ? previousIntegral : driveCurveIntegral (s, x);
+            }
+
+            void remember (DriveShape s, double integral) noexcept
+            {
+                previousIntegral = integral;
+                integralShape    = s;
+                integralKnown    = true;
             }
         };
 
