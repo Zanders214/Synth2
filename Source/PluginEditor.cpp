@@ -266,10 +266,10 @@ void Synth2AudioProcessorEditor::timerCallback()
         const auto& osc = settings.oscillators[(size_t) slot];
         benchView.getOscillator (slot).refresh (osc);
         if (osc.envelope >= 0)
-            envelopes[(size_t) osc.envelope].notes = processorRef.getNoteActivity (slot);
+            envelopes[(size_t) osc.envelope].notes = processorRef.getActivity().getNoteActivity (slot);
         if (osc.filter >= 0)
         {
-            const auto notes = processorRef.getSweepActivity (slot);
+            const auto notes = processorRef.getActivity().getSweepActivity (slot);
             filters[(size_t) osc.filter].notes = notes;
             sweeps[(size_t) osc.filter].notes  = notes;
         }
@@ -812,8 +812,8 @@ void Synth2AudioProcessorEditor::paintHeader (juce::Graphics& g, float s) const
         }
         g.setFont (Fonts::sans (10.0f * s, true, 0.14f));
         g.setColour (showing ? Palette::accent : Palette::textDim);
-        const char* names[] = { model.isPanel() ? "PANEL" : "BENCH", "EFFECTS", "ARP" };
-        g.drawText (names[(int) which], half, juce::Justification::centred, false);
+        const std::array<const char*, allTabs.size()> names { model.isPanel() ? "PANEL" : "BENCH", "EFFECTS", "ARP" };
+        g.drawText (names[(size_t) which], half, juce::Justification::centred, false);
     }
 
     // The preset picker: the loaded preset's name in a pill, with arrows to

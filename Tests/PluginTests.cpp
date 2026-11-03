@@ -511,20 +511,20 @@ void testPlaying()
     for (const int note : { 60, 64, 67 })
         chord.addEvent (juce::MidiMessage::noteOn (1, note, 0.9f), 0);
     check (playAndMeasure (p, chord, 8) > 0.05f, "a chord sounds");
-    check (p.getNumActiveNotes() == 3, "three notes are playing");
+    check (p.getActivity().getNumActiveNotes() == 3, "three notes are playing");
 
     juce::MidiBuffer release;
     for (const int note : { 60, 64, 67 })
         release.addEvent (juce::MidiMessage::noteOff (1, note), 0);
     playAndMeasure (p, release, 100);   // ~1 s, past the 300 ms release
-    check (p.getNumActiveNotes() == 0, "and stops after the release");
+    check (p.getActivity().getNumActiveNotes() == 0, "and stops after the release");
 
     // The on-screen keyboard plays through the processor too.
     p.getKeyboardState().noteOn (1, 69, 0.8f);
     check (playAndMeasure (p, {}, 8) > 0.05f, "a key held on the on-screen keyboard sounds");
     p.getKeyboardState().noteOff (1, 69, 0.0f);
     playAndMeasure (p, {}, 100);
-    check (p.getNumActiveNotes() == 0, "and stops when it is let go");
+    check (p.getActivity().getNumActiveNotes() == 0, "and stops when it is let go");
 
     // More voices: the stack stays at about the same level.
     juce::MidiBuffer note;
@@ -1017,7 +1017,7 @@ void testEditor()
     playAndMeasure (p, hostNote, 2);
     check (pumpUntil ([&p] { return p.getKeyboardState().isNoteOn (1, 64); }), "a note the host plays lights its key");
     playAndMeasure (p, {}, 2);
-    check (p.getNumActiveNotes() == 1, "and isn't played again from the keyboard");
+    check (p.getActivity().getNumActiveNotes() == 1, "and isn't played again from the keyboard");
     juce::MidiBuffer hostOff;
     hostOff.addEvent (juce::MidiMessage::noteOff (1, 64), 0);
     playAndMeasure (p, hostOff, 2);
@@ -3004,7 +3004,7 @@ int arpStarts (Synth2AudioProcessor& p, const std::vector<int>& notes, int block
 {
     juce::AudioBuffer<float> buffer (2, 512);
     int starts = 0;
-    int before = p.getNumActiveNotes();
+    int before = p.getActivity().getNumActiveNotes();
     for (int b = 0; b < blocks; ++b)
     {
         juce::MidiBuffer midi;
@@ -3012,8 +3012,8 @@ int arpStarts (Synth2AudioProcessor& p, const std::vector<int>& notes, int block
             for (const int note : notes)
                 midi.addEvent (juce::MidiMessage::noteOn (1, note, 0.9f), 0);
         p.processBlock (buffer, midi);
-        starts += std::max (0, p.getNumActiveNotes() - before);
-        before = p.getNumActiveNotes();
+        starts += std::max (0, p.getActivity().getNumActiveNotes() - before);
+        before = p.getActivity().getNumActiveNotes();
     }
     return starts;
 }
@@ -3056,7 +3056,7 @@ void testArp()
     setParam (p, ParamID::arpOn, 1.0f);
     model.setPattern (Arp::defaultPattern());
     const int starts = arpStarts (p, { 60, 64, 67 }, 94);   // a second: eight sixteenths at 120 BPM
-    check (starts >= 7 && starts <= 9 && p.getNumActiveNotes() <= 2, "on, a chord held plays its notes a sixteenth at a time");
+    check (starts >= 7 && starts <= 9 && p.getActivity().getNumActiveNotes() <= 2, "on, a chord held plays its notes a sixteenth at a time");
     releaseAll (p);
     setParam (p, ParamID::arpOn, 0.0f);
     check (arpStarts (p, { 60, 64, 67 }, 4) == 3, "off, the chord sounds all at once again");

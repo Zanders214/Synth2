@@ -249,5 +249,5 @@ private:
     Tab   tab     = Tab::bench;
     float uiScale = 1.0f;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Synth2AudioProcessorEditor)
+    JUCE_LEAK_DETECTOR (Synth2AudioProcessorEditor)   // AudioProcessorEditor already can't be copied
 };

@@ -73,16 +73,49 @@ public:
         ones it let go (keys held with the mouse are left alone). Message thread. */
     void showHostNotesOnKeyboard();
 
-    /** How many notes are sounding, for the tests and the editor. */
-    int getNumActiveNotes() const noexcept { return activeNotes.load(); }
+    /** What the voices were doing at the end of the last block, published
+        by the audio thread for the editor's displays and the tests. */
+    class Activity
+    {
+    public:
+        /** How many notes are sounding. Any thread. */
+        int getNumActiveNotes() const noexcept { return activeNotes.load(); }
 
-    /** Where each voice was in oscillator `osc`'s envelope at the end of the
-        last block, for the envelopes' AMP displays. Any thread. */
-    std::array<NoteActivity, Synth2Engine::maxNotes> getNoteActivity (int osc) const noexcept;
+        /** Where each voice was in oscillator `osc`'s envelope, for the
+            envelopes' AMP displays. Any thread. */
+        std::array<NoteActivity, Synth2Engine::maxNotes> getNoteActivity (int osc) const noexcept;
 
-    /** Where each voice was in the sweep envelope of the filter on
-        oscillator `osc`, for the filters' SWEEP displays. Any thread. */
-    std::array<NoteActivity, Synth2Engine::maxNotes> getSweepActivity (int osc) const noexcept;
+        /** Where each voice was in the sweep envelope of the filter on
+            oscillator `osc`, for the filters' SWEEP displays. Any thread. */
+        std::array<NoteActivity, Synth2Engine::maxNotes> getSweepActivity (int osc) const noexcept;
+
+        /** Takes it all from `voices`, at the end of a block. Audio thread. */
+        void publish (const Synth2Engine& voices) noexcept;
+
+    private:
+        struct PublishedActivity
+        {
+            std::atomic<int>   stage       { 0 };
+            std::atomic<float> level       { 0.0f };
+            std::atomic<float> progress    { 0.0f };
+
+            void publish (const NoteActivity& note) noexcept
+            {
+                stage   .store ((int) note.stage);
+                level   .store (note.level);
+                progress.store (note.progress);
+            }
+        };
+        using PublishedNotes = std::array<PublishedActivity, Synth2Engine::maxNotes>;
+
+        static std::array<NoteActivity, Synth2Engine::maxNotes> read (const PublishedNotes&) noexcept;
+
+        std::atomic<int> activeNotes { 0 };
+        std::array<PublishedNotes, Synth2Engine::numOscillators> noteActivity;
+        std::array<PublishedNotes, Synth2Engine::numOscillators> sweepActivity;
+    };
+
+    const Activity& getActivity() const noexcept { return activity; }
 
     /** The engine's settings, from the parameters. */
     Synth2Engine::Settings currentSettings() const noexcept;
@@ -92,7 +125,7 @@ public:
 
     /** The arp, for the ARP tab to show the step it plays and the notes
         its rows are playing. */
-    const Arp::Player& getArp() const noexcept { return arp; }
+    const Arp::Player& getArp() const noexcept { return arp.player; }
 
     /** Whether oscillator `oscillator` (0..3) is patched through to the
         output, for when the signal flow follows the cables. Any thread. */
@@ -239,20 +272,23 @@ private:
     };
     std::array<FilterValues, Synth2Engine::numFilters> filterValues;
     Synth2Engine engine;
-    std::atomic<int> activeNotes { 0 };
     std::array<std::atomic<bool>, Synth2Engine::numOscillators> routedToOutput { true, true, true, true };
     std::atomic<double> hostBpm { 120.0 };   // the host's tempo, as of the last block
     std::atomic<int> effectsChain { Effects::encode (Effects::defaultOrder) };   // the effects' order, encoded
 
     // The arp, and its pattern from the state, a step to an atomic. The
     // keys played (the on-screen keyboard's, then the host's) are gathered
-    // in `played`, and the arp plays them into `arpMidi` for the engine;
-    // both have their room (Arp::midiRoom) set aside up front.
-    Arp::Player arp;
-    std::array<std::atomic<std::uint32_t>, Arp::maxSteps> arpSteps {};
-    std::atomic<int> arpLength { 8 };
-    juce::MidiBuffer played;
-    juce::MidiBuffer arpMidi;
+    // in `played`, and the arp plays them into `out` for the engine; both
+    // have their room (Arp::midiRoom) set aside up front.
+    struct ArpParts
+    {
+        Arp::Player player;
+        std::array<std::atomic<std::uint32_t>, Arp::maxSteps> steps {};
+        std::atomic<int> length { 8 };
+        juce::MidiBuffer played;
+        juce::MidiBuffer out;
+    };
+    ArpParts arp;
 
     // Which envelope shapes and which filter filters each oscillator (-1 for
     // none), for each way sound can flow, so the audio thread just picks the
@@ -267,30 +303,11 @@ private:
     std::atomic<int> currentPreset { 0 };
     std::atomic<int> pendingPreset { -1 };
 
-    // Each voice's envelope and filter sweep for each oscillator, published
-    // by the audio thread every block.
-    struct PublishedActivity
-    {
-        std::atomic<int>   stage       { 0 };
-        std::atomic<float> level       { 0.0f };
-        std::atomic<float> progress    { 0.0f };
-
-        void publish (const NoteActivity& activity) noexcept
-        {
-            stage   .store ((int) activity.stage);
-            level   .store (activity.level);
-            progress.store (activity.progress);
-        }
-    };
-    using PublishedNotes = std::array<PublishedActivity, Synth2Engine::maxNotes>;
-    std::array<PublishedNotes, Synth2Engine::numOscillators> noteActivity;
-    std::array<PublishedNotes, Synth2Engine::numOscillators> sweepActivity;
-
-    static std::array<NoteActivity, Synth2Engine::maxNotes> read (const PublishedNotes&) noexcept;
+    Activity activity;
 
     PresetLoader presetLoader { *this };
     OnScreenKeys keys;
     Follower     follower { *this };   // last: it reads and fills in the state above
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Synth2AudioProcessor)
+    JUCE_LEAK_DETECTOR (Synth2AudioProcessor)   // AudioProcessor already can't be copied
 };

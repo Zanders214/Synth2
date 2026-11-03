@@ -145,10 +145,7 @@ public:
         {
             case Dragging::cells:
                 if (const int row = rowAt (e.position.y); row >= 0)
-                {
-                    const auto bit = (std::uint8_t) (1u << row);
-                    changed.rows = paintOn ? (std::uint8_t) (changed.rows | bit) : (std::uint8_t) (changed.rows & ~bit);
-                }
+                    changed.setRow (row, paintOn);
                 break;
             case Dragging::velocity:
             {

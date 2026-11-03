@@ -168,7 +168,7 @@ namespace Presets
             Arp::Step step { 0, 0.7f, Arp::Length::half };
             for (const auto c : words[i])
             {
-                if (c >= '0' && c < '0' + Arp::numRows) step.rows = (std::uint8_t) (step.rows | (1u << (c - '0')));
+                if (c >= '0' && c < '0' + Arp::numRows) step.setRow (c - '0', true);
                 else if (c == '!') step.velocity = 1.0f;
                 else if (c == ',') step.length = Arp::Length::shortNote;
                 else if (c == '-') step.length = Arp::Length::longNote;
