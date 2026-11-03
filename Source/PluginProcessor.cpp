@@ -141,6 +141,23 @@ namespace ParameterParts
             })));
     }
 
+    // An oscillator's pitch sweep (version 15): how far above its pitch each
+    // note starts (below, if negative) and how long it takes to fall there.
+    // No sweep to start with, so older sessions play as they did.
+    void addPitchSweep (Layout& layout, int index)
+    {
+        const auto& ids      = ParamID::oscillator (index);
+        const auto  defaults = Synth2Engine::Settings {}.oscillators[(size_t) index];
+        const String name    = "Osc " + String (index + 1) + " ";
+        const int    most    = roundToInt (Synth2Engine::maxSweepSemitones);
+
+        layout.add (std::make_unique<AudioParameterInt> (
+            ParameterID { ids.pitchSweep, 15 }, name + "Pitch Sweep", -most, most, roundToInt (defaults.sweepSemitones),
+            AudioParameterIntAttributes().withStringFromValueFunction ([] (int value, int) { return signedText (value, " st"); })));
+        addTime (layout, ParameterID { ids.sweepTime, 15 }, name + "Sweep Time",
+                 { Synth2Engine::minSweepSeconds, Synth2Engine::maxSweepSeconds }, 0.2f, defaults.sweepSeconds);
+    }
+
     // An oscillator's level and its unison stack: how many copies play each
     // note, how far apart they are tuned and how wide they spread (see
     // Unison.h).
@@ -416,6 +433,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth2AudioProcessor::create
     // The arp (version 14), off to start with.
     addArp (layout);
 
+    // Each oscillator's pitch sweep (version 15), none to start with.
+    for (int index = 0; index < Synth2Engine::numOscillators; ++index)
+        addPitchSweep (layout, index);
+
     return layout;
 }
 
@@ -481,6 +502,8 @@ Synth2Engine::Settings Synth2AudioProcessor::currentSettings() const noexcept
         oscillator.detuneCents = param (ids.detune);
         oscillator.width       = param (ids.width);
         oscillator.active      = param (ids.active) >= 0.5f;
+        oscillator.sweepSemitones = param (ids.pitchSweep);
+        oscillator.sweepSeconds   = param (ids.sweepTime);
 
         // A switched-off envelope lets its oscillator through unshaped, and
         // a switched-off filter lets it through unfiltered.
@@ -830,10 +853,10 @@ void Synth2AudioProcessor::restoreState (const juce::ValueTree& restored, bool m
     const auto arpBefore = apvts.state.getChildWithName (Arp::arpType).createCopy();
     apvts.replaceState (restored);
 
-    // A session from before GLIDE and MONO, or the EQ, played without them,
-    // whatever this instance was playing before it; and a preset sounds the
-    // same whatever was playing before it, so all it doesn't say goes back
-    // to its default.
+    // A session from before GLIDE and MONO, the EQ, the arp or the pitch
+    // sweeps played without them, whatever this instance was playing before
+    // it; and a preset sounds the same whatever was playing before it, so
+    // all it doesn't say goes back to its default.
     const auto toDefault = [&saved] (juce::RangedAudioParameter& parameter)
     {
         if (saved.getChildWithProperty ("id", parameter.getParameterID()).isValid())
@@ -855,6 +878,8 @@ void Synth2AudioProcessor::restoreState (const juce::ValueTree& restored, bool m
         for (const auto* id : ParamID::eqParameters)
             toDefault (*apvts.getParameter (id));
         for (const auto* id : ParamID::arpParameters)
+            toDefault (*apvts.getParameter (id));
+        for (const auto* id : ParamID::pitchSweepParameters)
             toDefault (*apvts.getParameter (id));
     }
 

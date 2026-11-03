@@ -53,6 +53,8 @@ namespace BenchStyle
             if (id == osc.fine)   return Format::fineCents (value);
             if (id == osc.voices) return juce::String (juce::roundToInt (value));
             if (id == osc.detune) return Format::cents (value);
+            if (id == osc.pitchSweep) return Format::semitones (juce::roundToInt (value));
+            if (id == osc.sweepTime)  return Format::seconds (value);
         }
         for (const auto& env : ParamID::envelopes)
             if (id == env.delay || id == env.attack || id == env.hold || id == env.decay || id == env.release)
@@ -747,9 +749,9 @@ public:
         if (! Bench::showsDials (id.kind, view))
             return;
 
-        // Rows of (up to) three dials across the card, each with its name and
-        // value beneath.
-        constexpr size_t perRow = 3;
+        // Rows of (up to) three dials across the card (four on an
+        // oscillator's), each with its name and value beneath.
+        const auto perRow = (size_t) Bench::dialsPerRow (id.kind);
         for (size_t first = 0; first < shown.size(); first += perRow)
         {
             const size_t last = juce::jmin (shown.size(), first + perRow);
@@ -930,7 +932,8 @@ private:
 };
 
 /** An oscillator: its WAVE well, where the shape is picked too, over PITCH /
-    FINE / LEVEL and its own unison stack, VOICES / DETUNE / WIDTH. */
+    FINE and its pitch SWEEP and the sweep's TIME, then LEVEL and its own
+    unison stack, VOICES / DETUNE / WIDTH. */
 class OscillatorModule final : public BenchModule
 {
 public:
@@ -943,12 +946,14 @@ public:
         addAndMakeVisible (display);
         addAndMakeVisible (picker);
         const auto& ids = ParamID::oscillator (slot);
-        addDial (ids.pitch,  "PITCH",  BenchStyle::dialColour (0.0f));
-        addDial (ids.fine,   "FINE",   BenchStyle::dialColour (0.2f));
-        addDial (ids.level,  "LEVEL",  BenchStyle::dialColour (0.4f));
-        addDial (ids.voices, "VOICES", BenchStyle::dialColour (0.6f));
-        addDial (ids.detune, "DETUNE", BenchStyle::dialColour (0.8f));
-        addDial (ids.width,  "WIDTH",  BenchStyle::dialColour (1.0f));
+        addDial (ids.pitch,      "PITCH",  BenchStyle::dialColour (0.0f / 7.0f));
+        addDial (ids.fine,       "FINE",   BenchStyle::dialColour (1.0f / 7.0f));
+        addDial (ids.pitchSweep, "SWEEP",  BenchStyle::dialColour (2.0f / 7.0f));
+        addDial (ids.sweepTime,  "TIME",   BenchStyle::dialColour (3.0f / 7.0f));
+        addDial (ids.level,      "LEVEL",  BenchStyle::dialColour (4.0f / 7.0f));
+        addDial (ids.voices,     "VOICES", BenchStyle::dialColour (5.0f / 7.0f));
+        addDial (ids.detune,     "DETUNE", BenchStyle::dialColour (6.0f / 7.0f));
+        addDial (ids.width,      "WIDTH",  BenchStyle::dialColour (7.0f / 7.0f));
         getHeader().setJackColour (BenchStyle::dialColour (0.25f * (float) slot));
     }
 
@@ -957,8 +962,8 @@ public:
 
     /** Shows the oscillator as it plays: its shape, with a faint copy for
         each of its unison voices, its pitch and its level. Noise has no
-        pitch or stack, so it hides PITCH, FINE, VOICES, DETUNE and WIDTH,
-        leaving LEVEL. */
+        pitch or stack, so it hides PITCH, FINE, SWEEP, TIME, VOICES, DETUNE
+        and WIDTH, leaving LEVEL. */
     void refresh (const Synth2Engine::OscillatorSettings& osc)
     {
         const bool isNoise = osc.wave == Waveform::noise;
@@ -978,7 +983,7 @@ public:
     }
 
 private:
-    static constexpr int levelDial = 2;   // the one dial noise keeps
+    static constexpr int levelDial = 4;   // the one dial noise keeps
 
     bool showsDial (int index) const noexcept override { return ! noise || index == levelDial; }
 
@@ -994,7 +999,7 @@ private:
 
     WaveDisplay display;
     WavePicker  picker;
-    bool        noise = false;   // playing NOISE, its pitch and stack dials hidden
+    bool        noise = false;   // playing NOISE, its pitch, sweep and stack dials hidden
 };
 
 /** An envelope: its AMP well over DELAY / ATTACK / HOLD and DECAY / SUSTAIN /

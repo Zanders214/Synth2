@@ -46,6 +46,12 @@ struct VoiceSettings
         float        cutoffHz  = 1000.0f;
         float        resonance = 0.0f;
         float        envAmount = 0.0f;
+
+        // Its pitch sweep: how far above its pitch each note starts, in
+        // semitones (below, if negative), and how long it takes to fall
+        // there (see SynthVoice::sweepOffset). 0 semitones: no sweep.
+        float sweepSemitones = 0.0f;
+        float sweepSeconds   = 0.0f;
     };
     std::array<Oscillator, numOscillators> oscillators {};
 
@@ -77,6 +83,12 @@ struct VoiceSettings
     slides to its own, evenly in pitch, taking GLIDE whatever the distance.
     slideTo() moves a sounding note to another key that way without starting
     its envelopes again (MONO's legato).
+
+    Each oscillator can also sweep its pitch: every note starts its sweep's
+    semitones away and falls into its pitch over the sweep's time, quickly
+    at first and easing in at the end (see sweepOffset), the thump of a
+    kick or the drop of a tom. A legato slide carries on with the sweep it
+    is in rather than starting it again.
 */
 class SynthVoice
 {
@@ -85,6 +97,21 @@ public:
     static constexpr float  noteLevel   = 0.25f;   // one note at full velocity, before the stack scaling
     static constexpr double fadeSeconds = 0.005;
     static constexpr int    numOscillators = VoiceSettings::numOscillators;
+
+    /** How a pitch sweep's fall bends, as an envelope's decay does (see
+        Envelope.h): down, so it drops quickly and eases into the note. */
+    static constexpr float sweepBend = -0.6f;
+
+    /** How far from its pitch, in semitones, a note sweeping `semitones`
+        over `seconds` is once `elapsed` seconds of it have passed: all of
+        `semitones` at the start, none once `seconds` have gone. */
+    static float sweepOffset (float semitones, float seconds, double elapsed) noexcept
+    {
+        if (juce::exactlyEqual (semitones, 0.0f) || seconds <= 0.0f || elapsed >= (double) seconds)
+            return 0.0f;
+        const double along = Envelope::travel (juce::jmax (0.0, elapsed) / seconds, Envelope::fallingSteepness (sweepBend));
+        return semitones * (float) (1.0 - along);
+    }
 
     void prepare (double newSampleRate)
     {
@@ -146,6 +173,7 @@ public:
         age        = order;
         held       = true;
         sustained  = false;
+        noteSeconds = 0.0;
         glideTo (midiNote, glideFromHz, settings.glideSeconds);
         for (auto& part : parts)
         {
@@ -243,6 +271,9 @@ public:
             return;
 
         advanceGlide (numSamples);
+        const double chunkSeconds = numSamples / sampleRate;
+        sweepAt      = noteSeconds + 0.5 * chunkSeconds;
+        noteSeconds += chunkSeconds;
         const float ramp = 1.0f / (float) numSamples;
         bool sounding = false;
         for (size_t k = 0; k < parts.size(); ++k)
@@ -517,12 +548,15 @@ private:
     }
 
     // Tunes the part's copies that are sounding (or fading out) for this chunk
-    // and lists them in `playing`, returning how many there are.
+    // and lists them in `playing`, returning how many there are. The chunk
+    // plays where its oscillator's pitch sweep is at the chunk's middle.
     int tune (Part& part, const VoiceSettings::Oscillator& osc, int count, bool relayout,
               std::array<size_t, Unison::maxVoices>& playing) const noexcept
     {
-        const bool retune = relayout || ! juce::exactlyEqual (part.tunedHz, pitchHz) || ! juce::exactlyEqual (part.tunedRatio, osc.ratio);
-        part.tunedHz    = pitchHz;
+        const float  sweep   = sweepOffset (osc.sweepSemitones, osc.sweepSeconds, sweepAt);
+        const double sweptHz = juce::exactlyEqual (sweep, 0.0f) ? pitchHz : pitchHz * std::exp2 ((double) sweep / 12.0);
+        const bool retune = relayout || ! juce::exactlyEqual (part.tunedHz, sweptHz) || ! juce::exactlyEqual (part.tunedRatio, osc.ratio);
+        part.tunedHz    = sweptHz;
         part.tunedRatio = osc.ratio;
 
         int numPlaying = 0;
@@ -540,7 +574,7 @@ private:
             }
 
             if (retune)
-                copy.oscillator.setIncrement (pitchHz * copy.ratio * osc.ratio / sampleRate);
+                copy.oscillator.setIncrement (sweptHz * copy.ratio * osc.ratio / sampleRate);
             playing[(size_t) numPlaying++] = i;
         }
         return numPlaying;
@@ -594,6 +628,8 @@ private:
     double pitchHz    = 440.0;   // where the note sounds now, sliding to noteHz
     double glideStep  = 0.0;     // octaves a sample
     int    glideLeft  = 0;       // samples still to slide
+    double noteSeconds = 0.0;    // how far into the note the chunk being rendered starts
+    double sweepAt     = 0.0;    // and its middle, where its pitch sweeps are taken
     float  fadeStep   = 0.0f;
     float  level      = 0.0f;
     int    note       = -1;
