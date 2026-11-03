@@ -127,7 +127,7 @@ namespace ParameterParts
         layout.add (std::make_unique<AudioParameterBool> (
             ParameterID { ids.on, index == 1 ? 2 : 3 }, name + "On", false, onOff (index == 1)));
         layout.add (std::make_unique<AudioParameterChoice> (
-            ParameterID { ids.wave, index == 0 ? 1 : version }, name + "Wave", StringArray { "Sine", "Triangle", "Saw", "Square" },
+            ParameterID { ids.wave, index == 0 ? 1 : version }, name + "Wave", StringArray { "Sine", "Triangle", "Saw", "Square", "Noise" },
             (int) defaults.wave));
         layout.add (std::make_unique<AudioParameterInt> (
             ParameterID { ids.pitch, version }, name + "Pitch", -Synth2Engine::maxSemitones, Synth2Engine::maxSemitones, defaults.semitones,
@@ -473,7 +473,7 @@ Synth2Engine::Settings Synth2AudioProcessor::currentSettings() const noexcept
         auto& oscillator = settings.oscillators[k];
         oscillator.on          = param (ids.on) >= 0.5f && (! panel || (int) k < Bench::panelSlots);
         oscillator.routed      = ! cables || routedToOutput[k].load (std::memory_order_relaxed);
-        oscillator.wave        = (Waveform) juce::jlimit (0, 3, juce::roundToInt (param (ids.wave)));
+        oscillator.wave        = (Waveform) juce::jlimit (0, (int) Waveform::noise, juce::roundToInt (param (ids.wave)));
         oscillator.semitones   = juce::roundToInt (param (ids.pitch));
         oscillator.fineCents   = param (ids.fine);
         oscillator.level       = param (ids.level);

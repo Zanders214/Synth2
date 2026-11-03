@@ -179,6 +179,10 @@ namespace Presets
         return arp;
     }
 
+    // The arp's RATEs, by name (their place in Arp::rates), besides Arp::sixteenth.
+    inline constexpr int arpQuarter      = 0;
+    inline constexpr int arpThirtySecond = 7;
+
     // Note lengths, by name (their place in Effects::divisions).
     inline constexpr int sixteenth    = 2;
     inline constexpr int eighth       = 5;
@@ -191,11 +195,18 @@ namespace Presets
     inline constexpr int triangle = (int) Waveform::triangle;
     inline constexpr int saw      = (int) Waveform::saw;
     inline constexpr int square   = (int) Waveform::square;
+    inline constexpr int noise    = (int) Waveform::noise;
 
     // The filter types, by name (their place in Filter::Type).
-    inline constexpr int low24 = (int) ::Filter::Type::low24;
+    inline constexpr int low24  = (int) ::Filter::Type::low24;
+    inline constexpr int band   = (int) ::Filter::Type::band;
+    inline constexpr int high12 = (int) ::Filter::Type::high12;
+    inline constexpr int high24 = (int) ::Filter::Type::high24;
 
-    inline const std::array<Preset, 22> factory {{
+    // The drive's shapes, by name (their place in Effects::DriveShape).
+    inline constexpr int hard = (int) Effects::DriveShape::hard;
+
+    inline const std::array<Preset, 36> factory {{
         { Category::init, "Empty Bench", "Nothing on it yet: build your own", {}, 0.0f },
 
         { Category::pads, "Supersaw Pad", "Nine wide saws, an octave blooming on top",
@@ -307,6 +318,93 @@ namespace Presets
             Oscillator { square, -12, 0.0f, 0.35f, {},                adsr (0.002f, 0.2f, 0.3f, 0.12f) } },
           -8.0f, Delay { eighth, 0.25f, 0.5f, 0.15f, true }, Reverb { 0.45f, 0.5f, 1.0f, 0.18f, 10.0f }, std::nullopt, 0.0f, false,
           std::nullopt, arpOf ("012! . . 012, . . 012 . . . 012! . 012, . . .", Arp::sixteenth, 0.35f) },
+
+        // The drums: noise for the rattle and the sizzle, each burst shaped
+        // short by its envelope and filtered to its place in the spectrum.
+        { Category::drums, "Noise Snare", "A short triangle body under a crack of noise",
+          { Oscillator { triangle, 0, 0.0f, 0.75f, {}, Envelope { 0.0f, 0.001f, 0.0f, 0.09f, 0.0f, 0.06f, 0.0f, -0.4f, 0.0f } },
+            Oscillator { noise, 0, 0.0f, 0.9f,     {}, Envelope { 0.0f, 0.001f, 0.0f, 0.22f, 0.0f, 0.12f, 0.0f, -0.6f, 0.0f },
+                         Filter { high12, 1200.0f, 0.1f, 0.0f } } },
+          -1.0f, std::nullopt, Reverb { 0.3f, 0.5f, 1.0f, 0.12f, 5.0f } },
+        { Category::drums, "Hand Clap", "Three quick bursts of noise, then the tail",
+          { Oscillator { noise, 0, 0.0f, 1.0f,  {}, Envelope { 0.0f, 0.001f, 0.0f, 0.011f, 0.0f, 0.01f, 0.0f, -0.5f, 0.0f },
+                         Filter { band, 1100.0f, 0.0f, 0.0f } },
+            Oscillator { noise, 0, 0.0f, 1.0f,  {}, Envelope { 0.011f, 0.001f, 0.0f, 0.011f, 0.0f, 0.01f, 0.0f, -0.5f, 0.0f },
+                         Filter { band, 1100.0f, 0.0f, 0.0f } },
+            Oscillator { noise, 0, 0.0f, 1.0f,  {}, Envelope { 0.022f, 0.001f, 0.0f, 0.011f, 0.0f, 0.01f, 0.0f, -0.5f, 0.0f },
+                         Filter { band, 1100.0f, 0.0f, 0.0f } },
+            Oscillator { noise, 0, 0.0f, 0.9f,  {}, Envelope { 0.033f, 0.001f, 0.0f, 0.25f, 0.0f, 0.15f, 0.0f, -0.6f, 0.0f },
+                         Filter { band, 1100.0f, 0.0f, 0.0f } } },
+          6.0f, std::nullopt, Reverb { 0.35f, 0.5f, 1.0f, 0.15f, 8.0f } },
+        { Category::drums, "Closed Hat", "A tight tick of high noise, a little metal in it",
+          { Oscillator { noise, 0, 0.0f, 1.0f,     {},                  Envelope { 0.0f, 0.001f, 0.0f, 0.06f, 0.0f, 0.04f, 0.0f, -0.4f, 0.0f },
+                         Filter { high12, 5500.0f, 0.1f, 0.0f } },
+            Oscillator { square, 30, 37.0f, 0.25f, { 6, 50.0f, 1.0f }, adsr (0.001f, 0.035f, 0.0f, 0.03f),
+                         Filter { high24, 7000.0f, 0.2f, 0.0f } } },
+          3.0f },
+        { Category::drums, "Open Hat", "The closed hat let ring, a sizzle that fades",
+          { Oscillator { noise, 0, 0.0f, 1.0f,     {},                  Envelope { 0.0f, 0.001f, 0.0f, 0.5f, 0.0f, 0.25f, 0.0f, -0.5f, 0.0f },
+                         Filter { high12, 6000.0f, 0.1f, 0.0f } },
+            Oscillator { square, 30, 37.0f, 0.2f,  { 6, 50.0f, 1.0f }, Envelope { 0.0f, 0.001f, 0.0f, 0.4f, 0.0f, 0.2f, 0.0f, -0.5f, 0.0f },
+                         Filter { high24, 6500.0f, 0.2f, 0.0f } } },
+          0.0f, std::nullopt, Reverb { 0.35f, 0.4f, 1.0f, 0.1f, 5.0f } },
+        { Category::drums, "Shaker", "Noise that swells in and is gone: a shaken seed pod",
+          { Oscillator { noise, 0, 0.0f, 1.0f, {}, Envelope { 0.0f, 0.025f, 0.0f, 0.07f, 0.0f, 0.05f, 0.4f, -0.5f, 0.0f },
+                         Filter { high12, 5000.0f, 0.2f, 0.0f } } },
+          -3.0f, std::nullopt, Reverb { 0.3f, 0.5f, 1.0f, 0.1f, 5.0f } },
+        { Category::drums, "Cowbell", "Two squares a sour fifth apart, through a band-pass",
+          { Oscillator { square, 0, 0.0f, 1.0f,   {}, Envelope { 0.0f, 0.001f, 0.0f, 0.35f, 0.0f, 0.1f, 0.0f, -0.6f, 0.0f },
+                         Filter { band, 900.0f, 0.45f, 0.0f } },
+            Oscillator { square, 7, -20.0f, 0.9f, {}, Envelope { 0.0f, 0.001f, 0.0f, 0.35f, 0.0f, 0.1f, 0.0f, -0.6f, 0.0f },
+                         Filter { band, 900.0f, 0.45f, 0.0f } } },
+          1.0f },
+
+        // The effects. The coin and the power-up play their tunes from one
+        // key, each note an oscillator whose envelope waits its turn.
+        { Category::sfx, "Laser Zap", "A resonant filter diving through a saw: pew",
+          { Oscillator { saw, 0, 0.0f, 1.0f, { 3, 12.0f, 0.6f }, adsr (0.001f, 0.3f, 0.0f, 0.1f),
+                         Filter { low24, 150.0f, 0.9f, 48.0f, Envelope { 0.0f, 0.001f, 0.0f, 0.25f, 0.0f, 0.1f, 0.0f, -0.3f, 0.0f } } } },
+          -8.0f, Delay { eighth, 0.3f, 0.5f, 0.18f, true } },
+        { Category::sfx, "Riser", "Hold it: wide saws and a hiss whose filters climb for five seconds",
+          { Oscillator { saw, 0, 0.0f, 1.0f,  { 9, 40.0f, 1.0f }, ar (4.0f, 1.5f),
+                         Filter { low24, 120.0f, 0.55f, 48.0f, Envelope { 0.0f, 5.0f, 0.0f, 0.3f, 1.0f, 1.5f, 0.5f, 0.0f, 0.0f } } },
+            Oscillator { saw, 12, 0.0f, 0.5f, { 7, 45.0f, 1.0f }, ar (5.0f, 1.5f),
+                         Filter { low24, 120.0f, 0.55f, 48.0f, Envelope { 0.0f, 5.0f, 0.0f, 0.3f, 1.0f, 1.5f, 0.5f, 0.0f, 0.0f } } },
+            Oscillator { noise, 0, 0.0f, 0.5f, {}, ar (5.0f, 1.5f),
+                         Filter { band, 300.0f, 0.4f, 48.0f, Envelope { 0.0f, 5.0f, 0.0f, 0.3f, 1.0f, 1.5f, 0.5f, 0.0f, 0.0f } } } },
+          -10.0f, Delay { quarter, 0.45f, 0.5f, 0.2f, true }, Reverb { 0.8f, 0.4f, 1.0f, 0.3f, 30.0f } },
+        { Category::sfx, "Siren", "Hold one key: it wails up an octave and back",
+          { Oscillator { square, 0, 0.0f, 1.0f, {}, ar (0.02f, 0.3f),
+                         Filter { low24, 2500.0f, 0.15f, 0.0f } },
+            Oscillator { saw, 0, 8.0f, 0.5f,    {}, ar (0.02f, 0.3f) } },
+          -3.0f, std::nullopt, Reverb { 0.5f, 0.5f, 1.0f, 0.15f, 20.0f }, std::nullopt, 0.35f, true, std::nullopt,
+          arpOf ("0_ 1_", arpQuarter) },
+        { Category::sfx, "Coin Pickup", "Two quick squares a fourth apart, from one key",
+          { Oscillator { square, 0, 0.0f, 0.8f, {}, Envelope { 0.0f, 0.001f, 0.06f, 0.01f, 0.0f, 0.01f } },
+            Oscillator { square, 5, 0.0f, 0.8f, {}, Envelope { 0.07f, 0.001f, 0.0f, 0.35f, 0.0f, 0.2f, 0.0f, -0.4f, 0.0f } } },
+          -3.0f },
+        { Category::sfx, "Power Up", "A major arpeggio climbing from one key",
+          { Oscillator { square, 0, 0.0f, 0.7f,  {}, Envelope { 0.0f, 0.001f, 0.05f, 0.01f, 0.0f, 0.01f } },
+            Oscillator { square, 4, 0.0f, 0.7f,  {}, Envelope { 0.06f, 0.001f, 0.05f, 0.01f, 0.0f, 0.01f } },
+            Oscillator { square, 7, 0.0f, 0.7f,  {}, Envelope { 0.12f, 0.001f, 0.05f, 0.01f, 0.0f, 0.01f } },
+            Oscillator { square, 12, 0.0f, 0.7f, {}, Envelope { 0.18f, 0.001f, 0.0f, 0.5f, 0.0f, 0.3f, 0.0f, -0.4f, 0.0f } } },
+          -3.0f, Delay { sixteenth, 0.3f, 0.6f, 0.15f, false } },
+        { Category::sfx, "Computer Bleeps", "Hold a chord: a machine thinking out loud",
+          { Oscillator { sine, 12, 0.0f, 1.0f,  {}, adsr (0.001f, 0.06f, 0.0f, 0.03f) },
+            Oscillator { square, 24, 0.0f, 0.25f, {}, adsr (0.001f, 0.03f, 0.0f, 0.02f) } },
+          0.0f, Delay { sixteenth, 0.4f, 0.7f, 0.2f, true }, Reverb { 0.4f, 0.5f, 1.0f, 0.12f, 10.0f }, std::nullopt, 0.0f, false,
+          std::nullopt, arpOf ("0, 3, . 1, 5, 2, . 4, 0, . 6, 3, 1, . 7, 2,", arpThirtySecond) },
+        { Category::sfx, "Explosion", "A boom of low noise and a sine thud, rolling away",
+          { Oscillator { noise, 0, 0.0f, 1.0f,  {}, Envelope { 0.0f, 0.002f, 0.0f, 2.5f, 0.0f, 1.5f, 0.0f, -0.7f, 0.0f },
+                         Filter { low24, 120.0f, 0.3f, 36.0f, Envelope { 0.0f, 0.001f, 0.0f, 1.2f, 0.0f, 1.0f, 0.0f, -0.8f, 0.0f } } },
+            Oscillator { sine, -24, 0.0f, 0.8f, {}, Envelope { 0.0f, 0.002f, 0.0f, 0.8f, 0.0f, 0.5f, 0.0f, -0.6f, 0.0f } } },
+          0.0f, std::nullopt, Reverb { 0.75f, 0.6f, 1.0f, 0.3f, 15.0f }, Drive { 0.5f, 0, 0.4f, 1.0f } },
+        { Category::sfx, "Wind", "Hold it: noise through a narrow band that gusts and dies down",
+          { Oscillator { noise, 0, 0.0f, 1.0f, {}, ar (1.5f, 3.0f),
+                         Filter { band, 350.0f, 0.55f, 24.0f, Envelope { 0.0f, 2.5f, 0.0f, 3.0f, 0.35f, 3.0f, 0.3f, 0.2f, 0.0f } } },
+            Oscillator { noise, 0, 0.0f, 0.6f, {}, ar (2.5f, 3.0f),
+                         Filter { band, 900.0f, 0.5f, 19.0f, Envelope { 1.0f, 3.0f, 0.0f, 2.5f, 0.3f, 3.0f, 0.3f, 0.2f, 0.0f } } } },
+          6.0f, std::nullopt, Reverb { 0.7f, 0.5f, 1.0f, 0.3f, 20.0f } },
     }};
 
     inline constexpr int numPresets = (int) std::tuple_size_v<decltype (factory)>;

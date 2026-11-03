@@ -53,11 +53,11 @@ struct Synth2VisualModel
         return std::min (8.0f, std::max (0.5f, cycles));
     }
 
-    /** The wave `delta` steps on from `index` (0..3), wrapping round: one
-        past SQUARE is SINE again. */
+    /** The wave `delta` steps on from `index` (0..4), wrapping round: one
+        past NOISE is SINE again. */
     static int stepWave (int index, int delta) noexcept
     {
-        constexpr int numWaves = 4;
+        constexpr int numWaves = (int) Waveform::noise + 1;
         return ((index + delta) % numWaves + numWaves) % numWaves;
     }
 

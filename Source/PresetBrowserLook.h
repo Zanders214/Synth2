@@ -355,10 +355,13 @@ namespace PresetBrowserLook
             paintGlyph (g, (Waveform) osc->wave, row.removeFromLeft (48.0f * s).withSizeKeepingCentre (48.0f * s, 30.0f * s), slot, true, s);
             row.removeFromLeft (10.0f * s);
             const int voices = osc->unison.voices;
+            const int wave   = juce::jlimit (0, WaveGlyph::numWaves - 1, osc->wave);
+            auto line = juce::String (WaveGlyph::longNames[(size_t) wave]);
+            if (wave != (int) Waveform::noise)   // which has no pitch or stack
+                line << "  " << Format::semitones (osc->semitones) << "  " << voices << (voices == 1 ? " voice" : " voices");
             g.setFont (Fonts::sans (12.0f * s, true));
             g.setColour (Palette::textMid);
-            g.drawText (juce::String (WaveGlyph::longNames[(size_t) juce::jlimit (0, 3, osc->wave)]) + "  " + Format::semitones (osc->semitones)
-                            + "  " + juce::String (voices) + (voices == 1 ? " voice" : " voices"),
+            g.drawText (line,
                         row.removeFromTop (22.0f * s).withTrimmedTop (4.0f * s), juce::Justification::centredLeft, true);
             g.setFont (Fonts::mono (10.0f * s));
             g.setColour (Palette::textDim);

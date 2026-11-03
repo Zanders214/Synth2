@@ -7,13 +7,14 @@
 
 #include "Simd.h"
 
-/** The four basic shapes, in the order the WAVE parameter lists them. */
+/** The basic shapes, and white noise, in the order the WAVE parameter lists them. */
 enum class Waveform
 {
     sine,
     triangle,
     saw,
-    square
+    square,
+    noise
 };
 
 /**
@@ -29,11 +30,15 @@ enum class Waveform
         triangle  0 -> 1 at t = 1/4 -> -1 at t = 3/4 -> 0
         saw       0 -> 1 just before t = 1/2, drops to -1, rises back to 0
         square    +1 for the first half cycle, -1 for the second
+        noise     white noise, -1..1, whatever the pitch
 
     naive() is the ideal shape, used for drawing. BlepOscillator plays it with
     PolyBLEP corrections at the saw's and square's jumps, which removes most
     of the aliasing a naive saw / square folds back down at high notes. The
     triangle has no jumps and its harmonics fall away fast, so it plays as is.
+    The noise is each sample's phase scrambled by an integer hash: no state
+    beyond the phase, the same to the bit four at a time, and a different
+    run for each start phase (a note's noise starts at a random one).
 
     BlepOscillator keeps its phase as a 32-bit fraction of a cycle, which
     wraps by itself as it overflows: no comparing and subtracting each
@@ -53,7 +58,19 @@ namespace Oscillator
         to the bit, as taking away exactly 1 from 1..2 is exact. */
     inline double wrapOnce (double phase) noexcept { return phase >= 1.0 ? phase - 1.0 : phase; }
 
-    /** The ideal shape at phase 0..1. */
+    /** Scrambles `x` (Chris Wellons' lowbias32 hash): neighbouring inputs
+        come out unrelated, every bit as likely set as not. */
+    inline std::uint32_t scramble (std::uint32_t x) noexcept
+    {
+        x ^= x >> 16;
+        x *= 0x7feb352du;
+        x ^= x >> 15;
+        x *= 0x846ca68bu;
+        return x ^ (x >> 16);
+    }
+
+    /** The ideal shape at phase 0..1. Noise, which has no cycle, is drawn as
+        a line through 64 random points a cycle, the same each time it is drawn. */
     inline float naive (Waveform wave, double phase) noexcept
     {
         const double t = wrap (phase);
@@ -62,6 +79,13 @@ namespace Oscillator
             case Waveform::sine:     return (float) std::sin (twoPi * t);
             case Waveform::triangle: return (float) (1.0 - 4.0 * std::abs (wrap (t + 0.25) - 0.5));
             case Waveform::saw:      return (float) (2.0 * wrap (t + 0.5) - 1.0);
+            case Waveform::noise:
+            {
+                const double at    = phase * 64.0;
+                const double point = std::floor (at);
+                const auto   value = [] (double index) { return (double) (std::int32_t) scramble ((std::uint32_t) (std::int64_t) index) / 2147483648.0; };
+                return (float) (value (point) + (value (point + 1.0) - value (point)) * (at - point));
+            }
             case Waveform::square:   break;
         }
         return t < 0.5 ? 1.0f : -1.0f;
@@ -116,6 +140,7 @@ public:
             case Waveform::triangle: value = shape<Waveform::triangle> (phase, perDt); break;
             case Waveform::saw:      value = shape<Waveform::saw>      (phase, perDt); break;
             case Waveform::square:   value = shape<Waveform::square>   (phase, perDt); break;
+            case Waveform::noise:    value = shape<Waveform::noise>    (phase, perDt); break;
         }
         phase += dt;
         return value;
@@ -158,6 +183,7 @@ public:
             case Waveform::triangle: runPanned<Waveform::triangle> (oscillators, count, levels, fades, panLeft, panRight, left, right, numSamples); break;
             case Waveform::saw:      runPanned<Waveform::saw>      (oscillators, count, levels, fades, panLeft, panRight, left, right, numSamples); break;
             case Waveform::square:   runPanned<Waveform::square>   (oscillators, count, levels, fades, panLeft, panRight, left, right, numSamples); break;
+            case Waveform::noise:    runPanned<Waveform::noise>    (oscillators, count, levels, fades, panLeft, panRight, left, right, numSamples); break;
         }
     }
 
@@ -171,6 +197,7 @@ private:
     static float signOf (std::uint32_t value) noexcept  { return (std::int32_t) value < 0 ? -1.0f : 1.0f; }
 
     static float clampUnit (float value) noexcept       { return std::min (std::max (value, -1.0f), 1.0f); }
+    static std::uint32_t scramble (std::uint32_t value) noexcept { return Oscillator::scramble (value); }
 
     static std::uint32_t foldSine (std::uint32_t phase) noexcept
     {
@@ -193,6 +220,25 @@ private:
                                               _mm_cmplt_epi32 (phase.v, _mm_set1_epi32 (-(int) quarter)));
         const __m128i mirrored = _mm_sub_epi32 (_mm_set1_epi32 ((int) half), phase.v);
         return _mm_or_si128 (_mm_and_si128 (outside, mirrored), _mm_andnot_si128 (outside, phase.v));
+    }
+
+    // Oscillator::scramble, four at a time (SSE2 multiplies 32 bits only in
+    // pairs: the even lanes, then the odd ones shifted down, put back together).
+    static Ints scramble (Ints value) noexcept
+    {
+        const auto times = [] (__m128i x, std::uint32_t by)
+        {
+            const __m128i factor = _mm_set1_epi32 ((int) by);
+            const __m128i even = _mm_mul_epu32 (x, factor);
+            const __m128i odd  = _mm_mul_epu32 (_mm_srli_epi64 (x, 32), factor);
+            return _mm_unpacklo_epi32 (_mm_shuffle_epi32 (even, _MM_SHUFFLE (0, 0, 2, 0)), _mm_shuffle_epi32 (odd, _MM_SHUFFLE (0, 0, 2, 0)));
+        };
+        __m128i x = value.v;
+        x = _mm_xor_si128 (x, _mm_srli_epi32 (x, 16));
+        x = times (x, 0x7feb352du);
+        x = _mm_xor_si128 (x, _mm_srli_epi32 (x, 15));
+        x = times (x, 0x846ca68bu);
+        return _mm_xor_si128 (x, _mm_srli_epi32 (x, 16));
     }
 
     Ints lanePhases() const noexcept
@@ -238,6 +284,10 @@ private:
             const Float fromJump = toFloat (phase + Int (half));
             return fromJump * Float (perHalf) + edge (fromJump * perDt);
         }
+        else if constexpr (wave == Waveform::noise)
+        {
+            return toFloat (scramble (phase)) * Float (perHalf);
+        }
         else
         {
             const Int fromDrop = phase + Int (half);
@@ -255,6 +305,7 @@ private:
             case Waveform::triangle: run<Waveform::triangle, add> (oscillators, outs, count, levels, numSamples); break;
             case Waveform::saw:      run<Waveform::saw, add>      (oscillators, outs, count, levels, numSamples); break;
             case Waveform::square:   run<Waveform::square, add>   (oscillators, outs, count, levels, numSamples); break;
+            case Waveform::noise:    run<Waveform::noise, add>    (oscillators, outs, count, levels, numSamples); break;
         }
     }
 

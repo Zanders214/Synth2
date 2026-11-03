@@ -3,7 +3,7 @@
 A simple polyphonic synth plugin for DAWs (VST3 / AU / Standalone), built with
 [JUCE](https://juce.com), laid out as a workbench: it opens empty, and you put
 on it the modules you want, where you want them. Add up to four oscillators,
-each with one of the four basic wave shapes and its own stack of up to 16
+each with one of the four basic wave shapes (or white noise) and its own stack of up to 16
 detuned, spread copies on every note, give each its own envelope and its own
 swept filter, and play chords: the classic wide, detuned "supersaw" pad in a
 few turns. Then send the
@@ -248,6 +248,24 @@ you loaded is saved with your set.
 | **Neon Arp**      | Arp      | Hold a chord: the arp climbs and turns through it in sixteenths |
 | **Rolling Bass**  | Bass     | Hold a note: the arp rolls it in octaves, the off-beats lifting |
 | **Swing Stabs**   | Keys     | Hold a chord: the arp stabs it on a swung off-beat rhythm |
+| **Noise Snare**   | Drums    | A short triangle body under a crack of high-passed noise |
+| **Hand Clap**     | Drums    | Three quick bursts of noise, then the tail: each burst an oscillator whose envelope waits its turn |
+| **Closed Hat**    | Drums    | A tight tick of high noise, a little metal in it        |
+| **Open Hat**      | Drums    | The closed hat let ring, a sizzle that fades            |
+| **Shaker**        | Drums    | Noise that swells in and is gone                        |
+| **Cowbell**       | Drums    | Two squares a sour fifth apart, through a band-pass     |
+| **Laser Zap**     | SFX      | A resonant filter diving through a saw: pew             |
+| **Riser**         | SFX      | Hold it: wide saws and a hiss whose filters climb for five seconds |
+| **Siren**         | SFX      | Hold one key: the arp wails it up an octave and back, MONO with GLIDE |
+| **Coin Pickup**   | SFX      | Two quick squares a fourth apart, from one key          |
+| **Power Up**      | SFX      | A major arpeggio climbing from one key: each note an oscillator whose envelope waits its turn |
+| **Computer Bleeps** | SFX    | Hold a chord: the arp scatters sine blips through it in 32nds |
+| **Explosion**     | SFX      | A boom of low noise and a sine thud, rolling away       |
+| **Wind**          | SFX      | Hold it: noise through narrow bands that gust and die down |
+
+The drums are noise (see **Wave**), each burst shaped short by its envelope and
+filtered to its place in the spectrum; the hats keep a little of a detuned square stack
+for metal. Each plays at the key it's on, though the noise sounds the same on any key.
 
 ### Signal flow
 
@@ -299,7 +317,7 @@ sum, on their own tab (see [Effects](#effects)).
 
 | Control     | What it does                                                        |
 |-------------|---------------------------------------------------------------------|
-| **Wave**    | Each oscillator's shape: **SINE**, **TRIANGLE**, **SAW** or **SQUARE**, picked in its display (see below). |
+| **Wave**    | Each oscillator's shape: **SINE**, **TRIANGLE**, **SAW** or **SQUARE**, or **NOISE**, picked in its display (see below). NOISE is white noise, for drums, wind and hiss: it has no pitch or unison stack, so its PITCH, FINE, VOICES, DETUNE and WIDTH are hidden, leaving LEVEL, and each note's noise is new. |
 | **Pitch**   | Transposes the oscillator, -24 to +24 semitones: +12 is an octave up, +7 a fifth. |
 | **Fine**    | Tunes the oscillator by up to ±50 cents, for a slow beat against the others. |
 | **Level**   | The oscillator's level, 0 to 100%. |
@@ -338,7 +356,7 @@ isn't heard costs nothing.
 Each oscillator's display is also where its shape is picked. The pill in its top right
 corner shows the current shape: its arrows step to the previous and next one
 (wrapping round), and the scroll wheel anywhere over the display flips through
-them. Click the display anywhere else and a tray of the four shapes drops open
+them. Click the display anywhere else and a tray of the five shapes drops open
 under it, with the rest of the bench dimmed: hover a tile to preview it in the
 display (the sound doesn't change until you pick), click it to keep it, or
 click outside (or press Escape) to leave things as they were. The arrow keys
@@ -499,7 +517,7 @@ Source/
   SynthVoice.h               one note: each oscillator's unison copies, through its filter (swept by its own envelope), under its envelope
   Envelope.h                 the delay / attack / hold / decay / sustain / release envelope
   Filter.h                   the filter: a state-variable filter (two stages for 24 dB) and its response, for drawing
-  Oscillator.h               the four wave shapes, and the PolyBLEP oscillator that plays them
+  Oscillator.h               the four wave shapes and white noise, and the PolyBLEP oscillator that plays them
   Unison.h                   where each unison voice sits: its detune, its pan, the stack's level
   Bench.h                    the workbench model: modules, where they sit, cables and chains, which envelope and filter take which oscillator, older sessions
   BenchView.h                the bench itself: the dotted canvas the modules sit and are dragged on, its zoom and pan, the zoom pill

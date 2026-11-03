@@ -116,7 +116,8 @@ public:
         {
             // Unison copies start at random points in their cycles, so they
             // don't all line up and thump on the attack. A lone voice starts on
-            // the zero crossing at the top of the cycle.
+            // the zero crossing at the top of the cycle; noise anywhere, so
+            // no two hits are the same.
             for (size_t k = 0; k < parts.size(); ++k)
             {
                 auto& part = parts[k];
@@ -125,7 +126,7 @@ public:
                 for (size_t i = 0; i < part.copies.size(); ++i)
                 {
                     auto& copy = part.copies[i];
-                    const bool lone = i == 0 && count == 1;
+                    const bool lone = i == 0 && count == 1 && osc.wave != Waveform::noise;
                     copy.oscillator.reset (lone ? 0.0 : random.nextDouble());
                     copy.fade = (int) i < count ? 1.0f : 0.0f;
                     copy.pan  = Unison::panGains (Unison::pan ((int) i, count, osc.width));
