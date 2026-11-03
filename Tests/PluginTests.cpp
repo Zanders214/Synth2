@@ -2440,10 +2440,14 @@ void testPresets()
         bool modulesMatch = true;
         bool shapedByOwn  = true;
         bool filteredByOwn = true;
+        bool tunedAsWritten = true;
         float attack = 0.0f;
         for (int slot = 0; slot < Bench::numOscillators; ++slot)
         {
             const auto& osc = preset.oscillators[(size_t) slot];
+            if (osc.has_value())
+                tunedAsWritten = tunedAsWritten && settings.oscillators[(size_t) slot].semitones == osc->semitones
+                                                && approx (settings.oscillators[(size_t) slot].fineCents, osc->fineCents, 0.05f);
             const bool shaped = osc.has_value() && osc->envelope.has_value();
             const bool filtered = osc.has_value() && osc->filter.has_value();
             modulesMatch = modulesMatch && bench.isPresent ({ Bench::Kind::oscillator, slot }) == osc.has_value()
@@ -2465,6 +2469,7 @@ void testPresets()
         const std::string name = preset.name;
         check (q.getCurrentProgram() == i && modulesMatch && apart, name + ": its modules are on the bench, apart");
         check (shapedByOwn && filteredByOwn, name + ": each envelope and filter takes its own oscillator");
+        check (tunedAsWritten, name + ": each oscillator plays at the PITCH and FINE it is written with, within their ranges");
         check (peak > 0.2f && peak < 1.0f, name + ": a chord sounds without clipping (peak " + std::to_string (peak) + ")");
     }
 
