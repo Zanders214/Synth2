@@ -1689,6 +1689,101 @@ void testGlideAndMono()
     run (*pedalled, at (0.5), { { 0, off (64) }, { 10, pedal (false) } });
     check (pedalled->getNumActiveNotes() == 0, "which ends when the pedal lifts");
 }
+// ---- Each oscillator's pitch sweep: every note starts high and falls into its pitch.
+void testPitchSweep()
+{
+    std::printf ("Pitch sweep:\n");
+
+    const auto at = [] (double seconds) { return (int) (seconds * sampleRate); };
+    const auto hzOf = [] (int note, float semitones) { return 440.0f * std::exp2 (((float) (note - 69) + semitones) / 12.0f); };
+
+    // Its shape: all of it at the start, none at the end, falling all the
+    // way there, quickly at first and easing in.
+    check (approx (SynthVoice::sweepOffset (24.0f, 0.125f, 0.0), 24.0f, 1e-4f) && juce::exactlyEqual (SynthVoice::sweepOffset (24.0f, 0.125f, 0.125), 0.0f)
+               && juce::exactlyEqual (SynthVoice::sweepOffset (24.0f, 0.125f, 5.0), 0.0f),
+           "a sweep starts its whole amount above the note and ends on it");
+    bool falling = true;
+    for (int ms = 1; ms <= 100; ++ms)
+        falling = falling && SynthVoice::sweepOffset (24.0f, 0.1f, ms * 0.001) < SynthVoice::sweepOffset (24.0f, 0.1f, (ms - 1) * 0.001);
+    check (falling && SynthVoice::sweepOffset (24.0f, 0.1f, 0.025) < 12.0f && SynthVoice::sweepOffset (24.0f, 0.1f, 0.075) > 0.1f,
+           "falling all the way, half of it in the first quarter, easing in at the end");
+    check (approx (SynthVoice::sweepOffset (-12.0f, 0.1f, 0.0), -12.0f, 1e-4f) && SynthVoice::sweepOffset (-12.0f, 0.1f, 0.05) > -3.0f
+               && SynthVoice::sweepOffset (-12.0f, 0.1f, 0.05) < 0.0f,
+           "a negative sweep starts below the note and rises into it");
+
+    // In a note: A4 swept two octaves over 200 ms starts near A6 and falls
+    // through each 10 ms where the sweep says, landing on A4 once its time
+    // has passed.
+    auto settings = defaults (Waveform::sine);
+    settings.oscillators[0].sweepSemitones = 24.0f;
+    settings.oscillators[0].sweepSeconds   = 0.2f;
+    auto engine = makeEngine (settings);
+    const auto swept = run (*engine, at (0.6), { { 0, on (69) } });
+    const float first = frequencyOf (swept, 0, at (0.004));
+    check (first > hzOf (69, 22.0f) && first < hzOf (69, 24.0f), "it starts near two octaves up (" + std::to_string (first) + " Hz)");
+    bool followsTheSweep = true;
+    float previous = first;
+    std::string worst;
+    for (int window = 0; window < 20; ++window)
+    {
+        const double from = window * 0.01;
+        const float  hz   = frequencyOf (swept, at (from), at (from + 0.01));
+        const float  want = hzOf (69, SynthVoice::sweepOffset (24.0f, 0.2f, from + 0.005));
+        if (! approx (hz, want, want * 0.03f) || hz > previous + 1.0f)
+        {
+            followsTheSweep = false;
+            worst = " (at " + std::to_string (from) + " s: " + std::to_string (hz) + " Hz, not " + std::to_string (want) + ")";
+        }
+        previous = hz;
+    }
+    check (followsTheSweep, "and falls as the sweep says, within 3% each 10 ms" + worst);
+    check (frequencyOf (swept, at (0.15), at (0.19)) > 440.5f && approx (frequencyOf (swept, at (0.2), at (0.6)), 440.0f, 0.5f),
+           "still a little above A4 near the end, and on it once TIME has passed");
+
+    // It sweeps down to the oscillator's own PITCH, and each key's note.
+    settings.oscillators[0].semitones = -12;
+    auto lower = makeEngine (settings);
+    const auto octaveDown = run (*lower, at (0.4), { { 0, on (81) } });
+    check (approx (frequencyOf (octaveDown, 0, at (0.003)), hzOf (81, 11.0f), hzOf (81, 11.0f) * 0.05f)
+               && approx (frequencyOf (octaveDown, at (0.2), at (0.4)), 440.0f, 0.5f),
+           "an oscillator an octave down sweeps from an octave above A5 to its own A4");
+    settings.oscillators[0].semitones = 0;
+
+    // A short TIME is over sooner.
+    settings.oscillators[0].sweepSeconds = 0.03f;
+    auto quick = makeEngine (settings);
+    const auto quickly = run (*quick, at (0.3), { { 0, on (69) } });
+    check (frequencyOf (quickly, 0, at (0.003)) > hzOf (69, 18.0f) && approx (frequencyOf (quickly, at (0.03), at (0.3)), 440.0f, 0.5f),
+           "a 30 ms sweep starts as high and is on its note by 30 ms");
+
+    // Each new note sweeps again, even on a voice still sounding; a legato
+    // slide in MONO carries on as it was.
+    auto again = makeEngine (settings);
+    const auto twice = run (*again, at (0.5), { { 0, on (69) }, { at (0.2), off (69) }, { at (0.21), on (69) } });
+    check (frequencyOf (twice, at (0.21), at (0.213)) > hzOf (69, 18.0f), "a key struck again sweeps again");
+    settings.mono = true;
+    auto legato = makeEngine (settings);
+    const auto slid = run (*legato, at (0.5), { { 0, on (69) }, { at (0.2), on (81) } });
+    check (approx (frequencyOf (slid, at (0.2) + 64, at (0.3)), 880.0f, 1.0f), "a legato note in MONO goes straight to its pitch, without sweeping");
+    settings.mono = false;
+
+    // No sweep is the note's own pitch from the start; the settings stay in
+    // range, and NOISE, with no pitch, has no sweep.
+    settings.oscillators[0].sweepSemitones = 0.0f;
+    auto none = makeEngine (settings);
+    const auto steady = run (*none, at (0.1), { { 0, on (69) } });
+    check (approx (frequencyOf (steady, 0, at (0.02)), 440.0f, 2.0f), "with no sweep a note starts on its pitch");
+    settings.oscillators[0].sweepSemitones = 100.0f;
+    settings.oscillators[0].sweepSeconds   = 0.0f;
+    auto clamped = makeEngine (settings);
+    check (approx (clamped->getSettings().oscillators[0].sweepSemitones, Synth2Engine::maxSweepSemitones, 1e-6f)
+               && approx (clamped->getSettings().oscillators[0].sweepSeconds, Synth2Engine::minSweepSeconds, 1e-6f),
+           "a sweep is kept within its range");
+    settings.oscillators[0].wave = Waveform::noise;
+    auto noisy = makeEngine (settings);
+    check (juce::exactlyEqual (noisy->getSettings().oscillators[0].sweepSemitones, 0.0f), "NOISE plays no sweep");
+}
+
 // ---- The arp ----------------------------------------------------------------------
 
 // The arp's notes out, each at its sample in the whole run.
@@ -2015,6 +2110,7 @@ int main()
     testEffectsChain();
     testEngineEffects();
     testGlideAndMono();
+    testPitchSweep();
     testArp();
 
     std::printf ("\n%s\n", failures == 0 ? "ALL TESTS PASSED" : "SOME TESTS FAILED");

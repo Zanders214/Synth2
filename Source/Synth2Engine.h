@@ -49,6 +49,11 @@
     switching an oscillator on or off, or routing it to the output or away,
     fades it in or out the same way.
 
+    Each oscillator's pitch SWEEP starts every note that many semitones
+    above its pitch (below, if negative) and drops it into its pitch over
+    the sweep's TIME (see SynthVoice::sweepOffset): a kick's thump, a tom's
+    drop.
+
     GLIDE slides each new note to its pitch from the note played before it,
     taking that long whatever the distance (0: no slide). MONO plays one note
     at a time: a key pressed while another is held takes the note over
@@ -74,7 +79,8 @@ public:
     /** One oscillator: whether it is on the bench, and routed to the output,
         its shape, its tuning against the note, its level, its unison stack,
         which envelope shapes it (-1 for none), whether its power switch is
-        on, and which filter it goes through (-1 for none). */
+        on, which filter it goes through (-1 for none), and its pitch sweep
+        (0 semitones: none). */
     struct OscillatorSettings
     {
         bool     on          = false;
@@ -89,6 +95,8 @@ public:
         int      envelope    = -1;
         bool     active      = true;
         int      filter      = -1;
+        float    sweepSemitones = 0.0f;
+        float    sweepSeconds   = 0.05f;
     };
 
     /** One envelope (see Envelope.h): how long a note waits, takes to fade
@@ -124,6 +132,9 @@ public:
 
     static constexpr float maxEnvAmount = 48.0f;
     static constexpr float maxGlideSeconds = 2.0f;
+    static constexpr float maxSweepSemitones = 48.0f;   // each oscillator's pitch SWEEP, either way
+    static constexpr float minSweepSeconds   = 0.005f;  // and its TIME
+    static constexpr float maxSweepSeconds   = 5.0f;
 
     struct Settings
     {
@@ -185,12 +196,13 @@ public:
             auto& oscillator = settings.oscillators[k];
             if (oscillator.wave == Waveform::noise)
             {
-                // Noise has no pitch to move or stack: the controls it hides play no part.
+                // Noise has no pitch to move, sweep or stack: the controls it hides play no part.
                 oscillator.semitones   = 0;
                 oscillator.fineCents   = 0.0f;
                 oscillator.voices      = 1;
                 oscillator.detuneCents = 0.0f;
                 oscillator.width       = 0.0f;
+                oscillator.sweepSemitones = 0.0f;
             }
             oscillator.semitones   = juce::jlimit (-maxSemitones, maxSemitones, oscillator.semitones);
             oscillator.fineCents   = juce::jlimit (-maxFineCents, maxFineCents, oscillator.fineCents);
@@ -200,6 +212,8 @@ public:
             oscillator.width       = juce::jlimit (0.0f, 1.0f, oscillator.width);
             oscillator.envelope    = juce::jlimit (-1, numEnvelopes - 1, oscillator.envelope);
             oscillator.filter      = juce::jlimit (-1, numFilters - 1, oscillator.filter);
+            oscillator.sweepSemitones = juce::jlimit (-maxSweepSemitones, maxSweepSemitones, oscillator.sweepSemitones);
+            oscillator.sweepSeconds   = juce::jlimit (minSweepSeconds, maxSweepSeconds, oscillator.sweepSeconds);
             smoothed.fine[k]  .setTargetValue (oscillator.fineCents);
             smoothed.level[k] .setTargetValue (levelTarget (oscillator));
             smoothed.detune[k].setTargetValue (oscillator.detuneCents);
@@ -519,6 +533,9 @@ private:
             oscillator.cutoffHz  = smoothed.cutoff[k].getCurrentValue();
             oscillator.resonance = smoothed.resonance[k].getCurrentValue();
             oscillator.envAmount = settings.filters[(size_t) juce::jmax (0, filter)].envAmount;
+
+            oscillator.sweepSemitones = settings.oscillators[k].sweepSemitones;
+            oscillator.sweepSeconds   = settings.oscillators[k].sweepSeconds;
         }
         voice.glideSeconds = settings.glideSeconds;
         return voice;

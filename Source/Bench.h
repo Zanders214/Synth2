@@ -438,6 +438,11 @@ namespace Bench
         return kind != Kind::envelope || view.envelopes != EnvelopeView::graph;
     }
 
+    /** How many dials a row of a card of `kind` holds: four on an
+        oscillator's (its tuning and pitch sweep, then its level and stack),
+        so its eight fit the same two rows as the others' six. */
+    inline int dialsPerRow (Kind kind) noexcept { return kind == Kind::oscillator ? 4 : 3; }
+
     /** How tall a card of `kind` is drawn under `view`. */
     inline float cardHeightOf (Kind kind, const View& view) noexcept
     {

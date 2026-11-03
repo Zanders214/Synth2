@@ -633,6 +633,42 @@ void testStateRoundTrip()
     check (wasSliding && param (sliding, ParamID::mono) < 0.5f && approx (param (sliding, ParamID::glide), 0.0f, 1e-4f),
            "a session from before GLIDE and MONO comes back POLY, without GLIDE, over a preset that had both");
 
+    // The pitch sweeps come back with the session; one saved before them
+    // comes back with none, whatever was loaded before it.
+    Synth2AudioProcessor swept;
+    setParam (swept, ParamID::osc2PitchSweep, -7.0f);
+    setParam (swept, ParamID::osc2SweepTime, 0.3f);
+    swept.getStateInformation (saved);
+    Synth2AudioProcessor sweptBack;
+    sweptBack.setStateInformation (saved.getData(), (int) saved.getSize());
+    check (approx (param (sweptBack, ParamID::osc2PitchSweep), -7.0f, 1e-6f) && approx (param (sweptBack, ParamID::osc2SweepTime), 0.3f, 1e-3f),
+           "each oscillator's pitch SWEEP and TIME come back");
+
+    auto beforeSweeps = d.getState().copyState().createCopy();
+    for (const auto* id : ParamID::pitchSweepParameters)
+        beforeSweeps.removeChild (beforeSweeps.getChildWithProperty ("id", juce::String (id)), nullptr);
+    juce::MemoryBlock sweepless;
+    juce::AudioProcessor::copyXmlToBinary (*beforeSweeps.createXml(), sweepless);
+    Synth2AudioProcessor kicking;
+    for (int i = 0; i < Presets::numPresets; ++i)
+        if (juce::String (Presets::factory[(size_t) i].name) == "Kick")
+            kicking.loadPreset (i);
+    const bool wasSweeping = param (kicking, ParamID::osc1PitchSweep) > 0.0f;
+    auto kickBeforeSweeps = kicking.getState().copyState().createCopy();
+    const auto kickSummary = Presets::summaryOf (kickBeforeSweeps);
+    for (const auto* id : ParamID::pitchSweepParameters)
+        kickBeforeSweeps.removeChild (kickBeforeSweeps.getChildWithProperty ("id", juce::String (id)), nullptr);
+    const auto oldKickSummary = Presets::summaryOf (kickBeforeSweeps);
+    kicking.setStateInformation (sweepless.getData(), (int) sweepless.getSize());
+    bool noSweeps = true;
+    for (size_t k = 0; k < ParamID::oscillators.size(); ++k)
+        noSweeps = noSweeps && juce::exactlyEqual (param (kicking, ParamID::oscillators[k].pitchSweep), 0.0f)
+                            && juce::exactlyEqual (kicking.currentSettings().oscillators[k].sweepSemitones, 0.0f);
+    check (wasSweeping && noSweeps, "a session from before the pitch sweeps comes back with none, over a preset that swept");
+    check (kickSummary.oscillators[0].has_value() && kickSummary.oscillators[0]->sweep.semitones > 0
+               && oldKickSummary.oscillators[0].has_value() && oldKickSummary.oscillators[0]->sweep.semitones == 0,
+           "a state's summary reads its sweeps, and one saved before them as none");
+
     // Older sessions, made from this one: without the bench's tree and the
     // parameters that came after them, and with any they had that are gone.
     const auto olderSession = [&a] (const juce::ValueTree& bench, std::initializer_list<std::pair<const char*, float>> values)
@@ -869,7 +905,16 @@ void testEditor()
     check (osc1.getCaption() == "OSC 1" && model.positionOf (osc1.getId()) == juce::Point<float> (32.0f, 25.0f)
                && osc1.getBounds() == juce::Rectangle<int> (32, 25, 236, 336),
            "under the click, its header where the click was");
-    check (osc1.getNumDials() == 6, "with its own unison stack under PITCH / FINE / LEVEL");
+    check (osc1.getNumDials() == 8, "with PITCH / FINE and its pitch SWEEP / TIME over LEVEL and its own unison stack");
+    bool fourInARow = true;
+    for (int d = 0; d < osc1.getNumDials(); ++d)
+    {
+        const auto& dial = osc1.getDial (d);
+        const auto& first = osc1.getDial (d < 4 ? 0 : 4);
+        fourInARow = fourInARow && dial.isVisible() && osc1.getLocalBounds().contains (dial.getBounds()) && dial.getY() == first.getY()
+                  && (d % 4 == 0 || dial.getX() > osc1.getDial (d - 1).getRight());
+    }
+    check (fourInARow && osc1.getDial (4).getY() > osc1.getDial (0).getBottom(), "in two rows of four, apart, inside the card");
     check (! bench.isShowingHint(), "and the hint goes");
     check (holdAndMeasure (p) > 0.02f, "a note now sounds, on and off with the key without an envelope");
     releaseAll (p);
@@ -952,18 +997,26 @@ void testEditor()
     // Dials in the modules drive their own parameters, and the wells follow.
     auto& osc3 = bench.getOscillator (2);
     osc3.getDial (0).setValue (12.0, juce::sendNotificationSync);
-    osc3.getDial (2).setValue (0.5, juce::sendNotificationSync);
+    osc3.getDial (4).setValue (0.5, juce::sendNotificationSync);
     check (approx (param (p, ParamID::osc3Pitch), 12.0f, 1e-6f) && approx (param (p, ParamID::osc3Level), 0.5f, 1e-6f),
            "OSC 3's dials set its own PITCH and LEVEL");
     check (pumpUntil ([&osc3] { return approx (osc3.getDisplay().getOsc().level, 0.5f, 1e-6f) && osc3.getDisplay().getOsc().cycles > 3.9f; }),
            "and its well shows twice the cycles, half as tall");
     const float osc1VoicesBefore = param (p, ParamID::osc1Voices);
-    osc3.getDial (3).setValue (5.0, juce::sendNotificationSync);
-    osc3.getDial (4).setValue (40.0, juce::sendNotificationSync);
+    osc3.getDial (5).setValue (5.0, juce::sendNotificationSync);
+    osc3.getDial (6).setValue (40.0, juce::sendNotificationSync);
     check (approx (param (p, ParamID::osc3Voices), 5.0f, 1e-6f) && approx (param (p, ParamID::osc3Detune), 40.0f, 0.01f)
                && approx (param (p, ParamID::osc1Voices), osc1VoicesBefore, 1e-6f),
            "its VOICES and DETUNE stack OSC 3 alone");
     check (pumpUntil ([&osc3] { return osc3.getDisplay().getState().voices == 5; }), "and its well shows a copy per voice");
+    osc3.getDial (2).setValue (24.0, juce::sendNotificationSync);
+    osc3.getDial (3).setValue (0.04, juce::sendNotificationSync);
+    check (approx (param (p, ParamID::osc3PitchSweep), 24.0f, 1e-6f) && approx (param (p, ParamID::osc3SweepTime), 0.04f, 1e-4f)
+               && approx (p.currentSettings().oscillators[2].sweepSemitones, 24.0f, 1e-6f)
+               && approx (param (p, ParamID::osc1PitchSweep), 0.0f, 1e-6f),
+           "its SWEEP and TIME sweep OSC 3's pitch alone");
+    check (BenchStyle::dialText (ParamID::osc3PitchSweep, 24.0f) == "+24 st" && BenchStyle::dialText (ParamID::osc3SweepTime, 0.04f) == "40 ms",
+           "reading in semitones and a time");
 
     // The wave picker, laid over each oscillator's WAVE well.
     auto& picker = osc1.getPicker();
@@ -987,20 +1040,21 @@ void testEditor()
     // NOISE has no pitch or stack: its card shows LEVEL alone.
     const auto onlyLevel = [&osc1]
     {
-        bool levelAlone = osc1.getDial (2).isVisible();
-        for (const int dial : { 0, 1, 3, 4, 5 })
+        bool levelAlone = osc1.getDial (4).isVisible();
+        for (const int dial : { 0, 1, 2, 3, 5, 6, 7 })
             levelAlone = levelAlone && ! osc1.getDial (dial).isVisible();
         return levelAlone;
     };
-    check (pumpUntil (onlyLevel) && osc1.getLocalBounds().contains (osc1.getDial (2).getBounds()),
-           "on NOISE, the oscillator hides PITCH, FINE, VOICES, DETUNE and WIDTH, leaving LEVEL");
+    check (pumpUntil (onlyLevel) && osc1.getLocalBounds().contains (osc1.getDial (4).getBounds()),
+           "on NOISE, the oscillator hides PITCH, FINE, SWEEP, TIME, VOICES, DETUNE and WIDTH, leaving LEVEL");
     check (pumpUntil ([&well] { return well.getShownWave() == Waveform::noise && well.getState().voices == 1; }),
            "and its well draws the noise, without the stack's copies");
     snapshot (render (*editor), "4a-noise");
     wheel.deltaY = 0.25f;
     picker.mouseWheelMove (mouseAt (picker, { 40.0f, 60.0f }), wheel);
     check (picker.getSelected() == 3 && pumpUntil ([&well] { return well.getShownWave() == Waveform::square; }), "and the well follows");
-    check (pumpUntil ([&osc1] { return osc1.getDial (0).isVisible() && osc1.getDial (5).isVisible(); }), "back on SQUARE, every dial shows again");
+    check (pumpUntil ([&osc1] { return osc1.getDial (0).isVisible() && osc1.getDial (3).isVisible() && osc1.getDial (7).isVisible(); }),
+           "back on SQUARE, every dial shows again");
 
     picker.mouseDown (mouseAt (picker, { 60.0f, 60.0f }));
     const auto wellInEditor = editor->getLocalArea (&well, well.getLocalBounds()).toFloat();
@@ -2447,7 +2501,9 @@ void testPresets()
             const auto& osc = preset.oscillators[(size_t) slot];
             if (osc.has_value())
                 tunedAsWritten = tunedAsWritten && settings.oscillators[(size_t) slot].semitones == osc->semitones
-                                                && approx (settings.oscillators[(size_t) slot].fineCents, osc->fineCents, 0.05f);
+                                                && approx (settings.oscillators[(size_t) slot].fineCents, osc->fineCents, 0.05f)
+                                                && approx (settings.oscillators[(size_t) slot].sweepSemitones, (float) osc->sweep.semitones, 1e-6f)
+                                                && approx (settings.oscillators[(size_t) slot].sweepSeconds, osc->sweep.seconds, 1e-3f);
             const bool shaped = osc.has_value() && osc->envelope.has_value();
             const bool filtered = osc.has_value() && osc->filter.has_value();
             modulesMatch = modulesMatch && bench.isPresent ({ Bench::Kind::oscillator, slot }) == osc.has_value()
@@ -2469,7 +2525,7 @@ void testPresets()
         const std::string name = preset.name;
         check (q.getCurrentProgram() == i && modulesMatch && apart, name + ": its modules are on the bench, apart");
         check (shapedByOwn && filteredByOwn, name + ": each envelope and filter takes its own oscillator");
-        check (tunedAsWritten, name + ": each oscillator plays at the PITCH and FINE it is written with, within their ranges");
+        check (tunedAsWritten, name + ": each oscillator plays at the PITCH, FINE and pitch sweep it is written with, within their ranges");
         check (peak > 0.2f && peak < 1.0f, name + ": a chord sounds without clipping (peak " + std::to_string (peak) + ")");
     }
 

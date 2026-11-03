@@ -22,7 +22,7 @@ and a tray offers what can go there:
 
 | Module         | What it holds                                                             |
 |----------------|---------------------------------------------------------------------------|
-| **Oscillator** | One shape at its own pitch and level, WAVE, PITCH, FINE, LEVEL, over its own unison stack, VOICES, DETUNE, WIDTH. Up to four (OSC 1 to OSC 4). |
+| **Oscillator** | One shape at its own pitch and level, WAVE, PITCH, FINE, its pitch SWEEP and TIME, LEVEL, over its own unison stack, VOICES, DETUNE, WIDTH. Up to four (OSC 1 to OSC 4). |
 | **Filter**     | One oscillator's tone, each note filtered on its own: TYPE (LOW 24, LOW 12, BAND, HIGH 12, HIGH 24, NOTCH), CUTOFF, RESONANCE, and its own SWEEP envelope that moves the cutoff as each note plays, ENV AMT semitones at its top. Up to four (FILTER 1 to FILTER 4). |
 | **Envelope**   | How one oscillator's notes rise and fall: DELAY, ATTACK, HOLD, DECAY, SUSTAIN, RELEASE. Up to four (ENV 1 to ENV 4). An oscillator without one starts and stops with the key, with a short click-free fade. |
 
@@ -262,10 +262,14 @@ you loaded is saved with your set.
 | **Computer Bleeps** | SFX    | Hold a chord: the arp scatters sine blips through it in 32nds |
 | **Explosion**     | SFX      | A boom of low noise and a sine thud, rolling away       |
 | **Wind**          | SFX      | Hold it: noise through narrow bands that gust and die down |
+| **Kick**          | Drums    | A sine dropping two octaves into a short, tight thump, a click of noise on top |
+| **Tom**           | Drums    | A sine that falls a fifth as it rings, a slap of skin on top: low keys for floor toms |
 
 The drums are noise (see **Wave**), each burst shaped short by its envelope and
 filtered to its place in the spectrum; the hats keep a little of a detuned square stack
-for metal. Each plays at the key it's on, though the noise sounds the same on any key.
+for metal. The kick and the tom are sines whose pitch SWEEP drops them into their
+note. Each plays at the key it's on, though the noise sounds the same on any key: the
+kick sits an octave below its key, so C2 to C3 gives a deep one.
 
 ### Signal flow
 
@@ -317,9 +321,11 @@ sum, on their own tab (see [Effects](#effects)).
 
 | Control     | What it does                                                        |
 |-------------|---------------------------------------------------------------------|
-| **Wave**    | Each oscillator's shape: **SINE**, **TRIANGLE**, **SAW** or **SQUARE**, or **NOISE**, picked in its display (see below). NOISE is white noise, for drums, wind and hiss: it has no pitch or unison stack, so its PITCH, FINE, VOICES, DETUNE and WIDTH are hidden, leaving LEVEL, and each note's noise is new. |
+| **Wave**    | Each oscillator's shape: **SINE**, **TRIANGLE**, **SAW** or **SQUARE**, or **NOISE**, picked in its display (see below). NOISE is white noise, for drums, wind and hiss: it has no pitch or unison stack, so its PITCH, FINE, SWEEP, TIME, VOICES, DETUNE and WIDTH are hidden, leaving LEVEL, and each note's noise is new. |
 | **Pitch**   | Transposes the oscillator, -24 to +24 semitones: +12 is an octave up, +7 a fifth. |
 | **Fine**    | Tunes the oscillator by up to ±50 cents, for a slow beat against the others. |
+| **Sweep**   | How far above its pitch each note starts, -48 to +48 semitones, falling into its pitch over TIME: quickly at first, easing in at the end. +24 over 40 ms is a kick's thump; a few semitones over a few hundred ms is a tom's drop. Below 0 each note starts low and rises instead. At 0 (the default) there is no sweep. A legato note in MONO carries on from where it was rather than sweeping again. |
+| **Time**    | How long the pitch SWEEP takes to land on the note, 5 ms to 5 s.     |
 | **Level**   | The oscillator's level, 0 to 100%. |
 | **Voices**  | How many copies of the oscillator play each note, 1 to 16. One voice is a plain, centred oscillator. |
 | **Detune**  | How far apart the voices are tuned: the outer two sit this many cents flat and sharp (up to ±50 ct) and the rest fall evenly between. Detuned voices beat against each other, which is what makes the sound thick. |

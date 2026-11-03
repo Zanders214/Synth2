@@ -59,6 +59,18 @@ namespace ParamID
     inline constexpr const char* env3Active = "env3Active";
     inline constexpr const char* env4Active = "env4Active";
 
+    // Each oscillator's pitch sweep (version 15): how far above its pitch
+    // (in semitones; below, if negative) each note starts, and how long it
+    // takes to fall to it.
+    inline constexpr const char* osc1PitchSweep = "osc1PitchSweep";
+    inline constexpr const char* osc1SweepTime  = "osc1SweepTime";
+    inline constexpr const char* osc2PitchSweep = "osc2PitchSweep";
+    inline constexpr const char* osc2SweepTime  = "osc2SweepTime";
+    inline constexpr const char* osc3PitchSweep = "osc3PitchSweep";
+    inline constexpr const char* osc3SweepTime  = "osc3SweepTime";
+    inline constexpr const char* osc4PitchSweep = "osc4PitchSweep";
+    inline constexpr const char* osc4SweepTime  = "osc4SweepTime";
+
     /** Oscillator `index`'s (0..3) parameters, by role. */
     struct Oscillator
     {
@@ -71,12 +83,14 @@ namespace ParamID
         const char* detune;
         const char* width;
         const char* active;
+        const char* pitchSweep;
+        const char* sweepTime;
     };
     inline constexpr std::array<Oscillator, 4> oscillators {{
-        { osc1On, osc1Wave, osc1Pitch, osc1Fine, osc1Level, osc1Voices, osc1Detune, osc1Width,  osc1Active },
-        { osc2On, osc2Wave, osc2Pitch, osc2Fine, osc2Level, osc2Voices, osc2Detune, osc2Width,  osc2Active },
-        { osc3On, osc3Wave, osc3Pitch, osc3Fine, osc3Level, osc3Voices, osc3Detune, osc3Width,  osc3Active },
-        { osc4On, osc4Wave, osc4Pitch, osc4Fine, osc4Level, osc4Voices, osc4Detune, osc4Width,  osc4Active } }};
+        { osc1On, osc1Wave, osc1Pitch, osc1Fine, osc1Level, osc1Voices, osc1Detune, osc1Width,  osc1Active, osc1PitchSweep, osc1SweepTime },
+        { osc2On, osc2Wave, osc2Pitch, osc2Fine, osc2Level, osc2Voices, osc2Detune, osc2Width,  osc2Active, osc2PitchSweep, osc2SweepTime },
+        { osc3On, osc3Wave, osc3Pitch, osc3Fine, osc3Level, osc3Voices, osc3Detune, osc3Width,  osc3Active, osc3PitchSweep, osc3SweepTime },
+        { osc4On, osc4Wave, osc4Pitch, osc4Fine, osc4Level, osc4Voices, osc4Detune, osc4Width,  osc4Active, osc4PitchSweep, osc4SweepTime } }};
     constexpr const Oscillator& oscillator (int index) { return oscillators[(size_t) index]; }
 
     // The four envelopes. ENV 1's attack and release are above.
@@ -300,6 +314,10 @@ namespace ParamID
 
     // Every one of the arp's (version 14), for a session saved before it.
     inline constexpr std::array<const char*, 5> arpParameters { arpOn, arpRate, arpSwing, arpLatch, arpOctaves };
+
+    // Every pitch sweep's (version 15), for a session saved before them.
+    inline constexpr std::array<const char*, 8> pitchSweepParameters { osc1PitchSweep, osc1SweepTime, osc2PitchSweep, osc2SweepTime,
+                                                                       osc3PitchSweep, osc3SweepTime, osc4PitchSweep, osc4SweepTime };
 
     // Retired with the first bench's shared unison and envelope modules; only
     // read from sessions saved with them, to carry them over.

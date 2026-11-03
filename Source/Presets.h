@@ -79,10 +79,20 @@ namespace Presets
         Envelope sweep {};
     };
 
+    /** An oscillator's pitch sweep: how far above its pitch each note
+        starts, in semitones (below, if negative; 0: no sweep), and how
+        long it takes to fall there, in seconds. */
+    struct PitchSweep
+    {
+        int   semitones = 0;
+        float seconds   = 0.05f;
+    };
+
     /** One oscillator on the bench: its shape (Waveform's order), its
         transposition in semitones, its fine tune in cents, its level, its
         unison stack, the envelope under it (none: it just starts and stops
-        with its key) and the filter it goes through (none: unfiltered). */
+        with its key), the filter it goes through (none: unfiltered) and its
+        pitch sweep (none, unless it says). */
     struct Oscillator
     {
         int   wave      = 2;
@@ -92,6 +102,7 @@ namespace Presets
         Unison unison {};
         std::optional<Envelope> envelope {};
         std::optional<Filter>   filter {};
+        PitchSweep sweep {};
     };
 
     /** The delay, following the tempo: its note length (an index into
@@ -206,7 +217,7 @@ namespace Presets
     // The drive's shapes, by name (their place in Effects::DriveShape).
     inline constexpr int hard = (int) Effects::DriveShape::hard;
 
-    inline const std::array<Preset, 36> factory {{
+    inline const std::array<Preset, 38> factory {{
         { Category::init, "Empty Bench", "Nothing on it yet: build your own", {}, 0.0f },
 
         { Category::pads, "Supersaw Pad", "Nine wide saws, an octave blooming on top",
@@ -405,6 +416,23 @@ namespace Presets
             Oscillator { noise, 0, 0.0f, 0.6f, {}, ar (2.5f, 3.0f),
                          Filter { band, 900.0f, 0.5f, 19.0f, Envelope { 1.0f, 3.0f, 0.0f, 2.5f, 0.3f, 3.0f, 0.3f, 0.2f, 0.0f } } } },
           6.0f, std::nullopt, Reverb { 0.7f, 0.5f, 1.0f, 0.3f, 20.0f } },
+
+        // The drums a pitch sweep makes: a kick's thump and a tom's drop,
+        // each sine starting high and falling into its note.
+        { Category::drums, "Kick", "A sine dropping two octaves into a short, tight thump, a click on top",
+          { Oscillator { sine, -12, 0.0f, 1.0f, {}, Envelope { 0.0f, 0.001f, 0.02f, 0.25f, 0.0f, 0.08f, 0.0f, -0.4f, 0.0f },
+                         std::nullopt, PitchSweep { 24, 0.04f } },
+            Oscillator { noise, 0, 0.0f, 0.4f,  {}, Envelope { 0.0f, 0.001f, 0.0f, 0.012f, 0.0f, 0.01f, 0.0f, -0.5f, 0.0f },
+                         Filter { high12, 2500.0f, 0.1f, 0.0f } } },
+          -3.0f },
+        { Category::drums, "Tom", "A sine that falls a fifth as it rings, a slap of skin on top: low keys for floor toms",
+          { Oscillator { sine, 0, 0.0f, 1.0f,     {}, Envelope { 0.0f, 0.001f, 0.0f, 0.5f, 0.0f, 0.25f, 0.0f, -0.5f, 0.0f },
+                         std::nullopt, PitchSweep { 7, 0.3f } },
+            Oscillator { triangle, 0, 0.0f, 0.4f, {}, Envelope { 0.0f, 0.001f, 0.0f, 0.15f, 0.0f, 0.1f, 0.0f, -0.6f, 0.0f },
+                         std::nullopt, PitchSweep { 12, 0.08f } },
+            Oscillator { noise, 0, 0.0f, 0.3f,    {}, Envelope { 0.0f, 0.001f, 0.0f, 0.04f, 0.0f, 0.03f, 0.0f, -0.5f, 0.0f },
+                         Filter { band, 1200.0f, 0.2f, 0.0f } } },
+          -3.0f, std::nullopt, Reverb { 0.3f, 0.5f, 1.0f, 0.12f, 5.0f } },
     }};
 
     inline constexpr int numPresets = (int) std::tuple_size_v<decltype (factory)>;
@@ -449,6 +477,8 @@ namespace Presets
         values.emplace_back (ids.voices, (float) osc->unison.voices);
         values.emplace_back (ids.detune, osc->unison.detuneCents);
         values.emplace_back (ids.width,  osc->unison.width);
+        values.emplace_back (ids.pitchSweep, (float) osc->sweep.semitones);
+        values.emplace_back (ids.sweepTime,  osc->sweep.seconds);
         if (shaped)
             addStages (values, env, *osc->envelope);
         if (filtered)
@@ -570,6 +600,7 @@ namespace Presets
             osc.level     = value (ids.level, d.level);
             osc.unison    = { juce::roundToInt (value (ids.voices, (float) d.unison.voices)),
                               value (ids.detune, d.unison.detuneCents), value (ids.width, d.unison.width) };
+            osc.sweep     = { juce::roundToInt (value (ids.pitchSweep, (float) d.sweep.semitones)), value (ids.sweepTime, d.sweep.seconds) };
             if (on (ParamID::envelopes[k].on))
                 osc.envelope = stagesOf (ParamID::envelopes[k]);
             if (const auto& flt = ParamID::filters[k]; on (flt.on))
