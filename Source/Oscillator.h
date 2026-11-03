@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstdint>
 
+#include "Simd.h"
+
 /** The four basic shapes, in the order the WAVE parameter lists them. */
 enum class Waveform
 {
@@ -36,10 +38,9 @@ enum class Waveform
     BlepOscillator keeps its phase as a 32-bit fraction of a cycle, which
     wraps by itself as it overflows: no comparing and subtracting each
     sample, a pitch exact to about 0.00001 Hz that never drifts, and
-    arithmetic simple enough for the compiler to step several oscillators in
-    one instruction. The shapes are worked out from it in float, within a
-    float's precision of the maths above (the sine as a polynomial, within
-    2e-7 of std::sin).
+    arithmetic simple enough to step four samples in one instruction. The
+    shapes are worked out from it in float, within a float's precision of
+    the maths above (the sine as a polynomial, within 2e-7 of std::sin).
 */
 namespace Oscillator
 {
@@ -111,10 +112,10 @@ public:
         float value = 0.0f;
         switch (wave)
         {
-            case Waveform::sine:     value = sample<Waveform::sine>     (phase, dt, perDt); break;
-            case Waveform::triangle: value = sample<Waveform::triangle> (phase, dt, perDt); break;
-            case Waveform::saw:      value = sample<Waveform::saw>      (phase, dt, perDt); break;
-            case Waveform::square:   value = sample<Waveform::square>   (phase, dt, perDt); break;
+            case Waveform::sine:     value = shape<Waveform::sine>     (phase, perDt); break;
+            case Waveform::triangle: value = shape<Waveform::triangle> (phase, perDt); break;
+            case Waveform::saw:      value = shape<Waveform::saw>      (phase, perDt); break;
+            case Waveform::square:   value = shape<Waveform::square>   (phase, perDt); break;
         }
         phase += dt;
         return value;
@@ -130,9 +131,7 @@ public:
     }
 
     /** render() for `count` oscillators all playing `wave`, each into its own
-        `outs`. The samples are the same; stepping several oscillators side by
-        side lets the CPU work on them at once instead of waiting on each
-        one's phase in turn. */
+        `outs`. The samples are the same. */
     static void renderAll (BlepOscillator* const* oscillators, float* const* outs, int count,
                            Waveform wave, const float* levels, int numSamples, bool add) noexcept
     {
@@ -148,8 +147,7 @@ public:
         `panLeft` and `panRight`. The same sums, in the same order, as
         rendering each into a row of its own and then adding the rows in one
         by one, so the result is the same to the bit; but each sample goes
-        straight in, and the pair is read and written once for every few
-        oscillators rather than once for each. */
+        straight in. */
     static void renderPanned (BlepOscillator* const* oscillators, int count, Waveform wave, const float* levels,   // NOSONAR(cpp:S107): hot path, like SynthVoice::mix
                               const float* fades, const float* panLeft, const float* panRight,
                               float* left, float* right, int numSamples) noexcept
@@ -168,24 +166,52 @@ private:
     static constexpr std::uint32_t half  = 0x80000000u;    // half a cycle
     static constexpr std::uint32_t quarter = 0x40000000u;
 
-    // Oscillator::polyBlep() for a phase `t` stepping `dt`, both fractions of
-    // 2^32, and perDt = 1 / dt. Both sides are worked out and the one that
-    // applies is picked, without branching, so oscillators side by side are
-    // worked out together.
-    static float polyBlep (std::uint32_t t, std::uint32_t dt, float perDt) noexcept
+    static float toFloat (std::uint32_t value) noexcept { return (float) (std::int32_t) value; }
+    static float magnitude (float value) noexcept       { return std::abs (value); }
+    static float signOf (std::uint32_t value) noexcept  { return (std::int32_t) value < 0 ? -1.0f : 1.0f; }
+
+    static float clampUnit (float value) noexcept       { return std::min (std::max (value, -1.0f), 1.0f); }
+
+    static std::uint32_t foldSine (std::uint32_t phase) noexcept
     {
-        const float x = (float) t * perDt;                       // after the jump, 0..1
-        const float y = -(float) (std::uint32_t) (0u - t) * perDt;   // before it, -1..0
-        const float rise = x + x - x * x - 1.0f;
-        const float fall = y * y + y + y + 1.0f;
-        const float edge = t > 0u - dt ? fall : 0.0f;
-        return t < dt ? rise : edge;
+        const auto signedPhase = (std::int32_t) phase;
+        return signedPhase > (std::int32_t) quarter || signedPhase < -(std::int32_t) quarter ? half - phase : phase;
+    }
+
+#if SYNTH2_SSE2
+    using Floats = Simd::Floats;
+    using Ints   = Simd::Ints;
+
+    static Floats toFloat (Ints value) noexcept    { return _mm_cvtepi32_ps (value.v); }
+    static Floats magnitude (Floats value) noexcept { return _mm_and_ps (value.v, _mm_castsi128_ps (_mm_set1_epi32 (0x7fffffff))); }
+    static Floats signOf (Ints value) noexcept      { return _mm_cvtepi32_ps (_mm_or_si128 (_mm_srai_epi32 (value.v, 31), _mm_set1_epi32 (1))); }
+    static Floats clampUnit (Floats value) noexcept { return _mm_min_ps (_mm_max_ps (value.v, _mm_set1_ps (-1.0f)), _mm_set1_ps (1.0f)); }
+
+    static Ints foldSine (Ints phase) noexcept
+    {
+        const __m128i outside = _mm_or_si128 (_mm_cmpgt_epi32 (phase.v, _mm_set1_epi32 ((int) quarter)),
+                                              _mm_cmplt_epi32 (phase.v, _mm_set1_epi32 (-(int) quarter)));
+        const __m128i mirrored = _mm_sub_epi32 (_mm_set1_epi32 ((int) half), phase.v);
+        return _mm_or_si128 (_mm_and_si128 (outside, mirrored), _mm_andnot_si128 (outside, phase.v));
+    }
+
+    Ints lanePhases() const noexcept
+    {
+        return _mm_setr_epi32 ((int) phase, (int) (phase + dt), (int) (phase + 2u * dt), (int) (phase + 3u * dt));
+    }
+#endif
+
+    template <typename Float>
+    static Float edge (Float stepsFromJump) noexcept
+    {
+        const Float x = clampUnit (stepsFromJump);
+        return x * (magnitude (x) - Float (2.0f));
     }
 
     // One sample of `wave` at `phase`. Shifting by half or a quarter of a
     // cycle is an add that wraps by itself.
-    template <Waveform wave>
-    static float sample (std::uint32_t phase, std::uint32_t dt, float perDt) noexcept
+    template <Waveform wave, typename Float, typename Int>
+    static Float shape (Int phase, Float perDt) noexcept
     {
         constexpr float perHalf    = 1.0f / 2147483648.0f;   // 2^-31
         constexpr float perQuarter = 1.0f / 1073741824.0f;   // 2^-30
@@ -195,32 +221,27 @@ private:
             // (where the sine is the mirror of itself either side of a
             // quarter), exactly, then a short polynomial: within 2e-7 of
             // std::sin, and far cheaper.
-            const auto a = (std::int32_t) phase;
-            const auto mirrored = (std::int32_t) (half - phase);
-            const std::int32_t r = a > (std::int32_t) quarter || a < -(std::int32_t) quarter ? mirrored : a;
             constexpr auto toRadians = (float) (Oscillator::twoPi / cycle);
-            const float x  = (float) r * toRadians;
-            const float x2 = x * x;
-            return x * (1.0f + x2 * (-1.0f / 6.0f + x2 * (1.0f / 120.0f + x2 * (-1.0f / 5040.0f
-                                                     + x2 * (1.0f / 362880.0f + x2 * (-1.0f / 39916800.0f))))));
+            const Float x  = toFloat (foldSine (phase)) * Float (toRadians);
+            const Float x2 = x * x;
+            return x * (Float (1.0f) + x2 * (Float (-1.0f / 6.0f) + x2 * (Float (1.0f / 120.0f) + x2 * (Float (-1.0f / 5040.0f)
+                         + x2 * (Float (1.0f / 362880.0f) + x2 * Float (-1.0f / 39916800.0f))))));
         }
         else if constexpr (wave == Waveform::triangle)
         {
             // 1 - 4 |t - 1/2| for t a quarter cycle on: the distance from the
             // middle of the cycle, as a signed fraction.
-            const auto fromMiddle = (std::int32_t) ((phase + quarter) ^ half);
-            return 1.0f - std::abs ((float) fromMiddle * perQuarter);
+            return Float (1.0f) - magnitude (toFloat ((phase + Int (quarter)) ^ Int (half)) * Float (perQuarter));
         }
         else if constexpr (wave == Waveform::saw)
         {
-            // 2u - 1 for u half a cycle on is the phase read as signed; the
-            // saw's drop sits there.
-            return (float) (std::int32_t) phase * perHalf - polyBlep (phase + half, dt, perDt);
+            const Float fromJump = toFloat (phase + Int (half));
+            return fromJump * Float (perHalf) + edge (fromJump * perDt);
         }
         else
         {
-            return ((std::int32_t) phase >= 0 ? 1.0f : -1.0f)
-                   + polyBlep (phase, dt, perDt) - polyBlep (phase + half, dt, perDt);
+            const Int fromDrop = phase + Int (half);
+            return edge (toFloat (fromDrop) * perDt) - edge (toFloat (phase) * perDt) + signOf (fromDrop);
         }
     }
 
@@ -237,52 +258,46 @@ private:
         }
     }
 
-    // Four at a time, then a pair, then the last one.
     template <Waveform wave, bool add>
     static void run (BlepOscillator* const* oscillators, float* const* outs, int count,
                      const float* levels, int numSamples) noexcept
     {
-        int k = 0;
-        for (; k + 4 <= count; k += 4)
-            runSideBySide<wave, add, 4> (oscillators + k, outs + k, levels, numSamples);
-        if (k + 2 <= count)
+        for (int k = 0; k < count; ++k)
         {
-            runSideBySide<wave, add, 2> (oscillators + k, outs + k, levels, numSamples);
-            k += 2;
-        }
-        if (k < count)
-            runSideBySide<wave, add, 1> (oscillators + k, outs + k, levels, numSamples);
-    }
-
-    template <Waveform wave, bool add, int lanes>
-    static void runSideBySide (BlepOscillator* const* oscillators, float* const* outs,
-                               const float* levels, int numSamples) noexcept
-    {
-        std::array<std::uint32_t, lanes> phases {};
-        std::array<std::uint32_t, lanes> steps {};
-        std::array<float, lanes> perSteps {};
-        for (size_t j = 0; j < (size_t) lanes; ++j)
-        {
-            phases[j]   = oscillators[j]->phase;
-            steps[j]    = oscillators[j]->dt;
-            perSteps[j] = oscillators[j]->perDt;
-        }
-
-        for (int n = 0; n < numSamples; ++n)
-        {
-            for (size_t j = 0; j < (size_t) lanes; ++j)
+            auto& oscillator = *oscillators[k];
+            float* out = outs[k];
+            const std::uint32_t dt = oscillator.dt;
+            const float perDt = oscillator.perDt;
+            std::uint32_t phase = oscillator.phase;
+            int n = 0;
+#if SYNTH2_SSE2
             {
-                const float value = sample<wave> (phases[j], steps[j], perSteps[j]);
-                if constexpr (add)
-                    outs[j][n] += value * levels[n];
-                else
-                    outs[j][n] = value * levels[n];
-                phases[j] += steps[j];
+                const Ints  stride = 4u * dt;
+                const Floats perStep = perDt;
+                Ints phases = oscillator.lanePhases();
+                for (; n + 4 <= numSamples; n += 4)
+                {
+                    const Floats value = shape<wave> (phases, perStep) * Floats::load (levels + n);
+                    if constexpr (add)
+                        (Floats::load (out + n) + value).store (out + n);
+                    else
+                        value.store (out + n);
+                    phases = phases + stride;
+                }
+                phase += (std::uint32_t) n * dt;
             }
+#endif
+            for (; n < numSamples; ++n)
+            {
+                const float value = shape<wave> (phase, perDt);
+                if constexpr (add)
+                    out[n] += value * levels[n];
+                else
+                    out[n] = value * levels[n];
+                phase += dt;
+            }
+            oscillator.phase = phase;
         }
-
-        for (size_t j = 0; j < (size_t) lanes; ++j)
-            oscillators[j]->phase = phases[j];
     }
 
     // Four at a time, then a pair, then the last one, each group added in
@@ -292,50 +307,70 @@ private:
                            const float* panLeft, const float* panRight, float* left, float* right, int numSamples) noexcept
     {
         int k = 0;
+#if SYNTH2_SSE2
         for (; k + 4 <= count; k += 4)
-            runPannedSideBySide<wave, 4> (oscillators + k, levels, fades + k, panLeft + k, panRight + k, left, right, numSamples);
+            runPannedGroup<wave, 4> (oscillators + k, levels, fades + k, panLeft + k, panRight + k, left, right, numSamples);
         if (k + 2 <= count)
         {
-            runPannedSideBySide<wave, 2> (oscillators + k, levels, fades + k, panLeft + k, panRight + k, left, right, numSamples);
+            runPannedGroup<wave, 2> (oscillators + k, levels, fades + k, panLeft + k, panRight + k, left, right, numSamples);
             k += 2;
         }
-        if (k < count)
-            runPannedSideBySide<wave, 1> (oscillators + k, levels, fades + k, panLeft + k, panRight + k, left, right, numSamples);
+#endif
+        for (; k < count; ++k)
+            runPannedGroup<wave, 1> (oscillators + k, levels, fades + k, panLeft + k, panRight + k, left, right, numSamples);
     }
 
-    template <Waveform wave, int lanes>
-    static void runPannedSideBySide (BlepOscillator* const* oscillators, const float* levels, const float* fades,   // NOSONAR(cpp:S107): hot path
-                                     const float* panLeft, const float* panRight, float* left, float* right, int numSamples) noexcept
+    template <Waveform wave, size_t group>
+    static void runPannedGroup (BlepOscillator* const* oscillators, const float* levels, const float* fades,   // NOSONAR(cpp:S107): hot path
+                                const float* panLeft, const float* panRight, float* left, float* right, int numSamples) noexcept
     {
-        std::array<std::uint32_t, lanes> phases {};
-        std::array<std::uint32_t, lanes> steps {};
-        std::array<float, lanes> perSteps {};
-        for (size_t j = 0; j < (size_t) lanes; ++j)
+        int done = 0;
+#if SYNTH2_SSE2
+        struct Lane
         {
-            phases[j]   = oscillators[j]->phase;
-            steps[j]    = oscillators[j]->dt;
-            perSteps[j] = oscillators[j]->perDt;
-        }
+            Ints   phases;
+            Ints   stride;
+            Floats perDt;
+            Floats fade;
+            Floats toLeft;
+            Floats toRight;
+        };
+        std::array<Lane, group> lanes;
+        for (size_t j = 0; j < group; ++j)
+            lanes[j] = { oscillators[j]->lanePhases(), 4u * oscillators[j]->dt, oscillators[j]->perDt, fades[j], panLeft[j], panRight[j] };
 
-        for (int n = 0; n < numSamples; ++n)
+        for (; done + 4 <= numSamples; done += 4)
         {
-            float l = left[n];
-            float r = right[n];
-            for (size_t j = 0; j < (size_t) lanes; ++j)
+            const Floats level = Floats::load (levels + done);
+            Floats toLeft  = Floats::load (left + done);
+            Floats toRight = Floats::load (right + done);
+            for (auto& lane : lanes)
+            {
+                const Floats value = shape<wave> (lane.phases, lane.perDt) * level * lane.fade;
+                toLeft  = toLeft  + value * lane.toLeft;
+                toRight = toRight + value * lane.toRight;
+                lane.phases = lane.phases + lane.stride;
+            }
+            toLeft.store (left + done);
+            toRight.store (right + done);
+        }
+#endif
+        for (size_t j = 0; j < group; ++j)
+        {
+            auto& oscillator = *oscillators[j];
+            const std::uint32_t dt = oscillator.dt;
+            const float perDt = oscillator.perDt;
+            std::uint32_t phase = oscillator.phase + (std::uint32_t) done * dt;
+            for (int n = done; n < numSamples; ++n)
             {
                 // As run() then a row's mix: the sample levelled, faded, panned.
-                const float row   = sample<wave> (phases[j], steps[j], perSteps[j]) * levels[n];
-                const float value = row * fades[j];
-                l += value * panLeft[j];
-                r += value * panRight[j];
-                phases[j] += steps[j];
+                const float value = shape<wave> (phase, perDt) * levels[n] * fades[j];
+                left[n]  += value * panLeft[j];
+                right[n] += value * panRight[j];
+                phase += dt;
             }
-            left[n]  = l;
-            right[n] = r;
+            oscillator.phase = phase;
         }
-
-        for (size_t j = 0; j < (size_t) lanes; ++j)
-            oscillators[j]->phase = phases[j];
     }
 
     std::uint32_t phase = 0;   // fractions of a cycle (see cycle)

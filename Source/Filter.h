@@ -5,6 +5,8 @@
 #include <cmath>
 #include <complex>
 
+#include "Simd.h"
+
 /**
     Filter
 
@@ -35,7 +37,8 @@ public:
 
     void setSampleRate (double newSampleRate) noexcept
     {
-        sampleRate = newSampleRate;
+        sampleRate  = newSampleRate;
+        warpedValid = false;
         reset();
     }
 
@@ -50,10 +53,10 @@ public:
         filter goes on sounding for a while after its input stops. */
     bool isRinging() const noexcept
     {
-        if (std::any_of (state.begin(), state.end(), [] (const auto& stage)
-                         { return std::abs (stage.ic1) > ringFloor || std::abs (stage.ic2) > ringFloor; }))
-            return true;
-        return false;
+        const auto ringing = [] (double value) { return std::abs (value) > ringFloor; };
+        return std::any_of (state.begin(), state.end(), [&ringing] (const auto& stage)
+                            { return std::any_of (stage.ic1.begin(), stage.ic1.end(), ringing)
+                                  || std::any_of (stage.ic2.begin(), stage.ic2.end(), ringing); });
     }
 
     /** About how long `type` at `cutoffHz` and `resonance` rings on after
@@ -73,31 +76,20 @@ public:
         if (numSamples <= 0)
             return;
 
-        const double to   = warp (cutoffHz);
+        const double to   = warped (cutoffHz);
         const double from = primed ? g : to;
         g      = to;
         primed = true;
 
-        const bool   twoStages = type == Type::low24 || type == Type::high24;
-        const double k1        = 1.0 / firstStageQ;
-        const double k2        = 1.0 / resonantQ (type, resonance);
-        const double step      = (to - from) / (double) numSamples;
-
-        for (int n = 0; n < numSamples; ++n)
+        const double k2 = damping (type, resonance);
+        switch (type)
         {
-            const double gn = from + step * (double) (n + 1);
-            const auto   c2 = Coefficients::of (gn, k2);
-            if (twoStages)
-            {
-                const auto c1 = Coefficients::of (gn, k1);
-                left[n]  = (float) twoStage (type, c1, c2, state[0], state[1], (double) left[n]);
-                right[n] = (float) twoStage (type, c1, c2, state[2], state[3], (double) right[n]);
-            }
-            else
-            {
-                left[n]  = (float) oneStage (type, c2, state[0], (double) left[n]);
-                right[n] = (float) oneStage (type, c2, state[2], (double) right[n]);
-            }
+            case Type::low24:  run<Type::low24>  (left, right, numSamples, from, to, k2); break;
+            case Type::low12:  run<Type::low12>  (left, right, numSamples, from, to, k2); break;
+            case Type::band:   run<Type::band>   (left, right, numSamples, from, to, k2); break;
+            case Type::high12: run<Type::high12> (left, right, numSamples, from, to, k2); break;
+            case Type::high24: run<Type::high24> (left, right, numSamples, from, to, k2); break;
+            case Type::notch:  run<Type::notch>  (left, right, numSamples, from, to, k2); break;
         }
     }
 
@@ -136,11 +128,18 @@ private:
     static constexpr double ringFloor   = 1.0e-4;   // -80 dB: quiet enough to stop
     static constexpr double pi = 3.14159265358979323846;
 
-    // One stage's memory: its two integrators.
+    // One stage's memory: its two integrators, left and right.
     struct Stage
     {
-        double ic1 = 0.0;
-        double ic2 = 0.0;
+        std::array<double, 2> ic1 {};
+        std::array<double, 2> ic2 {};
+    };
+
+    template <typename Value>
+    struct Memory
+    {
+        Value ic1;
+        Value ic2;
     };
 
     struct Coefficients
@@ -158,44 +157,113 @@ private:
     };
 
     // The three outputs a stage gives for input `x`.
+    template <typename Value>
     struct Outputs
     {
-        double low;
-        double band;
-        double high;
+        Value low;
+        Value band;
+        Value high;
     };
 
-    static Outputs tick (const Coefficients& c, Stage& s, double x) noexcept
+    template <typename Value>
+    static Outputs<Value> tick (const Coefficients& c, Memory<Value>& s, Value x) noexcept
     {
-        const double v3 = x - s.ic2;
-        const double v1 = c.a1 * s.ic1 + c.a2 * v3;
-        const double v2 = s.ic2 + c.a2 * s.ic1 + c.a3 * v3;
-        s.ic1 = 2.0 * v1 - s.ic1;
-        s.ic2 = 2.0 * v2 - s.ic2;
-        return { v2, v1, x - c.k * v1 - v2 };
+        const Value v3 = x - s.ic2;
+        const Value v1 = Value (c.a1) * s.ic1 + Value (c.a2) * v3;
+        const Value v2 = s.ic2 + Value (c.a2) * s.ic1 + Value (c.a3) * v3;
+        s.ic1 = Value (2.0) * v1 - s.ic1;
+        s.ic2 = Value (2.0) * v2 - s.ic2;
+        return { v2, v1, x - Value (c.k) * v1 - v2 };
     }
 
-    static double oneStage (Type type, const Coefficients& c, Stage& s, double x) noexcept
+    template <Type type>
+    static constexpr bool hasTwoStages = type == Type::low24 || type == Type::high24;
+
+    template <Type type, typename Value>
+    static Value filterOne (Value x, const Coefficients& first, const Coefficients& second, Memory<Value>& a, Memory<Value>& b) noexcept
     {
-        const auto out = tick (c, s, x);
-        switch (type)
+        if constexpr (hasTwoStages<type>)
         {
-            case Type::low12:  return out.low;
-            case Type::high12: return out.high;
-            case Type::band:   return c.k * out.band;
-            case Type::notch:  return out.low + out.high;
-            case Type::low24:
-            case Type::high24: break;
+            constexpr bool low = type == Type::low24;
+            const auto one = tick (first, a, x);
+            const auto two = tick (second, b, low ? one.low : one.high);
+            return low ? two.low : two.high;
         }
-        return out.low;
+        else
+        {
+            const auto out = tick (second, a, x);
+            if constexpr (type == Type::high12)
+                return out.high;
+            else if constexpr (type == Type::band)
+                return Value (second.k) * out.band;
+            else if constexpr (type == Type::notch)
+                return out.low + out.high;
+            else
+                return out.low;
+        }
     }
 
-    static double twoStage (Type type, const Coefficients& first, const Coefficients& second, Stage& a, Stage& b, double x) noexcept
+    template <Type type, bool glide, typename Value, typename Frame>
+    static void filterFrames (int numSamples, double from, double to, double k2, Memory<Value>& a, Memory<Value>& b, Frame&& frame) noexcept
     {
-        const bool low = type == Type::low24;
-        const auto one = tick (first, a, x);
-        const auto two = tick (second, b, low ? one.low : one.high);
-        return low ? two.low : two.high;
+        const double k1   = 1.0 / firstStageQ;
+        const double step = (to - from) / (double) numSamples;
+        auto second = Coefficients::of (to, k2);
+        auto first  = hasTwoStages<type> ? Coefficients::of (to, k1) : second;
+        for (int n = 0; n < numSamples; ++n)
+        {
+            if constexpr (glide)
+            {
+                const double gn = from + step * (double) (n + 1);
+                second = Coefficients::of (gn, k2);
+                first  = hasTwoStages<type> ? Coefficients::of (gn, k1) : second;
+            }
+            frame (n, [&] (Value x) { return filterOne<type> (x, first, second, a, b); });
+        }
+    }
+
+    template <Type type, typename Value, typename Frame>
+    static void runFrames (int numSamples, double from, double to, double k2, Memory<Value>& a, Memory<Value>& b, Frame&& frame) noexcept
+    {
+        if (from < to || from > to)
+            filterFrames<type, true> (numSamples, from, to, k2, a, b, frame);
+        else
+            filterFrames<type, false> (numSamples, from, to, k2, a, b, frame);
+    }
+
+    template <Type type>
+    void run (float* left, float* right, int numSamples, double from, double to, double k2) noexcept
+    {
+#if SYNTH2_SSE2
+        using Pair = Simd::Doubles;
+        Memory<Pair> a { _mm_loadu_pd (state[0].ic1.data()), _mm_loadu_pd (state[0].ic2.data()) };
+        Memory<Pair> b { _mm_loadu_pd (state[1].ic1.data()), _mm_loadu_pd (state[1].ic2.data()) };
+        runFrames<type> (numSamples, from, to, k2, a, b, [left, right] (int n, auto&& filter)
+        {
+            const Pair y = filter (Pair (_mm_setr_pd ((double) left[n], (double) right[n])));
+            left[n]  = (float) y.first();
+            right[n] = (float) y.second();
+        });
+        _mm_storeu_pd (state[0].ic1.data(), a.ic1.v);
+        _mm_storeu_pd (state[0].ic2.data(), a.ic2.v);
+        _mm_storeu_pd (state[1].ic1.data(), b.ic1.v);
+        _mm_storeu_pd (state[1].ic2.data(), b.ic2.v);
+#else
+        for (size_t side = 0; side < 2; ++side)
+        {
+            float* channel = side == 0 ? left : right;
+            Memory<double> a { state[0].ic1[side], state[0].ic2[side] };
+            Memory<double> b { state[1].ic1[side], state[1].ic2[side] };
+            runFrames<type> (numSamples, from, to, k2, a, b, [channel] (int n, auto&& filter)
+            {
+                channel[n] = (float) filter ((double) channel[n]);
+            });
+            state[0].ic1[side] = a.ic1;
+            state[0].ic2[side] = a.ic2;
+            state[1].ic1[side] = b.ic1;
+            state[1].ic2[side] = b.ic2;
+        }
+#endif
     }
 
     double warp (float cutoffHz) const noexcept
@@ -204,8 +272,39 @@ private:
         return std::tan (pi * hz / sampleRate);
     }
 
+    double warped (float cutoffHz) noexcept
+    {
+        if (! warpedValid || cutoffHz < warpedHz || cutoffHz > warpedHz)
+        {
+            warpedValid = true;
+            warpedHz    = cutoffHz;
+            warpedG     = warp (cutoffHz);
+        }
+        return warpedG;
+    }
+
+    double damping (Type type, float resonance) noexcept
+    {
+        if (! dampingValid || type != dampedType || resonance < dampedResonance || resonance > dampedResonance)
+        {
+            dampingValid    = true;
+            dampedType      = type;
+            dampedResonance = resonance;
+            dampingK        = 1.0 / resonantQ (type, resonance);
+        }
+        return dampingK;
+    }
+
     double sampleRate = 44100.0;
     double g          = 0.0;    // where the last chunk's cutoff ended (prewarped)
     bool   primed     = false;  // false until a chunk has set g
-    std::array<Stage, 4> state {};   // left stages 1 and 2, right stages 1 and 2
+    std::array<Stage, 2> state {};   // stages 1 and 2, each left and right
+
+    bool   warpedValid     = false;
+    float  warpedHz        = 0.0f;
+    double warpedG         = 0.0;
+    bool   dampingValid    = false;
+    Type   dampedType      = Type::low24;
+    float  dampedResonance = 0.0f;
+    double dampingK        = 0.0;
 };

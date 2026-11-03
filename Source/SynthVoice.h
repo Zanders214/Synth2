@@ -335,6 +335,8 @@ private:
         float      envelopeLevel = 0.0f;
         float      filterMix     = 0.0f;   // how far the filter is in, 0..1
         VoiceSettings::Oscillator lastFilter;   // the filter's settings, kept while it fades out
+        double     tunedHz       = 0.0;
+        float      tunedRatio    = 0.0f;
     };
 
     static NoteActivity activityOf (const Envelope& envelope) noexcept
@@ -518,6 +520,10 @@ private:
     int tune (Part& part, const VoiceSettings::Oscillator& osc, int count, bool relayout,
               std::array<size_t, Unison::maxVoices>& playing) const noexcept
     {
+        const bool retune = relayout || ! juce::exactlyEqual (part.tunedHz, pitchHz) || ! juce::exactlyEqual (part.tunedRatio, osc.ratio);
+        part.tunedHz    = pitchHz;
+        part.tunedRatio = osc.ratio;
+
         int numPlaying = 0;
         for (size_t i = 0; i < part.copies.size(); ++i)
         {
@@ -532,7 +538,8 @@ private:
                 copy.ratio = Unison::ratio (copy.cents);
             }
 
-            copy.oscillator.setIncrement (pitchHz * copy.ratio * osc.ratio / sampleRate);
+            if (retune)
+                copy.oscillator.setIncrement (pitchHz * copy.ratio * osc.ratio / sampleRate);
             playing[(size_t) numPlaying++] = i;
         }
         return numPlaying;
