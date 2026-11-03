@@ -300,7 +300,7 @@ namespace ParameterParts
             })));
     }
 
-    // The arp (version 14): off, in sixteenths, straight, not latched.
+    // The arp (version 14): off, in sixteenths, straight, not latched, in one octave.
     void addArp (Layout& layout)
     {
         const Arp::Settings arp;
@@ -311,6 +311,10 @@ namespace ParameterParts
         layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamID::arpRate, 14 }, "Arp Rate", rates, arp.rate));
         addPercent (layout, ParameterID { ParamID::arpSwing, 14 }, "Arp Swing", 1.0f, arp.swing);
         layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::arpLatch, 14 }, "Arp Latch", arp.latch));
+        StringArray octaves;
+        for (int count = 1; count <= Arp::maxOctaves; ++count)
+            octaves.add (String (count));
+        layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamID::arpOctaves, 14 }, "Arp Octaves", octaves, arp.octaves - 1));
     }
 
     // The EQ (version 13), off and flat to start with.
@@ -556,6 +560,7 @@ Arp::Settings Synth2AudioProcessor::arpSettings() const noexcept
     settings.rate  = juce::roundToInt (param (ParamID::arpRate));
     settings.swing = param (ParamID::arpSwing);
     settings.latch = param (ParamID::arpLatch) >= 0.5f;
+    settings.octaves = juce::roundToInt (param (ParamID::arpOctaves)) + 1;
     settings.pattern.length = arpLength.load (std::memory_order_relaxed);
     for (int i = 0; i < Arp::maxSteps; ++i)
         settings.pattern[i] = Arp::decode (arpSteps[(size_t) i].load (std::memory_order_relaxed));

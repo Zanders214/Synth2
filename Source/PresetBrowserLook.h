@@ -383,7 +383,11 @@ namespace PresetBrowserLook
         if (preset.glideSeconds > 0.0f)
             playing += "  GLIDE " + Format::seconds (preset.glideSeconds);
         if (preset.arp.has_value())
+        {
             playing += "  ARP " + juce::String (Arp::rates[(size_t) juce::jlimit (0, (int) Arp::rates.size() - 1, preset.arp->rate)].name);
+            if (preset.arp->octaves > 1)
+                playing += " " + juce::String (preset.arp->octaves) + " OCT";
+        }
         playing += "  OUTPUT " + Format::decibels (preset.outputDb);
         g.drawText (playing, area.removeFromTop (22.0f * s), juce::Justification::centredLeft, true);
 

@@ -3032,6 +3032,11 @@ void testArp()
     check (p.arpSettings().pattern == Arp::defaultPattern() && state.state.getChildWithName (Arp::arpType).isValid(),
            "and the pattern to start with is in the state");
     check (state.getParameter (ParamID::arpRate)->getCurrentValueAsText() == "1/16", "RATE reads as a note length");
+    check (p.arpSettings().octaves == 1 && state.getParameter (ParamID::arpOctaves)->getCurrentValueAsText() == "1",
+           "OCTAVES starts at one, and reads as a count");
+    setParam (p, ParamID::arpOctaves, 2.0f);
+    check (p.arpSettings().octaves == 3, "and its third choice climbs three");
+    setParam (p, ParamID::arpOctaves, 0.0f);
 
     // The pattern drawn reaches the audio thread.
     Arp::Model model (state);
@@ -3069,12 +3074,14 @@ void testArp()
     model.setPattern (drawn);
     setParam (p, ParamID::arpRate, 2.0f);
     setParam (p, ParamID::arpLatch, 1.0f);
+    setParam (p, ParamID::arpOctaves, 1.0f);
     juce::MemoryBlock saved;
     p.getStateInformation (saved);
     Synth2AudioProcessor restored;
     restored.setStateInformation (saved.getData(), (int) saved.getSize());
-    check (restored.arpSettings().pattern == drawn && restored.arpSettings().on && restored.arpSettings().rate == 2 && restored.arpSettings().latch,
-           "the pattern, the switch, RATE and LATCH come back with the session");
+    check (restored.arpSettings().pattern == drawn && restored.arpSettings().on && restored.arpSettings().rate == 2 && restored.arpSettings().latch
+               && restored.arpSettings().octaves == 2,
+           "the pattern, the switch, RATE, LATCH and OCTAVES come back with the session");
 
     auto old = state.copyState();
     old.removeChild (old.getChildWithName (Arp::arpType), nullptr);
@@ -3084,7 +3091,8 @@ void testArp()
     juce::MemoryBlock oldSaved;
     juce::AudioProcessor::copyXmlToBinary (*xml, oldSaved);
     restored.setStateInformation (oldSaved.getData(), (int) oldSaved.getSize());
-    check (! restored.arpSettings().on && ! restored.arpSettings().latch && restored.arpSettings().pattern == Arp::defaultPattern(),
+    check (! restored.arpSettings().on && ! restored.arpSettings().latch && restored.arpSettings().octaves == 1
+               && restored.arpSettings().pattern == Arp::defaultPattern(),
            "a session saved before the arp opens with it off, on the pattern to start with");
 
     // Presets: an arp preset brings its pattern; one without switches it
@@ -3157,6 +3165,10 @@ void testArp()
     grid.mouseDown (mouseAt (grid, grid.numberBounds (11).getCentre()));
     check (model.pattern().length == 12, "a click on a step's number ends the pattern there");
 
+    auto& octaves = arp.getOctaves();
+    octaves.mouseDown (mouseAt (octaves, octaves.segmentBounds (3).getCentre()));
+    check (p.arpSettings().octaves == 4 && octaves.getSelected() == 3, "a click on OCTAVES' 4 climbs four");
+    octaves.mouseDown (mouseAt (octaves, octaves.segmentBounds (1).getCentre()));
     arp.getShape (Arp::Shape::down).triggerClick();
     check (pumpUntil ([&] { return model.pattern()[0].plays (3) && model.pattern().length == 12; }), "Down fills the grid, keeping its length");
     const auto shaped = model.pattern();

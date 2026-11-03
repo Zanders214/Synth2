@@ -177,6 +177,7 @@ int main()
             set (ParamID::arpLatch, (float) ((b / 48) % 2));
             set (ParamID::arpRate,  (float) ((b / 24) % (int) Arp::rates.size()));
             set (ParamID::arpSwing, 0.3f * (float) ((b / 24) % 4));
+            set (ParamID::arpOctaves, (float) ((b / 24) % Arp::maxOctaves));
             juce::Random random (b);
             Arp::Model (proc.getState()).setPattern (Arp::make ((Arp::Shape) ((b / 24) % 5), 1 + (b / 24) % Arp::maxSteps, random));
         }

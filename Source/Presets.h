@@ -429,6 +429,7 @@ namespace Presets
             values.emplace_back (ParamID::arpRate,  (float) preset.arp->rate);
             values.emplace_back (ParamID::arpSwing, preset.arp->swing);
             values.emplace_back (ParamID::arpLatch, preset.arp->latch ? 1.0f : 0.0f);
+            values.emplace_back (ParamID::arpOctaves, (float) (preset.arp->octaves - 1));
         }
         return values;
     }
@@ -528,6 +529,7 @@ namespace Presets
             arp.rate    = juce::roundToInt (value (ParamID::arpRate, (float) arp.rate));
             arp.swing   = value (ParamID::arpSwing, arp.swing);
             arp.latch   = on (ParamID::arpLatch);
+            arp.octaves = juce::roundToInt (value (ParamID::arpOctaves, 0.0f)) + 1;
             arp.pattern = Arp::patternIn (state.getChildWithName (Arp::arpType));
             preset.arp  = arp;
         }
