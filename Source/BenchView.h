@@ -127,6 +127,69 @@ private:
     float zoom    = 1.0f;
 };
 
+/**
+    CablesSwitch — beside the ZoomPill while sound follows the cables: whether
+    they hang in FRONT of the modules or BEHIND them, out of the way of the
+    cards. Its toggle state is BEHIND; a click flips it.
+*/
+class CablesSwitch final : public juce::Button
+{
+public:
+    static constexpr float switchWidth = 150.0f;   // design pixels
+    static constexpr float labelWidth  = 54.0f;
+
+    CablesSwitch() : juce::Button ("Cables")
+    {
+        setClickingTogglesState (true);
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    }
+
+    void setUiScale (float newScale) { uiScale = newScale; repaint(); }
+
+    /** Where BEHIND (or, not `behind`, FRONT) sits. */
+    juce::Rectangle<float> choiceBounds (bool behind) const noexcept
+    {
+        const auto choices = getLocalBounds().toFloat().withTrimmedLeft (labelWidth * uiScale).reduced (3.0f * uiScale);
+        const auto half    = choices.getWidth() * 0.5f;
+        return behind ? choices.withTrimmedLeft (half) : choices.withWidth (half);
+    }
+
+    void paintButton (juce::Graphics& g, bool over, bool) override
+    {
+        using namespace Synth2;
+        const float s    = uiScale;
+        const auto  pill = getLocalBounds().toFloat().reduced (0.5f);
+        g.setColour (Palette::panelBottom.withAlpha (0.92f));
+        g.fillRoundedRectangle (pill, pill.getHeight() * 0.5f);
+        g.setColour (Palette::idleFill);
+        g.fillRoundedRectangle (pill, pill.getHeight() * 0.5f);
+        g.setColour (Palette::hairline);
+        g.drawRoundedRectangle (pill, pill.getHeight() * 0.5f, juce::jmax (1.0f, s));
+
+        g.setFont (Fonts::sans (9.0f * s, true, 0.14f));
+        g.setColour (Palette::textFaint);
+        g.drawText ("CABLES", pill.withWidth (labelWidth * s).withTrimmedLeft (4.0f * s), juce::Justification::centred, false);
+
+        // The way they hang lit, the other one to click.
+        for (const bool behind : { false, true })
+        {
+            const auto choice = choiceBounds (behind);
+            auto tint = over ? Palette::textMid : Palette::textDim;
+            if (behind == getToggleState())
+            {
+                g.setColour (Palette::accentSoft);
+                g.fillRoundedRectangle (choice, choice.getHeight() * 0.5f);
+                tint = Palette::textStrong;
+            }
+            g.setColour (tint);
+            g.drawText (behind ? "BEHIND" : "FRONT", choice, juce::Justification::centred, false);
+        }
+    }
+
+private:
+    float uiScale = 1.0f;
+};
+
 /** How the bench's canvas (design pixels) maps onto its view, zoomed and panned. */
 struct BenchMapping
 {
@@ -199,6 +262,9 @@ public:
         std::function<void (juce::Point<float>, juce::Point<int>)> emptyClick;
         /** The box zoomed or panned (and so the cards moved). */
         std::function<void()> viewportChanged;
+        /** Paints over the box's ground, under the cards: the cables, when
+            they hang behind them. */
+        std::function<void (juce::Graphics&)> paintBehindCards;
     };
 
     void setHandlers (Handlers newHandlers) { handlers = std::move (newHandlers); }
@@ -424,6 +490,9 @@ public:
 
         g.setColour (Palette::hairline);
         g.drawRoundedRectangle (box.reduced (0.5f), 16.0f * s, juce::jmax (1.0f, s));
+
+        if (handlers.paintBehindCards != nullptr)
+            handlers.paintBehindCards (g);
 
         if (model.isEmpty())
         {

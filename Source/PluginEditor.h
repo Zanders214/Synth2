@@ -101,12 +101,18 @@ public:
         a jack (or the output's IN), dragged, and dropped on another or let
         go. Everything here is in the editor's coordinates, whatever the
         bench's zoom; a cable to a card scrolled out of the bench's box
-        leaves at its edge. */
+        leaves at its edge. They hang in front of the cards, or behind them
+        (its CablesSwitch, or C on the computer's keys); one being dragged is
+        always in front. */
     class CableLayer final : public juce::Component
     {
     public:
-        explicit CableLayer (Synth2AudioProcessorEditor& ownerToUse) : owner (ownerToUse) { setInterceptsMouseClicks (false, false); }
+        explicit CableLayer (Synth2AudioProcessorEditor& ownerToUse);
         void paint (juce::Graphics&) override;
+        void resized() override;
+        /** The cables that hang behind the cards, painted by the bench under
+            them (`g` in the bench's coordinates). */
+        void paintBehind (juce::Graphics& g) const;
 
         /** Where the output's IN jack sits. */
         juce::Rectangle<float> outputJackBounds() const noexcept;
@@ -129,8 +135,16 @@ public:
         /** Every cable and where its ends are, to repaint only when that changes. */
         juce::String signature() const;
 
+        /** Hangs the cables behind the cards, or in front of them. */
+        void hangBehind (bool behind);
+        /** Shows the FRONT / BEHIND switch with the cables, set as the bench's view says. */
+        void showSwitch();
+        CablesSwitch& getSwitch() noexcept { return cablesSwitch; }
+
     private:
+        bool shows() const noexcept;
         void dropCable (juce::Point<float> at);
+        void paintPatched (juce::Graphics&, bool overBox, bool belowBox) const;
         void paintCable (juce::Graphics&, juce::Point<float> from, juce::Point<float> to, juce::Colour colour) const;
         juce::RectangleList<int> cableArea (bool endsShow) const;
 
@@ -143,6 +157,7 @@ public:
 
         Synth2AudioProcessorEditor& owner;
         Patching patching;
+        CablesSwitch cablesSwitch;
     };
 
     /** The trays opened over everything: add a module (on the bench), add an
