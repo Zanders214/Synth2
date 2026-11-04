@@ -209,17 +209,17 @@ private:
     using Floats = Simd::Floats;
     using Ints   = Simd::Ints;
 
-    static Floats toFloat (Ints value) noexcept    { return _mm_cvtepi32_ps (value.v); }
-    static Floats magnitude (Floats value) noexcept { return _mm_and_ps (value.v, _mm_castsi128_ps (_mm_set1_epi32 (0x7fffffff))); }
-    static Floats signOf (Ints value) noexcept      { return _mm_cvtepi32_ps (_mm_or_si128 (_mm_srai_epi32 (value.v, 31), _mm_set1_epi32 (1))); }
-    static Floats clampUnit (Floats value) noexcept { return _mm_min_ps (_mm_max_ps (value.v, _mm_set1_ps (-1.0f)), _mm_set1_ps (1.0f)); }
+    static Floats toFloat (Ints value) noexcept    { return Floats { _mm_cvtepi32_ps (value.v) }; }
+    static Floats magnitude (Floats value) noexcept { return Floats { _mm_and_ps (value.v, _mm_castsi128_ps (_mm_set1_epi32 (0x7fffffff))) }; }
+    static Floats signOf (Ints value) noexcept      { return Floats { _mm_cvtepi32_ps (_mm_or_si128 (_mm_srai_epi32 (value.v, 31), _mm_set1_epi32 (1))) }; }
+    static Floats clampUnit (Floats value) noexcept { return Floats { _mm_min_ps (_mm_max_ps (value.v, _mm_set1_ps (-1.0f)), _mm_set1_ps (1.0f)) }; }
 
     static Ints foldSine (Ints phase) noexcept
     {
         const __m128i outside = _mm_or_si128 (_mm_cmpgt_epi32 (phase.v, _mm_set1_epi32 ((int) quarter)),
                                               _mm_cmplt_epi32 (phase.v, _mm_set1_epi32 (-(int) quarter)));
         const __m128i mirrored = _mm_sub_epi32 (_mm_set1_epi32 ((int) half), phase.v);
-        return _mm_or_si128 (_mm_and_si128 (outside, mirrored), _mm_andnot_si128 (outside, phase.v));
+        return Ints { _mm_or_si128 (_mm_and_si128 (outside, mirrored), _mm_andnot_si128 (outside, phase.v)) };
     }
 
     // Oscillator::scramble, four at a time (SSE2 multiplies 32 bits only in
@@ -238,12 +238,12 @@ private:
         x = times (x, 0x7feb352du);
         x = _mm_xor_si128 (x, _mm_srli_epi32 (x, 15));
         x = times (x, 0x846ca68bu);
-        return _mm_xor_si128 (x, _mm_srli_epi32 (x, 16));
+        return Ints { _mm_xor_si128 (x, _mm_srli_epi32 (x, 16)) };
     }
 
     Ints lanePhases() const noexcept
     {
-        return _mm_setr_epi32 ((int) phase, (int) (phase + dt), (int) (phase + 2u * dt), (int) (phase + 3u * dt));
+        return Ints { _mm_setr_epi32 ((int) phase, (int) (phase + dt), (int) (phase + 2u * dt), (int) (phase + 3u * dt)) };
     }
 #endif
 
@@ -323,8 +323,8 @@ private:
             int n = 0;
 #if SYNTH2_SSE2
             {
-                const Ints  stride = 4u * dt;
-                const Floats perStep = perDt;
+                const Ints   stride { 4u * dt };
+                const Floats perStep { perDt };
                 Ints phases = oscillator.lanePhases();
                 for (; n + 4 <= numSamples; n += 4)
                 {
@@ -388,7 +388,8 @@ private:
         };
         std::array<Lane, group> lanes;
         for (size_t j = 0; j < group; ++j)
-            lanes[j] = { oscillators[j]->lanePhases(), 4u * oscillators[j]->dt, oscillators[j]->perDt, fades[j], panLeft[j], panRight[j] };
+            lanes[j] = { oscillators[j]->lanePhases(), Ints (4u * oscillators[j]->dt), Floats (oscillators[j]->perDt),
+                         Floats (fades[j]), Floats (panLeft[j]), Floats (panRight[j]) };
 
         for (; done + 4 <= numSamples; done += 4)
         {
