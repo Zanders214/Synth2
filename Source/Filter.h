@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <complex>
+#include <utility>
 
 #include "Simd.h"
 
@@ -218,7 +219,7 @@ private:
                 second = Coefficients::of (gn, k2);
                 first  = hasTwoStages<type> ? Coefficients::of (gn, k1) : second;
             }
-            frame (n, [&] (Value x) { return filterOne<type> (x, first, second, a, b); });
+            frame (n, [&first, &second, &a, &b] (Value x) { return filterOne<type> (x, first, second, a, b); });
         }
     }
 
@@ -226,9 +227,9 @@ private:
     static void runFrames (int numSamples, double from, double to, double k2, Memory<Value>& a, Memory<Value>& b, Frame&& frame) noexcept
     {
         if (from < to || from > to)
-            filterFrames<type, true> (numSamples, from, to, k2, a, b, frame);
+            filterFrames<type, true> (numSamples, from, to, k2, a, b, std::forward<Frame> (frame));
         else
-            filterFrames<type, false> (numSamples, from, to, k2, a, b, frame);
+            filterFrames<type, false> (numSamples, from, to, k2, a, b, std::forward<Frame> (frame));
     }
 
     template <Type type>
@@ -236,8 +237,8 @@ private:
     {
 #if SYNTH2_SSE2
         using Pair = Simd::Doubles;
-        Memory<Pair> a { _mm_loadu_pd (state[0].ic1.data()), _mm_loadu_pd (state[0].ic2.data()) };
-        Memory<Pair> b { _mm_loadu_pd (state[1].ic1.data()), _mm_loadu_pd (state[1].ic2.data()) };
+        Memory<Pair> a { Pair (_mm_loadu_pd (state[0].ic1.data())), Pair (_mm_loadu_pd (state[0].ic2.data())) };
+        Memory<Pair> b { Pair (_mm_loadu_pd (state[1].ic1.data())), Pair (_mm_loadu_pd (state[1].ic2.data())) };
         runFrames<type> (numSamples, from, to, k2, a, b, [left, right] (int n, auto&& filter)
         {
             const Pair y = filter (Pair (_mm_setr_pd ((double) left[n], (double) right[n])));

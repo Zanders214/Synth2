@@ -953,7 +953,7 @@ public:
         addDial (ids.level,      "LEVEL",  BenchStyle::dialColour (4.0f / 7.0f));
         addDial (ids.voices,     "VOICES", BenchStyle::dialColour (5.0f / 7.0f));
         addDial (ids.detune,     "DETUNE", BenchStyle::dialColour (6.0f / 7.0f));
-        addDial (ids.width,      "WIDTH",  BenchStyle::dialColour (7.0f / 7.0f));
+        addDial (ids.width,      "WIDTH",  BenchStyle::dialColour (1.0f));
         getHeader().setJackColour (BenchStyle::dialColour (0.25f * (float) slot));
     }
 
