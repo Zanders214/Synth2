@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793729634741,
+  "lastUpdate": 1793784131623,
   "repoUrl": "https://github.com/Zanders214/Synth2",
   "entries": {
     "ZandersSynth2 DSP": [
@@ -2939,6 +2939,90 @@ window.BENCHMARK_DATA = {
           {
             "name": "DSP load 16x16 4-osc + filters @48k/512",
             "value": 7.318,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "152227414+Zanders214@users.noreply.github.com",
+            "name": "Dennis Zanders",
+            "username": "Zanders214"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5034f4135a72f2b12bf0c45051de03c9565a1537",
+          "message": "Merge pull request #41 from Zanders214/claude/sonar-fixes-5\n\nMake the SIMD types' constructors explicit, and fix the other Sonar issues",
+          "timestamp": "2026-11-04T10:20:15+01:00",
+          "tree_id": "3008fd5e0b34226b4a88c4c64b86f7e7bf67aec9",
+          "url": "https://github.com/Zanders214/Synth2/commit/5034f4135a72f2b12bf0c45051de03c9565a1537"
+        },
+        "date": 1793784131093,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "processBlock 8x7",
+            "value": 38974.301,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 8x7 @48k/512",
+            "value": 0.365,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16",
+            "value": 108487.181,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 @48k/512",
+            "value": 1.017,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 2-osc",
+            "value": 233851.368,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 2-osc @48k/512",
+            "value": 2.192,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 4-osc",
+            "value": 410325.307,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 4-osc @48k/512",
+            "value": 3.847,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 4-osc + effects",
+            "value": 517587.925,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 4-osc + effects @48k/512",
+            "value": 4.852,
+            "unit": "%"
+          },
+          {
+            "name": "processBlock 16x16 4-osc + filters",
+            "value": 654286.03,
+            "unit": "ns/block"
+          },
+          {
+            "name": "DSP load 16x16 4-osc + filters @48k/512",
+            "value": 6.134,
             "unit": "%"
           }
         ]
